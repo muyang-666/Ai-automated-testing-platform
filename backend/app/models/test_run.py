@@ -27,6 +27,12 @@ class TestRun(Base):
     log_content = Column(Text, nullable=True, comment="执行日志")
     # 这个字段是“错误摘要”或者“错误内容”。
     error_message = Column(Text, nullable=True, comment="错误信息")
+
+    # 这个字段表示：接口实际返回的 HTTP 状态码。它不是 pytest 的 passed/failed，而是目标接口真实返回码
+    response_status_code = Column(Integer, nullable=True, comment="接口响应状态码")
+    # 这个字段表示：接口实际返回的响应内容。比如 JSON / HTML / 文本字符串
+    response_content = Column(Text, nullable=True, comment="接口响应结果")
+
     # 表示这次测试什么时候开始执行。
     started_at = Column(DateTime(timezone=True), nullable=True, comment="开始时间")
     # 表示这次执行什么时候结束。

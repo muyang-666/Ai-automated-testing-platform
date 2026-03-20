@@ -1,30 +1,9 @@
-# Python
-__pycache__/
-*.py[cod]
-*.pyo
-*.pyd
-*.sqlite3
-*.db
-
-# Virtual environment
 .venv/
-venv/
-env/
-
-# Environment variables
+__pycache__/
+*.pyc
 .env
-
-# IDE
-.idea/
-.vscode/
-
-# Pytest cache
-.pytest_cache/
-
-# Node
 node_modules/
 dist/
-
-# OS files
-.DS_Store
-Thumbs.db
+build/
+*.db
+*.sqlite3

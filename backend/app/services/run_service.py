@@ -40,6 +40,8 @@ def execute_case_test(db: Session, case_id: int):
         test_run.failed_count = run_result["failed_count"]
         test_run.log_content = run_result["log_content"]
         test_run.error_message = run_result["error_message"]
+        test_run.response_status_code = run_result.get("response_status_code")
+        test_run.response_content = run_result.get("response_content")
         test_run.finished_at = datetime.now()
 
         db.commit()
@@ -56,6 +58,8 @@ def execute_case_test(db: Session, case_id: int):
             "failed_count": test_run.failed_count,
             "log_content": test_run.log_content,
             "error_message": test_run.error_message,
+            "response_status_code": test_run.response_status_code,
+            "response_content": test_run.response_content,
             "started_at": test_run.started_at,
             "finished_at": test_run.finished_at,
             "message": "测试执行完成",
@@ -77,12 +81,47 @@ def execute_case_test(db: Session, case_id: int):
             "case_id": test_run.case_id,
             "status": test_run.status,
             "result": test_run.result,
-            "total_count": 0,
-            "passed_count": 0,
-            "failed_count": 0,
+            "total_count": test_run.total_count,
+            "passed_count": test_run.passed_count,
+            "failed_count": test_run.failed_count,
             "log_content": test_run.log_content,
             "error_message": test_run.error_message,
+            "response_status_code": test_run.response_status_code,
+            "response_content": test_run.response_content,
             "started_at": test_run.started_at,
             "finished_at": test_run.finished_at,
-            "message": "测试执行失败",
+            "message": "测试执行完成",
         }
+
+# 把 TestRun ORM 对象转成前端容易直接使用的字典
+def serialize_test_run(test_run: TestRun):
+    return {
+        "run_id": test_run.id,
+        "case_id": test_run.case_id,
+        "status": test_run.status,
+        "result": test_run.result,
+        "total_count": test_run.total_count,
+        "passed_count": test_run.passed_count,
+        "failed_count": test_run.failed_count,
+        "log_content": test_run.log_content,
+        "error_message": test_run.error_message,
+        "response_status_code": test_run.response_status_code,
+        "response_content": test_run.response_content,
+        "started_at": test_run.started_at,
+        "finished_at": test_run.finished_at,
+    }
+
+# 查询执行记录列表
+def get_run_list(db: Session):
+    runs = db.query(TestRun).order_by(TestRun.id.desc()).all()
+    return [serialize_test_run(run) for run in runs]
+
+# 删除执行记录
+def delete_run(db: Session, run_id: int) -> bool:
+    test_run = db.query(TestRun).filter(TestRun.id == run_id).first()
+    if not test_run:
+        return False
+
+    db.delete(test_run)
+    db.commit()
+    return True

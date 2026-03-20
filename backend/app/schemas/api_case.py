@@ -24,6 +24,12 @@ class APICaseCreate(BaseModel):
     # 测试完成后，系统可以拿真实结果和预期结果做对比
     expected_result: Optional[str] = Field(default=None, description="预期结果JSON字符串")
 
+# 当前端调用“更新测试用例接口”时，请求体必须满足这些规则
+# 这里先直接复用 APICaseCreate 的字段结构，原因是：当前前端编辑弹窗走的是“整表单回填、整表单提交”
+# 也就是说，编辑不是只改一个字段，而是把整条测试用例重新提交给后端
+class APICaseUpdate(APICaseCreate):
+    pass
+
 # 后端返回给前端的数据格式，必须符合这个结构
 class APICaseResponse(BaseModel):
     id: int
