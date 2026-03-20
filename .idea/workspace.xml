@@ -5,26 +5,10 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="f59c259f-c22a-46aa-81f3-fbb1266ff59f" name="更改" comment="">
-      <change beforePath="$PROJECT_DIR$/backend/app/models/test_run.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/app/models/test_run.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/app/routers/ai_router.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/app/routers/ai_router.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/app/routers/case_router.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/app/routers/case_router.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/app/routers/run_router.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/app/routers/run_router.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/app/schemas/api_case.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/app/schemas/api_case.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/app/schemas/test_run.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/app/schemas/test_run.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/app/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/app/main.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/backend/app/services/ai_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/app/services/ai_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/app/services/case_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/app/services/case_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/app/services/run_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/app/services/run_service.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/app/tests_generated/test_case_1.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/app/tests_generated/test_case_1.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/app/tests_generated/test_case_2.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/app/tests_generated/test_case_3.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/app/tests_generated/test_case_3.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/app/tests_generated/test_case_4.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/app/tests_generated/test_case_4.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/app/tests_generated/test_case_5.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/app/tests_generated/test_case_6.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/app/tests_generated/test_case_7.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/app/tests_generated/test_case_8.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/app/utils/pytest_runner.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/app/utils/pytest_runner.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/pages/CasePage.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/CasePage.jsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/frontend/src/pages/RunPage.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/RunPage.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/App.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/App.jsx" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -59,16 +43,24 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent">{
-  &quot;keyToString&quot;: {
-    &quot;Python.未命名.executor&quot;: &quot;Run&quot;,
-    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
-    &quot;git-widget-placeholder&quot;: &quot;main&quot;,
-    &quot;last_opened_file_path&quot;: &quot;D:/黑马安享智慧理财项目/接口自动化测试&quot;,
-    &quot;settings.editor.selected.configurable&quot;: &quot;com.jetbrains.python.configuration.PyActiveSdkModuleConfigurable&quot;
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "Python.未命名.executor": "Run",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "git-widget-placeholder": "main",
+    "last_opened_file_path": "D:/Ai-test-assistant/frontend/src/api",
+    "settings.editor.selected.configurable": "com.jetbrains.python.configuration.PyActiveSdkModuleConfigurable"
   }
-}</component>
+}]]></component>
+  <component name="RecentsManager">
+    <key name="CopyFile.RECENT_KEYS">
+      <recent name="D:\Ai-test-assistant\frontend\src\api" />
+    </key>
+    <key name="MoveFile.RECENT_KEYS">
+      <recent name="D:\Ai-test-assistant\frontend\src\services" />
+    </key>
+  </component>
   <component name="SharedIndexes">
     <attachedChunks>
       <set>
