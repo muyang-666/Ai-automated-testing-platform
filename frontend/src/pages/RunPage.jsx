@@ -66,15 +66,16 @@ function RunPage() {
   };
 
   // 触发 AI 日志分析
-  const handleAnalyze = async (runId) => {
-    try {
-      const res = await api.post(`/ai/analyze/${runId}`);
-      setAnalysisResult(res.data);
-      message.success("AI 日志分析完成");
-    } catch (error) {
-      message.error("AI 日志分析失败");
-    }
-  };
+    const handleAnalyze = async (runId) => {
+      try {
+        const res = await api.post(`/ai/analyze/${runId}`);
+        setAnalysisResult(res.data);
+        message.success("AI 日志分析完成");
+      } catch (error) {
+        const detail = error?.response?.data?.detail || "AI 日志分析失败";
+        message.error(detail);
+      }
+    };
 
   // 打开日志弹窗
   const openLogModal = (logContent) => {
@@ -187,9 +188,11 @@ function RunPage() {
             日志：{runResult.log_content}
           </Paragraph>
 
+        {runResult.result === "failed" && (
           <Button type="primary" onClick={() => handleAnalyze(runResult.run_id)}>
             AI分析失败日志
           </Button>
+        )}
         </Card>
       )}
 

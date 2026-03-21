@@ -518,7 +518,7 @@ def generate_mock_test_code(api_case: APICase) -> str:
 
     assertion_code = build_assertion_code_from_plan(assertion_plan)
 
-    mock_code = f'''import httpx
+    mock_code = f'''import httpx # 规则生成
 
 
 def test_case_{api_case.id}():

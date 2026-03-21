@@ -110,16 +110,22 @@ function CasePage() {
   };
 
   // 这个函数负责：让 AI 为某条测试用例生成 pytest 代码。 “AI 生成测试代码”的入口
-  const handleGenerateCase = async (caseId) => {
-    // caseId 参数：当前测试用例的 id（如 1、2）
-    try {
-      await api.post(`/ai/generate-case/${caseId}`); // 请求地址：api.post(/ai/generate-case/${caseId})，对应后端 “根据用例生成测试代码” 接口
-      message.success(`AI 已生成 case ${caseId} 的测试代码`);
-      fetchCases(); // 生成成功后刷新列表，让表格 “是否已生成代码” 列更新
-    } catch (error) {
-      message.error("AI 生成测试代码失败");
-    }
-  };
+    const handleGenerateCode = async (caseId) => {
+      try {
+        const res = await api.post(`/ai/generate-case/${caseId}`);
+        message.success("AI代码生成成功");
+
+        // 主动作成功后，再尝试刷新；刷新失败不要覆盖主成功提示
+        try {
+          await fetchCases();
+        } catch (refreshError) {
+          message.warning("代码已生成成功，但列表刷新失败，请手动刷新页面");
+        }
+      } catch (error) {
+        const detail = error?.response?.data?.detail || "AI代码生成失败";
+        message.error(detail);
+      }
+    };
 
   // 页面一打开就自动查询列表
   useEffect(() => {

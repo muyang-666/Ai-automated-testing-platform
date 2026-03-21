@@ -4,6 +4,7 @@ import CasePage from "./pages/CasePage";
 import RunPage from "./pages/RunPage";
 import ReportPage from "./pages/ReportPage";
 import ParameterPage from "./pages/ParameterPage";
+import ScenePage from "./pages/ScenePage";
 
 const { Header, Content } = Layout;
 
@@ -15,6 +16,7 @@ export default function App() {
     if (currentPage === "runs") return <RunPage />;
     if (currentPage === "reports") return <ReportPage />;
     if (currentPage === "params") return <ParameterPage />;
+    if (currentPage === "scenes") return <ScenePage />;
     return <CasePage />;
   };
 
@@ -27,8 +29,9 @@ export default function App() {
           selectedKeys={[currentPage]}
           onClick={(e) => setCurrentPage(e.key)}
           items={[
-            { key: "cases", label: "测试用例管理" },
+            { key: "cases", label: "用例管理" },
             { key: "runs", label: "执行管理" },
+            { key: "scenes", label: "场景管理" },
             { key: "reports", label: "报告管理" },
             { key: "params", label: "参数管理" },
           ]}

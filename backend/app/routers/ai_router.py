@@ -22,14 +22,12 @@ def generate_ai_case(case_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"AI 生成测试用例失败: {str(e)}")
 
 
-@router.post("/analyze/{run_id}", response_model=AIAnalysisGenerateResponse, summary="AI分析pytest失败日志")
-def analyze_run_log(run_id: int, db: Session = Depends(get_db)):
+@router.post("/analyze/{run_id}", summary="AI分析失败日志")
+def analyze_run(run_id: int, db: Session = Depends(get_db)):
     try:
         return generate_ai_analysis(db, run_id)
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"AI 日志分析失败: {str(e)}")
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/analyze/{run_id}", response_model=AIAnalysisResponse, summary="查看AI日志分析结果")

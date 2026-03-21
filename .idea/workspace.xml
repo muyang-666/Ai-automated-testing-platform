@@ -7,8 +7,13 @@
     <list default="true" id="f59c259f-c22a-46aa-81f3-fbb1266ff59f" name="更改" comment="">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/backend/app/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/app/main.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/backend/app/services/ai_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/app/services/ai_service.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/app/models/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/app/models/__init__.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/app/routers/ai_router.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/app/routers/ai_router.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/app/services/analysis_service.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/app/services/analysis_service.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/app/tests_generated/test_case_4.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/app/tests_generated/test_case_4.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/backend/app/utils/parameter.py" beforeDir="false" afterPath="$PROJECT_DIR$/backend/app/utils/parameter.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/frontend/src/App.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/App.jsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/pages/RunPage.jsx" beforeDir="false" afterPath="$PROJECT_DIR$/frontend/src/pages/RunPage.jsx" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -58,6 +63,9 @@
       <recent name="D:\Ai-test-assistant\frontend\src\api" />
     </key>
     <key name="MoveFile.RECENT_KEYS">
+      <recent name="D:\Ai-test-assistant\frontend\src\api" />
+      <recent name="D:\Ai-test-assistant\frontend\src" />
+      <recent name="D:\Ai-test-assistant\backend\app\services" />
       <recent name="D:\Ai-test-assistant\frontend\src\services" />
     </key>
   </component>

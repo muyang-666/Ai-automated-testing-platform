@@ -1,13 +1,15 @@
+from app.utils.parameter import *
+
 import httpx
 
 
 def test_case_4():
     # 请求地址
-    url = "http://121.43.169.97:8082/loan/loanVerify/listData?restatus=first"
+    url = f"http://{HOST}/loan/loanVerify/listData?restatus=first"
     # 请求方法
     method = "POST"
     # 请求头（已做基础规范化）
-    headers = {'Accept': 'application/json, text/plain, */*', 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest', 'Cookie': 'JSESSIONID=BCC21BB11B31283729A9EA5EE273BFA6'}
+    headers = {'Accept': 'application/json, text/plain, */*', 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest', 'Cookie': Cookieb}
     # 请求体（表单）
     form_data = {'current_page': '1', 'userName': '197'}
 
@@ -18,7 +20,8 @@ def test_case_4():
         method=method,
         url=url,
         headers=headers,
-        data=form_data
+        data=form_data,
+        timeout=10.0
     )
 
     # 在断言前先打印响应结果，供执行器解析并入库
