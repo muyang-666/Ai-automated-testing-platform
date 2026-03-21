@@ -1,27 +1,18 @@
 from app.utils.parameter import *
-
 import httpx
 
 def test_case_1():
-    # 请求地址
-    url = "http://121.43.169.97:8082/system/public/verifyLogin"
-    # 请求方法
+    # 后台系统登录
     method = "POST"
-    # 请求头（已做基础规范化）
+    url = "http://121.43.169.97:8082/system/public/verifyLogin"
+    # 请求头键名疑似写成了 MIME 类型，请检查是否应为 Accept 或 Content-Type。
     headers = {'application/x-www-form-urlencoded': 'charset=UTF-8'}
-    # 当前没有明确有效的请求体
+    # 当前没有明确有效的请求体，请不要虚构 body 参数。
+    body = {}
+    # 使用 data 传递表单数据
+    data = {"username": "", "password": "", "valicode": "112233"}
 
-    # 轻量断言计划（只保留更稳定的预期字段）
-    expected_plan = {'exact_fields': {'status': 100, 'description': '用户名不能为空'}, 'nested_exact_fields': {}, 'range_fields': {}, 'list_checks': []}
-
-    response = httpx.request(
-        method=method,
-        url=url,
-        headers=headers,
-        timeout=10.0
-    )
-
-    # 在断言前先打印响应结果，供执行器解析并入库
+    response = httpx.request(method, url, headers=headers, data=data, timeout=10.0, trust_env=False)
     print(f"===RESPONSE_STATUS_CODE==={response.status_code}")
     print("===RESPONSE_CONTENT_START===")
     print(response.text)
@@ -29,7 +20,8 @@ def test_case_1():
 
     # 断言状态码
     assert response.status_code == 200
-
-    response_json = response.json()
-    assert response_json.get('status') == 100
-    assert response_json.get('description') == '用户名不能为空'
+    # 断言响应体为JSON
+    resp_json = response.json()
+    # 轻量断言：只断言稳定字段
+    assert resp_json.get("status") == 100
+    assert resp_json.get("description") == "用户名不能为空"

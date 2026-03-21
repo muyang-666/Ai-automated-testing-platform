@@ -1,6 +1,6 @@
 from app.utils.parameter import *
 
-import httpx # 规则生成
+import httpx
 
 
 def test_case_6():

@@ -110,19 +110,33 @@ function CasePage() {
   };
 
   // 这个函数负责：让 AI 为某条测试用例生成 pytest 代码。 “AI 生成测试代码”的入口
-    const handleGenerateCode = async (caseId) => {
+    const handleGenerateByLLM = async (caseId) => {
       try {
         const res = await api.post(`/ai/generate-case/${caseId}`);
-        message.success("AI代码生成成功");
+        message.success(`AI生成成功（来源：${res.data.generated_by}）`);
 
-        // 主动作成功后，再尝试刷新；刷新失败不要覆盖主成功提示
         try {
           await fetchCases();
         } catch (refreshError) {
           message.warning("代码已生成成功，但列表刷新失败，请手动刷新页面");
         }
       } catch (error) {
-        const detail = error?.response?.data?.detail || "AI代码生成失败";
+        const detail = error?.response?.data?.detail || "AI生成失败";
+        message.error(detail);
+      }
+    };
+    const handleGenerateByRule = async (caseId) => {
+      try {
+        const res = await api.post(`/ai/generate-rule-case/${caseId}`);
+        message.success(`规则生成成功（来源：${res.data.generated_by}）`);
+
+        try {
+          await fetchCases();
+        } catch (refreshError) {
+          message.warning("代码已生成成功，但列表刷新失败，请手动刷新页面");
+        }
+      } catch (error) {
+        const detail = error?.response?.data?.detail || "规则生成失败";
         message.error(detail);
       }
     };
@@ -146,7 +160,7 @@ function CasePage() {
     },
     {
       title: "操作",
-      width: 260,
+      width: 500,
       render: (_, record) => (
         <Space>
           <Button onClick={() => openEditModal(record)}>编辑</Button>
@@ -159,10 +173,12 @@ function CasePage() {
           >
             <Button danger>删除</Button>
           </Popconfirm>
-
-          <Button type="primary" onClick={() => handleGenerateCase(record.id)}>
-            AI生成代码
-          </Button>
+            <Button type="primary" onClick={() => handleGenerateByLLM(record.id)}>
+              AI生成代码
+            </Button>
+            <Button onClick={() => handleGenerateByRule(record.id)}>
+              规则生成
+            </Button>
         </Space>
       ),
     },

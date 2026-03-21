@@ -1,14 +1,14 @@
-from datetime import datetime
+from datetime import datetime  # 导入时间模块
 from urllib.parse import parse_qsl, urlsplit
 import json
 import re
 
-import httpx
-from sqlalchemy.orm import Session
+import httpx  # 给当前后端服务自己调用 LLM 接口用的
+from sqlalchemy.orm import Session  # 说明 service 会操作数据库
 
-from app.core.config import settings
-from app.models.api_case import APICase
-from app.utils.file_writer import save_test_code_to_file
+from app.core.config import settings  # 表示大模型配置不是写死在代码里的，而是从配置对象里拿
+from app.models.api_case import APICase  # AI 生成代码的原材料，就是数据库里的测试用例对象
+from app.utils.file_writer import save_test_code_to_file  # 把最终生成代码写入 tests_generated 目录
 
 
 # 参数变量引用格式：<<变量名>>
@@ -33,14 +33,16 @@ def normalize_url(raw_url: str | None) -> str:
 
     raw_url = raw_url.strip()
 
-    # 如果 URL 中本身就包含参数变量引用，例如 <<base_url>>/mock/login
+    # 如果 URL 中本身就包含参数变量引用，例如 <<HOST>>/mock/login
     # 这里不要强行补 http://，避免把占位语义搞坏
     if "<<" in raw_url and ">>" in raw_url:
         return raw_url
 
+    # 如果已经有协议头，直接原样返回
     if raw_url.startswith("http://") or raw_url.startswith("https://"):
         return raw_url
 
+    # 否则补一个默认前缀
     return f"http://{raw_url}"
 
 
@@ -76,6 +78,7 @@ def parse_url_query(raw_url: str | None) -> dict:
 
 
 # 对请求头做基础规范化
+# 目标不是“胡乱猜测”，而是修正常见的低级脏数据
 def sanitize_headers(headers_dict: dict) -> dict:
     if not isinstance(headers_dict, dict):
         return {}
@@ -101,6 +104,7 @@ def sanitize_headers(headers_dict: dict) -> dict:
 
 
 # 判断 body 更像 json 还是 form
+# 这是当前 V1 最重要的“翻译层”
 def infer_body_type(api_case: APICase, headers_dict: dict, body_dict: dict, query_dict: dict) -> str:
     method = (api_case.method or "").upper()
     content_type = str(headers_dict.get("Content-Type", "")).lower()
@@ -117,12 +121,14 @@ def infer_body_type(api_case: APICase, headers_dict: dict, body_dict: dict, quer
     if not body_dict:
         return "none"
 
+    # 如果 body 是扁平标量字典，且 URL query 与 body 有重叠，优先认为更像表单请求
     is_flat_scalar_dict = all(not isinstance(v, (dict, list)) for v in body_dict.values())
     has_overlap_with_query = any(k in query_dict for k in body_dict.keys())
 
     if is_flat_scalar_dict and has_overlap_with_query:
         return "form"
 
+    # 如果没有显式 Content-Type，但 body 很像浏览器表单的扁平字典，也优先按 form 处理
     if is_flat_scalar_dict and "Content-Type" not in headers_dict:
         return "form"
 
@@ -146,6 +152,10 @@ def extract_request_parameter_refs(api_case: APICase) -> list[str]:
 
 
 # 构建“升级版断言计划”
+# 核心思想：
+# 1. 稳定字段 -> 精确断言
+# 2. 易波动字段 -> 范围断言
+# 3. 列表字段 -> 只做结构断言，不做全量相等
 def build_assertion_plan(expected_dict: dict) -> dict:
     plan = {
         "exact_fields": {},
@@ -157,21 +167,18 @@ def build_assertion_plan(expected_dict: dict) -> dict:
     if not isinstance(expected_dict, dict) or not expected_dict:
         return plan
 
+    # 1）顶层稳定字段：适合精确断言
     stable_top_keys = ["status", "code", "message", "description", "success"]
     for key in stable_top_keys:
         value = expected_dict.get(key)
         if value is not None and not isinstance(value, (dict, list)):
             plan["exact_fields"][key] = value
 
+    # 2）处理 data 对象
     data = expected_dict.get("data")
     if isinstance(data, dict):
-        stable_data_keys = [
-            "page",
-            "epage",
-            "page_size",
-            "size",
-            "current_page",
-        ]
+        # 2.1 data 下稳定字段：适合精确断言
+        stable_data_keys = ["page", "epage", "page_size", "size", "current_page"]
         data_exact_fields = {}
         for key in stable_data_keys:
             value = data.get(key)
@@ -181,6 +188,7 @@ def build_assertion_plan(expected_dict: dict) -> dict:
         if data_exact_fields:
             plan["nested_exact_fields"]["data"] = data_exact_fields
 
+        # 2.2 data 下易波动字段：适合范围断言
         range_data_fields = {}
         if isinstance(data.get("total_items"), int):
             range_data_fields["total_items"] = {
@@ -197,6 +205,7 @@ def build_assertion_plan(expected_dict: dict) -> dict:
         if range_data_fields:
             plan["range_fields"]["data"] = range_data_fields
 
+        # 2.3 items 列表：只做结构校验
         items = data.get("items")
         if isinstance(items, list):
             item_check = {
@@ -205,6 +214,7 @@ def build_assertion_plan(expected_dict: dict) -> dict:
                 "allow_empty": False,
             }
 
+            # 如果列表里第一条是字典，顺便提取少量稳定字段做“首项结构断言”
             if len(items) > 0 and isinstance(items[0], dict):
                 preferred_sample_keys = [
                     "id",
@@ -219,6 +229,7 @@ def build_assertion_plan(expected_dict: dict) -> dict:
 
             plan["list_checks"].append(item_check)
 
+    # 3）兜底：如果没有提炼出任何计划，至少保留顶层简单标量字段
     if (
         not plan["exact_fields"]
         and not plan["nested_exact_fields"]
@@ -241,16 +252,19 @@ def validate_case_input_quality(
 ) -> list[str]:
     issues = []
 
+    # 请求头 key 看起来像 MIME 类型，通常说明用户录入有问题
     for key in raw_headers_dict.keys():
         lower_key = str(key).lower()
         if lower_key.startswith(("application/", "text/")):
             issues.append("请求头键名疑似写成了 MIME 类型，请检查是否应为 Accept 或 Content-Type。")
             break
 
+    # URL query 和 body 存在重复字段，说明请求语义可能不清晰
     overlap_keys = [k for k in body_dict.keys() if k in query_dict]
     if overlap_keys:
         issues.append(f"URL query 与 body 存在重复字段：{overlap_keys}，需要确认它们到底属于 query 还是 form/json body。")
 
+    # 预期结果过重提醒
     expected_dict = safe_json_loads(api_case.expected_result)
     data = expected_dict.get("data") if isinstance(expected_dict, dict) else None
     items = data.get("items") if isinstance(data, dict) else None
@@ -303,9 +317,11 @@ def build_assertion_code_from_plan(assertion_plan: dict) -> str:
 
     lines = ["    response_json = response.json()"]
 
+    # 1）顶层精确断言
     for key, value in exact_fields.items():
         lines.append(f"    assert response_json.get({key!r}) == {value!r}")
 
+    # 2）data 对象精确断言
     needs_data_obj = (
         "data" in nested_exact_fields
         or "data" in range_fields
@@ -319,6 +335,7 @@ def build_assertion_code_from_plan(assertion_plan: dict) -> str:
     for key, value in data_exact_fields.items():
         lines.append(f"    assert data.get({key!r}) == {value!r}")
 
+    # 3）data 对象范围/类型断言
     data_range_fields = range_fields.get("data", {})
     for key, rule in data_range_fields.items():
         field_expr = f"data.get({key!r})"
@@ -332,6 +349,7 @@ def build_assertion_code_from_plan(assertion_plan: dict) -> str:
         if "max" in rule:
             lines.append(f"    assert {field_expr} <= {rule['max']!r}")
 
+    # 4）列表结构断言
     for item in list_checks:
         if item.get("path") == "data.items" and item.get("check") == "list":
             lines.append("    items = data.get('items') or []")
@@ -363,7 +381,63 @@ def should_disable_env_proxy(url: str | None) -> bool:
     )
 
 
-# AI 生成链的核心：拼 Prompt
+# 日志里常见误导字符做清理
+def clean_generated_code(text: str) -> str:
+    if not text:
+        return ""
+
+    text = text.strip()
+    text = re.sub(r"^```python\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"^```\s*", "", text)
+    text = re.sub(r"\s*```$", "", text)
+    return text.strip()
+
+
+# 对 AI 生成后的代码做参数引用后处理
+def postprocess_parameter_references(code: str) -> str:
+    """
+    目标：
+    1. 强制补上：from app.utils.parameter import *
+    2. 把 "<<abc>>" / '<<abc>>' 转成 abc
+    3. 把 "Bearer <<token>>" 转成 f"Bearer {token}"
+    4. 把裸的 <<abc>> 转成 abc
+    """
+    if not code:
+        return code
+
+    result = code.strip()
+    required_import = "from app.utils.parameter import *"
+
+    if required_import not in result:
+        result = f"{required_import}\n\n{result}"
+
+    # 先处理被引号包住且包含 <<变量>> 的字符串
+    quoted_placeholder_pattern = re.compile(
+        r"""(['"])([^'"\n]*<<[A-Za-z_][A-Za-z0-9_]*>>[^'"\n]*)\1"""
+    )
+
+    def replace_quoted_placeholder(match):
+        quote = match.group(1)
+        content = match.group(2)
+
+        # 如果整个字符串就是 <<变量名>>，直接替换成变量名
+        full_match = PARAM_REF_PATTERN.fullmatch(content)
+        if full_match:
+            return full_match.group(1)
+
+        # 如果字符串里混有普通文本 + <<变量名>>，转成 f-string
+        transformed = PARAM_REF_PATTERN.sub(lambda m: "{" + m.group(1) + "}", content)
+        return f"f{quote}{transformed}{quote}"
+
+    result = quoted_placeholder_pattern.sub(replace_quoted_placeholder, result)
+
+    # 再处理没有引号包住的 <<变量名>>
+    result = PARAM_REF_PATTERN.sub(r"\1", result)
+
+    return result
+
+
+# 构造 LLM Prompt
 def build_case_prompt(api_case: APICase) -> str:
     ctx = build_case_context(api_case)
 
@@ -423,7 +497,8 @@ print(f"===RESPONSE_STATUS_CODE==={{response.status_code}}")
 print("===RESPONSE_CONTENT_START===")
 print(response.text)
 print("===RESPONSE_CONTENT_END===")
-29. 上述响应打印必须放在断言前，保证即使断言失败，也能采集到接口响应结果。
+29. httpx.request(...) 中必须显式加上 timeout=10.0。
+30. 如果请求地址是 127.0.0.1 或 localhost，本地接口场景下优先加 trust_env=False，避免系统代理干扰。
 
 【规范化后的测试上下文】
 - 规范化后的 URL: {ctx["normalized_url"]}
@@ -446,50 +521,6 @@ print("===RESPONSE_CONTENT_END===")
 - 请求体: {api_case.body}
 - 预期结果: {api_case.expected_result}
 """.strip()
-
-
-# 对 AI 生成后的代码做参数引用后处理
-def postprocess_parameter_references(code: str) -> str:
-    """
-    目标：
-    1. 强制补上：from app.utils.parameter import *
-    2. 把 "<<abc>>" / '<<abc>>' 转成 abc
-    3. 把 "Bearer <<token>>" 转成 f"Bearer {token}"
-    4. 把裸的 <<abc>> 转成 abc
-    """
-    if not code:
-        return code
-
-    result = code.strip()
-    required_import = "from app.utils.parameter import *"
-
-    if required_import not in result:
-        result = f"{required_import}\n\n{result}"
-
-    # 先处理被引号包住且包含 <<变量>> 的字符串
-    quoted_placeholder_pattern = re.compile(
-        r"""(['"])([^'"\n]*<<[A-Za-z_][A-Za-z0-9_]*>>[^'"\n]*)\1"""
-    )
-
-    def replace_quoted_placeholder(match):
-        quote = match.group(1)
-        content = match.group(2)
-
-        # 如果整个字符串就是 <<变量名>>，直接替换成变量名
-        full_match = PARAM_REF_PATTERN.fullmatch(content)
-        if full_match:
-            return full_match.group(1)
-
-        # 如果字符串里混有普通文本 + <<变量名>>，转成 f-string
-        transformed = PARAM_REF_PATTERN.sub(lambda m: "{" + m.group(1) + "}", content)
-        return f"f{quote}{transformed}{quote}"
-
-    result = quoted_placeholder_pattern.sub(replace_quoted_placeholder, result)
-
-    # 再处理没有引号包住的 <<变量名>>
-    result = PARAM_REF_PATTERN.sub(r"\1", result)
-
-    return result
 
 
 # 即使没有真正调用大模型，这个项目也能生成一份“更稳的规则式测试代码”
@@ -518,7 +549,7 @@ def generate_mock_test_code(api_case: APICase) -> str:
 
     assertion_code = build_assertion_code_from_plan(assertion_plan)
 
-    mock_code = f'''import httpx # 规则生成
+    mock_code = f'''import httpx
 
 
 def test_case_{api_case.id}():
@@ -562,7 +593,7 @@ def call_llm_generate_code(prompt: str) -> str:
 
     provider = settings.LLM_PROVIDER.lower()
     if provider == "mock" or not settings.LLM_API_KEY:
-        return ""
+        raise ValueError("当前未配置可用的 LLM，无法进行 AI 代码生成")
 
     headers = {
         "Authorization": f"Bearer {settings.LLM_API_KEY}",
@@ -596,18 +627,6 @@ def call_llm_generate_code(prompt: str) -> str:
     return content
 
 
-# “去 markdown 代码块”的清洗
-def clean_generated_code(text: str) -> str:
-    if not text:
-        return ""
-
-    text = text.strip()
-    text = re.sub(r"^```python\s*", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"^```\s*", "", text)
-    text = re.sub(r"\s*```$", "", text)
-    return text.strip()
-
-
 # 生成代码后做语法校验
 def validate_python_code(code: str) -> bool:
     if not code:
@@ -619,10 +638,10 @@ def validate_python_code(code: str) -> bool:
         return False
 
 
-# 生成代码后做规则校验
-def validate_generated_code_rules(code: str, api_case: APICase) -> bool:
+# 规则校验：返回失败原因，方便前端区分“LLM生成失败”还是“规则生成”
+def validate_generated_code_rules_with_reason(code: str, api_case: APICase) -> tuple[bool, str]:
     if not code:
-        return False
+        return False, "代码为空"
 
     lower_code = code.lower()
     ctx = build_case_context(api_case)
@@ -630,105 +649,85 @@ def validate_generated_code_rules(code: str, api_case: APICase) -> bool:
 
     banned_keywords = ["class ", "@pytest.fixture"]
     if any(k in lower_code for k in banned_keywords):
-        return False
+        return False, "包含被禁止的 class 或 fixture"
 
     if "httpx.request(" not in code:
-        return False
+        return False, "未使用 httpx.request"
 
-    # 必须固定导入参数模块
     if "from app.utils.parameter import *" not in code:
-        return False
+        return False, "缺少固定导入 from app.utils.parameter import *"
 
-    # 最终代码里不允许残留 << >>
     if "<<" in code or ">>" in code:
-        return False
+        return False, "最终代码里仍残留 << >> 参数占位符"
 
-    # 必须包含当前 case 的真实 URL（如果 URL 本身不含参数变量引用）
     normalized_url = ctx["normalized_url"]
     if normalized_url and not PARAM_REF_PATTERN.search(api_case.url or ""):
         if normalized_url not in code:
-            return False
+            return False, f"代码中未包含规范化后的 URL: {normalized_url}"
 
     if api_case.method and api_case.method.upper() not in code.upper():
-        return False
+        return False, f"代码中未包含请求方法: {api_case.method}"
 
     if looks_like_webpage_url(api_case.url) and "response.json()" in code:
-        return False
+        return False, "网页类地址不应调用 response.json()"
 
     required_response_markers = [
         "===RESPONSE_STATUS_CODE===",
         "===RESPONSE_CONTENT_START===",
         "===RESPONSE_CONTENT_END===",
     ]
-    if any(marker not in code for marker in required_response_markers):
-        return False
+    for marker in required_response_markers:
+        if marker not in code:
+            return False, f"缺少响应采集标记: {marker}"
 
     if "timeout=" not in code:
-        return False
+        return False, "缺少 timeout 参数"
 
     if should_disable_env_proxy(normalized_url) and "trust_env=False" not in code:
-        return False
+        return False, "本地/内网地址缺少 trust_env=False"
 
     if body_type == "form":
         if "data=" not in code:
-            return False
+            return False, "form 场景未使用 data="
         if "json=" in code:
-            return False
+            return False, "form 场景错误使用了 json="
 
     if body_type == "json" and ctx["body_dict"]:
         if "json=" not in code:
-            return False
+            return False, "json 场景未使用 json="
 
     expected_dict = ctx["expected_dict"]
     data = expected_dict.get("data") if isinstance(expected_dict, dict) else None
     items = data.get("items") if isinstance(data, dict) else None
     if isinstance(items, list) and "for key, value in expected.items()" in code:
-        return False
+        return False, "长列表场景仍在全量遍历 expected.items()"
 
-    # 如果原始请求信息里有参数变量引用，最终代码里必须出现对应变量名
     for param_name in ctx["parameter_refs"]:
         if param_name not in code:
-            return False
+            return False, f"缺少参数变量引用: {param_name}"
 
-    return True
+    return True, "校验通过"
 
 
-# 主流程函数
-def generate_case_test_code(db: Session, case_id: int):
-    api_case = db.query(APICase).filter(APICase.id == case_id).first()
-    if not api_case:
-        raise ValueError("测试用例不存在")
+# 保留原函数名，兼容其他旧调用
+def validate_generated_code_rules(code: str, api_case: APICase) -> bool:
+    is_valid, _ = validate_generated_code_rules_with_reason(code, api_case)
+    return is_valid
 
-    prompt = build_case_prompt(api_case)
-    llm_result = ""
 
-    try:
-        llm_result = call_llm_generate_code(prompt)
-        llm_result = clean_generated_code(llm_result)
-        llm_result = postprocess_parameter_references(llm_result)
-    except Exception as e:
-        print("LLM generate error:", repr(e))
-        llm_result = ""
-
-    if (
-        llm_result
-        and validate_python_code(llm_result)
-        and validate_generated_code_rules(llm_result, api_case)
-    ):
-        generated_code = llm_result
-    else:
-        generated_code = generate_mock_test_code(api_case)
-
-    # 再做一次兜底处理，保证最终落库/落文件的代码统一
+# 公共保存逻辑：不管是 LLM 生成还是规则生成，最后都统一走这里
+def save_generated_code_result(db: Session, api_case: APICase, generated_code: str, generated_by: str):
     generated_code = postprocess_parameter_references(generated_code)
 
     if not validate_python_code(generated_code):
         raise ValueError("生成后的测试代码语法不合法")
 
+    # 把生成代码写回数据库
     api_case.generated_test_code = generated_code
     db.commit()
     db.refresh(api_case)
 
+    # 把代码写入文件系统（自动覆盖 tests_generated 下同名文件）
     file_path = save_test_code_to_file(case_id=api_case.id, code=generated_code)
 
     return {
@@ -736,6 +735,50 @@ def generate_case_test_code(db: Session, case_id: int):
         "case_name": api_case.name,
         "generated_test_code": generated_code,
         "file_path": file_path,
-        "message": "AI 测试用例生成成功",
+        "generated_by": generated_by,
+        "message": "测试代码生成成功",
         "generated_at": datetime.now(),
     }
+
+
+# 只走 LLM 生成：失败直接报错，不再 fallback 到规则生成
+def generate_case_test_code_by_llm(db: Session, case_id: int):
+    api_case = db.query(APICase).filter(APICase.id == case_id).first()
+    if not api_case:
+        raise ValueError("测试用例不存在")
+
+    prompt = build_case_prompt(api_case)
+
+    try:
+        llm_result = call_llm_generate_code(prompt)
+        llm_result = clean_generated_code(llm_result)
+        llm_result = postprocess_parameter_references(llm_result)
+    except Exception as e:
+        raise ValueError(f"LLM 代码生成失败：{str(e)}")
+
+    if not llm_result:
+        raise ValueError("LLM 未返回有效代码")
+
+    if not validate_python_code(llm_result):
+        raise ValueError("LLM 生成代码语法不合法")
+
+    is_valid, reason = validate_generated_code_rules_with_reason(llm_result, api_case)
+    if not is_valid:
+        raise ValueError(f"LLM 生成代码未通过项目规则校验：{reason}")
+
+    return save_generated_code_result(db, api_case, llm_result, generated_by="llm")
+
+
+# 只走规则生成
+def generate_case_test_code_by_rule(db: Session, case_id: int):
+    api_case = db.query(APICase).filter(APICase.id == case_id).first()
+    if not api_case:
+        raise ValueError("测试用例不存在")
+
+    generated_code = generate_mock_test_code(api_case)
+    return save_generated_code_result(db, api_case, generated_code, generated_by="rule")
+
+
+# 兼容旧接口：默认仍走 LLM 生成
+def generate_case_test_code(db: Session, case_id: int):
+    return generate_case_test_code_by_llm(db, case_id)
