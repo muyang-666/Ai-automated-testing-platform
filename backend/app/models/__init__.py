@@ -4,6 +4,7 @@ from app.models.ai_analysis import AIAnalysis
 from app.models.report import Report
 from app.models.scene import Scene
 from app.models.project import Project
+from app.models.test_module import TestModule
 from app.models.scene_step import SceneStep
 
-__all__ = ["APICase", "Project", "TestRun", "AIAnalysis", "Report", "Scene", "SceneStep"]
+__all__ = ["APICase", "Project", "TestModule", "TestRun", "AIAnalysis", "Report", "Scene", "SceneStep"]
