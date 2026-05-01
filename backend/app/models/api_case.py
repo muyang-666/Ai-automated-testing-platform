@@ -1,6 +1,6 @@
 #models/api_case.py 负责定义：数据库里的“测试用例表”长什么样。
 
-from sqlalchemy import Column, DateTime, Integer, Text, String
+from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text
 from sqlalchemy.sql import func
 
 from app.core.database import Base
@@ -29,5 +29,12 @@ class APICase(Base): # 一定要继承 Base 只有继承了 Base，SQLAlchemy �
     # 它用来存：AI 生成的 pytest 测试代码。它是连接 测试用例描述 AI生成代码 pytest执行 之间的桥梁。
     generated_test_code = Column(Text, nullable=True, comment="AI生成的pytest代码")
     # 补充用例创建时间
+    project_id = Column(Integer, nullable=True, comment="归属项目ID")
+    module_id = Column(Integer, nullable=True, comment="归属模块ID")
+    case_type = Column(String(50), default="正常场景", comment="用例类型")
+    source = Column(String(20), default="manual", comment="来源：manual/llm/rule")
+    priority = Column(String(20), default="P1", comment="优先级：P0/P1/P2")
+    status = Column(String(20), default="active", comment="用例状态：active/disabled/draft")
+    is_deleted = Column(Boolean, default=False, comment="软删除标记")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), comment="创建时间")
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), comment="更新时间")

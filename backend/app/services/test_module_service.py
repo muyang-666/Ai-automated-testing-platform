@@ -172,6 +172,23 @@ def move_module(db: Session, module_id: int, move_data: MoveModuleRequest) -> Te
     return db_module
 
 
+def get_child_module_ids(db: Session, module_id: int) -> list[int]:
+    parent = get_module_by_id(db, module_id)
+    if not parent:
+        return []
+
+    prefix = f"{parent.path}/"
+    children = (
+        db.query(TestModule)
+        .filter(
+            TestModule.path.like(f"{prefix}%"),
+            TestModule.is_deleted == False,
+        )
+        .all()
+    )
+    return [c.id for c in children]
+
+
 def reorder_modules(db: Session, reorder_data: ReorderRequest) -> tuple[bool, str | None]:
     if not reorder_data.ordered_module_ids:
         return False, "排序列表不能为空"

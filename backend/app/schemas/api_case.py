@@ -1,36 +1,41 @@
-# 规范接口的数据输入和输出
+from datetime import datetime
+from typing import Optional
 
-from datetime import datetime # 用于表示时间类型 比如：created_at updated_at 说明返回数据里会带时间。
-from typing import Optional   # Optional 表示：这个字段可以有值，也可以是 None
-
-# BaseModel:这是 Pydantic 最核心的基类。 只要继承它 Pydantic 就会帮你做很多事：校验字段类型 校验必填项 生成接口文档 自动把数据转成对象
-# Field:是用来给字段加规则和说明的
 from pydantic import BaseModel, Field
 
-# 当前端调用“创建测试用例接口”时，请求体必须满足这些规则
+
 class APICaseCreate(BaseModel):
-    # name: str 表示这个字段叫 name，类型必须是字符串。 Field(...) 它表示：这个字段必填。 min_length=1 表示最少 1 个字符。 max_length=100 表示最多 100 个字符。
-    name: str = Field(..., min_length=1, max_length=100, description="用例名称") # description="用例名称" 这个主要用于 Swagger 文档展示。
-    # Optional[str] 说明这个字段可以是：字符串或者 None。 default=None 表示如果前端不传，默认就是空。
+    name: str = Field(..., min_length=1, max_length=100, description="用例名称")
     description: Optional[str] = Field(default=None, max_length=255, description="用例描述")
-    # 这个字段表示 HTTP 请求方法
     method: str = Field(..., min_length=1, max_length=10, description="请求方法")
-    # 表示请求地址
     url: str = Field(..., min_length=1, max_length=255, description="请求地址")
-    # 这个字段可选，用来存请求头
     headers: Optional[str] = Field(default=None, description="请求头JSON字符串")
-    # 表示请求体，可选，类型是字符串
     body: Optional[str] = Field(default=None, description="请求体JSON字符串")
-    # 测试完成后，系统可以拿真实结果和预期结果做对比
     expected_result: Optional[str] = Field(default=None, description="预期结果JSON字符串")
+    project_id: Optional[int] = Field(default=None, description="归属项目ID")
+    module_id: Optional[int] = Field(default=None, description="归属模块ID")
+    case_type: Optional[str] = Field(default="正常场景", description="用例类型")
+    source: Optional[str] = Field(default="manual", description="来源：manual/llm/rule")
+    priority: Optional[str] = Field(default="P1", description="优先级：P0/P1/P2")
+    status: Optional[str] = Field(default="active", description="用例状态：active/disabled/draft")
 
-# 当前端调用“更新测试用例接口”时，请求体必须满足这些规则
-# 这里先直接复用 APICaseCreate 的字段结构，原因是：当前前端编辑弹窗走的是“整表单回填、整表单提交”
-# 也就是说，编辑不是只改一个字段，而是把整条测试用例重新提交给后端
-class APICaseUpdate(APICaseCreate):
-    pass
 
-# 后端返回给前端的数据格式，必须符合这个结构
+class APICaseUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=100, description="用例名称")
+    description: Optional[str] = Field(default=None, max_length=255, description="用例描述")
+    method: Optional[str] = Field(default=None, min_length=1, max_length=10, description="请求方法")
+    url: Optional[str] = Field(default=None, min_length=1, max_length=255, description="请求地址")
+    headers: Optional[str] = Field(default=None, description="请求头JSON字符串")
+    body: Optional[str] = Field(default=None, description="请求体JSON字符串")
+    expected_result: Optional[str] = Field(default=None, description="预期结果JSON字符串")
+    project_id: Optional[int] = Field(default=None, description="归属项目ID")
+    module_id: Optional[int] = Field(default=None, description="归属模块ID")
+    case_type: Optional[str] = Field(default=None, description="用例类型")
+    source: Optional[str] = Field(default=None, description="来源：manual/llm/rule")
+    priority: Optional[str] = Field(default=None, description="优先级：P0/P1/P2")
+    status: Optional[str] = Field(default=None, description="用例状态：active/disabled/draft")
+
+
 class APICaseResponse(BaseModel):
     id: int
     name: str
@@ -41,10 +46,14 @@ class APICaseResponse(BaseModel):
     body: Optional[str]
     expected_result: Optional[str]
     generated_test_code: Optional[str]
+    project_id: Optional[int]
+    module_id: Optional[int]
+    case_type: Optional[str]
+    source: Optional[str]
+    priority: Optional[str]
+    status: Optional[str]
     created_at: datetime
     updated_at: datetime
 
-    # 它允许 Pydantic 直接把 ORM 对象转成响应模型
     class Config:
-        from_attributes = True # 让响应模型可以直接读取 ORM 对象属性
-        # 所以它本质是：让 response schema 和 SQLAlchemy model 更好配合。
+        from_attributes = True
