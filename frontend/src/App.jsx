@@ -1,6 +1,7 @@
 import { Layout, Menu } from "antd";
 import { useState } from "react";
 import CasePage from "./pages/CasePage";
+import FunctionCasePage from "./pages/FunctionCasePage";
 import ProjectPage from "./pages/ProjectPage";
 import RequirementPage from "./pages/RequirementPage";
 import RunPage from "./pages/RunPage";
@@ -15,6 +16,7 @@ export default function App() {
 
   const renderPage = () => {
     if (currentPage === "cases") return <CasePage />;
+    if (currentPage === "functionCases") return <FunctionCasePage />;
     if (currentPage === "projects") return <ProjectPage />;
     if (currentPage === "requirements") return <RequirementPage />;
     if (currentPage === "runs") return <RunPage />;
@@ -34,6 +36,7 @@ export default function App() {
           onClick={(e) => setCurrentPage(e.key)}
           items={[
             { key: "cases", label: "用例管理" },
+            { key: "functionCases", label: "功能用例" },
             { key: "projects", label: "项目管理" },
             { key: "requirements", label: "需求管理" },
             { key: "runs", label: "执行管理" },
