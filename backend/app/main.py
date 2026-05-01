@@ -7,6 +7,7 @@ from app.core.config import settings
 from app.core.database import Base, engine
 
 from app.models.api_case import APICase
+from app.models.project import Project
 from app.models.test_run import TestRun
 from app.models.ai_analysis import AIAnalysis
 from app.models.report import Report
@@ -20,6 +21,7 @@ from app.routers.report_router import router as report_router
 from app.routers.mock_router import router as mock_router
 from app.routers.scene_router import router as scene_router
 from app.routers.parameter_file_router import router as parameter_file_router
+from app.routers.project_router import router as project_router
 
 
 # 根据 models 里定义的表结构，在数据库里把表建出来。 比如你定义了 APICase 这个模型，它对应数据库里就会生成 api_cases 表。
@@ -55,4 +57,5 @@ app.include_router(run_router)
 app.include_router(report_router)
 app.include_router(mock_router)
 app.include_router(parameter_file_router)
+app.include_router(project_router)
 app.include_router(scene_router)

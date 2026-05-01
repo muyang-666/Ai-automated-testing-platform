@@ -2,6 +2,7 @@ from app.schemas.api_case import APICaseCreate, APICaseResponse
 from app.schemas.ai import AICaseGenerateResponse
 from app.schemas.test_run import TestRunExecuteResponse
 from app.schemas.ai_analysis import AIAnalysisResponse, AIAnalysisGenerateResponse
+from app.schemas.project import ProjectCreate, ProjectResponse, ProjectUpdate
 from app.schemas.report import ReportResponse
 
 __all__ = [
@@ -11,5 +12,8 @@ __all__ = [
     "TestRunExecuteResponse",
     "AIAnalysisResponse",
     "AIAnalysisGenerateResponse",
+    "ProjectCreate",
+    "ProjectResponse",
+    "ProjectUpdate",
     "ReportResponse",
 ]
