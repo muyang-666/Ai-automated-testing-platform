@@ -10,6 +10,11 @@ from app.schemas.test_module import (
     TestModuleUpdate,
 )
 from app.schemas.report import ReportResponse
+from app.schemas.requirement_doc import (
+    RequirementDocCreate,
+    RequirementDocResponse,
+    RequirementDocUpdate,
+)
 
 __all__ = [
     "APICaseCreate",
@@ -21,6 +26,9 @@ __all__ = [
     "ProjectCreate",
     "ProjectResponse",
     "ProjectUpdate",
+    "RequirementDocCreate",
+    "RequirementDocResponse",
+    "RequirementDocUpdate",
     "TestModuleCreate",
     "TestModuleResponse",
     "TestModuleTreeResponse",

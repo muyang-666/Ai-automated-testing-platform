@@ -5,6 +5,7 @@ from app.models.report import Report
 from app.models.scene import Scene
 from app.models.project import Project
 from app.models.test_module import TestModule
+from app.models.requirement_doc import RequirementDoc
 from app.models.scene_step import SceneStep
 
-__all__ = ["APICase", "Project", "TestModule", "TestRun", "AIAnalysis", "Report", "Scene", "SceneStep"]
+__all__ = ["APICase", "Project", "RequirementDoc", "TestModule", "TestRun", "AIAnalysis", "Report", "Scene", "SceneStep"]
