@@ -1,59 +1,142 @@
-// 测试用例模块的前端控制台。定义测试内容
-
-// useEffect, useState 这是 React 的两个最常用 Hook：
 import { useEffect, useState } from "react";
-// 从 antd 导入 UI 组件。 AntD 提供现成的后台管理页面积木
 import {
   Button,
   Card,
+  Checkbox,
+  Col,
   Form,
   Input,
+  InputNumber,
   message,
   Modal,
   Popconfirm,
+  Row,
+  Select,
   Space,
   Table,
+  Tag,
 } from "antd";
-// 这个 api 是封装好的 Axios 实例，作用是：前端向后端发 HTTP 请求（如 api.post("/cases", values)），是前后端通信的桥梁。
 import api from "../services/api";
+import { getProjectList } from "../api/project";
+import ModuleTree from "../components/ModuleTree";
 
-// 这表示定义了一个 React 函数组件。可以理解成：这整个页面，就是这个函数返回出来的 UI。
+const CASE_TYPE_OPTIONS = [
+  { label: "正常场景", value: "正常场景" },
+  { label: "异常场景", value: "异常场景" },
+  { label: "边界场景", value: "边界场景" },
+  { label: "参数缺失", value: "参数缺失" },
+  { label: "参数类型错误", value: "参数类型错误" },
+  { label: "权限异常", value: "权限异常" },
+  { label: "其他", value: "其他" },
+];
+
+const SOURCE_OPTIONS = [
+  { label: "manual", value: "manual" },
+  { label: "llm", value: "llm" },
+  { label: "rule", value: "rule" },
+];
+
+const PRIORITY_OPTIONS = [
+  { label: "P0", value: "P0" },
+  { label: "P1", value: "P1" },
+  { label: "P2", value: "P2" },
+];
+
+const STATUS_OPTIONS = [
+  { label: "active", value: "active" },
+  { label: "disabled", value: "disabled" },
+  { label: "draft", value: "draft" },
+];
+
 function CasePage() {
-  const [cases, setCases] = useState([]); // cases = 当前页面展示的测试用例列表；setCases = 更新列表的方法
-  const [loading, setLoading] = useState(false); // loading：当前是否正在加载数据
-  const [submitting, setSubmitting] = useState(false); // submitting：当前是否正在提交表单（创建 / 编辑）
-  const [modalOpen, setModalOpen] = useState(false); // modalOpen：弹窗是否打开
-  const [modalMode, setModalMode] = useState("create"); // modalMode：当前弹窗模式，create=创建，edit=编辑
-  const [currentCase, setCurrentCase] = useState(null); // currentCase：当前正在编辑的测试用例
-  const [form] = Form.useForm(); // form：是 AntD 表单实例，作用：操作表单（读取 / 重置值）
+  const [cases, setCases] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalMode, setModalMode] = useState("create");
+  const [currentCase, setCurrentCase] = useState(null);
+  const [form] = Form.useForm();
 
-  // 这个函数负责：从后端获取测试用例列表。去后端拿最新的测试用例列表，然后同步到页面状态里
-  const fetchCases = async () => {
-    setLoading(true); // 标记开始加载
+  const [projects, setProjects] = useState([]);
+  const [selectedProjectId, setSelectedProjectId] = useState(null);
+  const [selectedModuleId, setSelectedModuleId] = useState(null);
+  const [includeChildren, setIncludeChildren] = useState(false);
+
+  const fetchProjects = async () => {
     try {
-      const res = await api.get("/cases"); // 向后端发 GET /cases 请求（对应后端 @router.get("", summary="查询测试用例列表") 接口）
-      setCases(res.data); // 把后端返回的列表数据存入状态，页面自动刷新
+      const res = await getProjectList();
+      setProjects(res.data || []);
     } catch (error) {
-      message.error("获取用例列表失败"); // 请求失败时弹错误提示
-    } finally {
-      setLoading(false); // 无论成功 / 失败，最终关闭加载状态
+      message.error("获取项目列表失败");
     }
   };
 
-  // 这个函数负责：打开“新建测试用例”弹窗。它不直接创建，只是把弹窗切换到 create 模式
+  useEffect(() => {
+    fetchProjects();
+  }, []);
+
+  useEffect(() => {
+    if (projects.length > 0 && selectedProjectId == null) {
+      setSelectedProjectId(projects[0].id);
+    }
+  }, [projects]);
+
+  const fetchCases = async () => {
+    if (!selectedProjectId) return;
+    setLoading(true);
+    try {
+      const params = { project_id: selectedProjectId };
+      if (selectedModuleId != null) {
+        params.module_id = selectedModuleId;
+        if (includeChildren) {
+          params.include_children = true;
+        }
+      }
+      const res = await api.get("/cases", { params });
+      setCases(res.data);
+    } catch (error) {
+      message.error("获取用例列表失败");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchCases();
+  }, [selectedProjectId, selectedModuleId, includeChildren]);
+
+  const handleProjectChange = (value) => {
+    setSelectedProjectId(value);
+    setSelectedModuleId(null);
+  };
+
+  const handleModuleSelect = (moduleId) => {
+    setSelectedModuleId(moduleId);
+  };
+
+  const handleModuleChange = () => {
+    fetchCases();
+  };
+
   const openCreateModal = () => {
+    if (!selectedProjectId) {
+      message.warning("请先选择项目");
+      return;
+    }
     setModalMode("create");
     setCurrentCase(null);
-    form.resetFields(); // 清空表单，避免复用上一次编辑数据
+    form.resetFields();
+    form.setFieldsValue({
+      project_id: selectedProjectId,
+      module_id: selectedModuleId || undefined,
+      method: "",
+    });
     setModalOpen(true);
   };
 
-  // 这个函数负责：打开“编辑测试用例”弹窗，并把当前行数据回填到表单里
   const openEditModal = (record) => {
     setModalMode("edit");
     setCurrentCase(record);
-
-    // 回填表单数据。这样弹窗打开后，用户看到的是当前用例原来的内容
     form.setFieldsValue({
       name: record.name,
       description: record.description,
@@ -62,159 +145,248 @@ function CasePage() {
       headers: record.headers,
       body: record.body,
       expected_result: record.expected_result,
+      project_id: record.project_id,
+      module_id: record.module_id,
+      case_type: record.case_type,
+      source: record.source,
+      priority: record.priority,
+      status: record.status,
     });
-
     setModalOpen(true);
   };
 
-  // 这个函数负责：关闭弹窗并清空当前编辑状态
   const handleCancelModal = () => {
     setModalOpen(false);
     setCurrentCase(null);
     form.resetFields();
   };
 
-  // 这个函数负责：提交弹窗表单。它同时兼容“创建”和“编辑”
-  // values 参数：来自 AntD 表单的 onFinish，是表单校验通过后自动收集的用户输入
   const handleSubmitCase = async (values) => {
     setSubmitting(true);
     try {
       if (modalMode === "create") {
-        // create 模式：调用后端 POST /cases 接口创建用例
         await api.post("/cases", values);
         message.success("测试用例创建成功");
       } else {
-        // edit 模式：调用后端 PUT /cases/{id} 接口更新用例
         await api.put(`/cases/${currentCase.id}`, values);
         message.success("测试用例更新成功");
       }
-
-      handleCancelModal(); // 成功后关闭弹窗
-      fetchCases(); // 重新拉取列表，页面展示最新数据
+      handleCancelModal();
+      fetchCases();
     } catch (error) {
-      message.error(modalMode === "create" ? "创建测试用例失败" : "更新测试用例失败");
+      message.error(
+        modalMode === "create" ? "创建测试用例失败" : "更新测试用例失败"
+      );
     } finally {
       setSubmitting(false);
     }
   };
 
-  // 这个函数负责：删除某条测试用例
   const handleDeleteCase = async (caseId) => {
     try {
-      await api.delete(`/cases/${caseId}`); // 调用后端 DELETE /cases/{id} 接口删除用例
+      await api.delete(`/cases/${caseId}`);
       message.success("测试用例删除成功");
-      fetchCases(); // 删除成功后重新拉取列表
+      fetchCases();
     } catch (error) {
       message.error("删除测试用例失败");
     }
   };
 
-  // 这个函数负责：让 AI 为某条测试用例生成 pytest 代码。 “AI 生成测试代码”的入口
-    const handleGenerateByLLM = async (caseId) => {
+  const handleGenerateByLLM = async (caseId) => {
+    try {
+      const res = await api.post(`/ai/generate-case/${caseId}`);
+      message.success(`AI生成成功（来源：${res.data.generated_by}）`);
       try {
-        const res = await api.post(`/ai/generate-case/${caseId}`);
-        message.success(`AI生成成功（来源：${res.data.generated_by}）`);
-
-        try {
-          await fetchCases();
-        } catch (refreshError) {
-          message.warning("代码已生成成功，但列表刷新失败，请手动刷新页面");
-        }
-      } catch (error) {
-        const detail = error?.response?.data?.detail || "AI生成失败";
-        message.error(detail);
+        await fetchCases();
+      } catch (refreshError) {
+        message.warning("代码已生成成功，但列表刷新失败，请手动刷新页面");
       }
-    };
-    const handleGenerateByRule = async (caseId) => {
+    } catch (error) {
+      const detail = error?.response?.data?.detail || "AI生成失败";
+      message.error(detail);
+    }
+  };
+
+  const handleGenerateByRule = async (caseId) => {
+    try {
+      const res = await api.post(`/ai/generate-rule-case/${caseId}`);
+      message.success(`规则生成成功（来源：${res.data.generated_by}）`);
       try {
-        const res = await api.post(`/ai/generate-rule-case/${caseId}`);
-        message.success(`规则生成成功（来源：${res.data.generated_by}）`);
-
-        try {
-          await fetchCases();
-        } catch (refreshError) {
-          message.warning("代码已生成成功，但列表刷新失败，请手动刷新页面");
-        }
-      } catch (error) {
-        const detail = error?.response?.data?.detail || "规则生成失败";
-        message.error(detail);
+        await fetchCases();
+      } catch (refreshError) {
+        message.warning("代码已生成成功，但列表刷新失败，请手动刷新页面");
       }
-    };
+    } catch (error) {
+      const detail = error?.response?.data?.detail || "规则生成失败";
+      message.error(detail);
+    }
+  };
 
-  // 页面一打开就自动查询列表
-  useEffect(() => {
-    fetchCases();
-  }, []);
-
-  // 表格列定义 columns。 CasePage 这个页面要把 case 的哪些信息展示给用户
   const columns = [
-    { title: "ID", dataIndex: "id", width: 80 },
-    { title: "名称", dataIndex: "name" },
-    { title: "方法", dataIndex: "method", width: 100 },
-    { title: "URL", dataIndex: "url", ellipsis: true },
+    { title: "ID", dataIndex: "id", width: 60 },
+    { title: "名称", dataIndex: "name", width: 120, ellipsis: true },
+    { title: "方法", dataIndex: "method", width: 80 },
+    { title: "URL", dataIndex: "url", width: 160, ellipsis: true },
     {
-      title: "是否已生成代码",
+      title: "项目ID",
+      dataIndex: "project_id",
+      width: 75,
+      render: (value) => (value != null ? value : "-"),
+    },
+    {
+      title: "模块ID",
+      dataIndex: "module_id",
+      width: 75,
+      render: (value) => (value != null ? value : "-"),
+    },
+    {
+      title: "类型",
+      dataIndex: "case_type",
+      width: 90,
+      ellipsis: true,
+      render: (value) => value || "-",
+    },
+    {
+      title: "来源",
+      dataIndex: "source",
+      width: 70,
+      render: (value) => {
+        if (!value) return "-";
+        const colorMap = { manual: "blue", llm: "green", rule: "orange" };
+        return <Tag color={colorMap[value] || "default"}>{value}</Tag>;
+      },
+    },
+    {
+      title: "优先级",
+      dataIndex: "priority",
+      width: 70,
+      render: (value) => {
+        if (!value) return "-";
+        const colorMap = { P0: "red", P1: "orange", P2: "blue" };
+        return <Tag color={colorMap[value] || "default"}>{value}</Tag>;
+      },
+    },
+    {
+      title: "状态",
+      dataIndex: "status",
+      width: 75,
+      render: (value) => {
+        if (!value) return "-";
+        const colorMap = { active: "green", disabled: "red", draft: "default" };
+        return <Tag color={colorMap[value] || "default"}>{value}</Tag>;
+      },
+    },
+    {
+      title: "已生成代码",
       dataIndex: "generated_test_code",
-      width: 140,
+      width: 110,
       render: (value) => (value ? "是" : "否"),
     },
     {
       title: "操作",
-      width: 500,
+      width: 380,
       render: (_, record) => (
-        <Space>
-          <Button onClick={() => openEditModal(record)}>编辑</Button>
-
+        <Space size="small">
+          <Button size="small" onClick={() => openEditModal(record)}>
+            编辑
+          </Button>
           <Popconfirm
             title="确认删除这条测试用例吗？"
             okText="确认"
             cancelText="取消"
             onConfirm={() => handleDeleteCase(record.id)}
           >
-            <Button danger>删除</Button>
+            <Button size="small" danger>
+              删除
+            </Button>
           </Popconfirm>
-            <Button type="primary" onClick={() => handleGenerateByLLM(record.id)}>
-              AI生成代码
-            </Button>
-            <Button onClick={() => handleGenerateByRule(record.id)}>
-              规则生成
-            </Button>
+          <Button
+            size="small"
+            type="primary"
+            onClick={() => handleGenerateByLLM(record.id)}
+          >
+            AI生成
+          </Button>
+          <Button size="small" onClick={() => handleGenerateByRule(record.id)}>
+            规则生成
+          </Button>
         </Space>
       ),
     },
   ];
 
   return (
-    // Space 表示竖向排列页面内容。 这次优化后，页面主结构改成：顶部操作区 + 列表区
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
-      <Card
-        title="测试用例列表"
-        extra={
-          <Button type="primary" onClick={openCreateModal}>
-            新建测试用例
-          </Button>
-        }
-      >
-        <Table
-          rowKey="id"
-          columns={columns}
-          dataSource={cases}
-          loading={loading}
-          pagination={false}
-        />
+      <Card>
+        <Row justify="space-between" align="middle">
+          <Col>
+            <Space>
+              <span>项目：</span>
+              <Select
+                placeholder="请选择项目"
+                value={selectedProjectId}
+                onChange={handleProjectChange}
+                options={projects.map((p) => ({ label: p.name, value: p.id }))}
+                style={{ width: 200 }}
+                loading={projects.length === 0}
+              />
+            </Space>
+          </Col>
+          <Col>
+            <Button type="primary" onClick={openCreateModal}>
+              新建测试用例
+            </Button>
+          </Col>
+        </Row>
       </Card>
 
-      {/* Modal：这里复用同一套表单来做“创建”和“编辑” */}
+      <div style={{ display: "flex", gap: 16 }}>
+        <div style={{ width: 260, flexShrink: 0 }}>
+          <ModuleTree
+            projectId={selectedProjectId}
+            selectedModuleId={selectedModuleId}
+            onSelect={handleModuleSelect}
+            onChange={handleModuleChange}
+          />
+          <Checkbox
+            checked={includeChildren}
+            onChange={(e) => setIncludeChildren(e.target.checked)}
+            style={{ marginTop: 8 }}
+          >
+            包含子模块
+          </Checkbox>
+        </div>
+
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <Card title="测试用例列表">
+            <Table
+              rowKey="id"
+              columns={columns}
+              dataSource={cases}
+              loading={loading}
+              pagination={false}
+              scroll={{ x: 1400 }}
+              size="small"
+            />
+          </Card>
+        </div>
+      </div>
+
       <Modal
         title={modalMode === "create" ? "新建测试用例" : "编辑测试用例"}
         open={modalOpen}
         onCancel={handleCancelModal}
-        onOk={() => form.submit()} // 点击确定按钮时，主动触发表单提交
+        onOk={() => form.submit()}
         confirmLoading={submitting}
         destroyOnClose
+        width={640}
       >
         <Form form={form} layout="vertical" onFinish={handleSubmitCase}>
-          <Form.Item name="name" label="用例名称" rules={[{ required: true, message: "请输入用例名称" }]}>
+          <Form.Item
+            name="name"
+            label="用例名称"
+            rules={[{ required: true, message: "请输入用例名称" }]}
+          >
             <Input />
           </Form.Item>
 
@@ -222,32 +394,90 @@ function CasePage() {
             <Input />
           </Form.Item>
 
-          <Form.Item name="method" label="请求方法" rules={[{ required: true, message: "请输入请求方法" }]}>
+          <Form.Item
+            name="method"
+            label="请求方法"
+            rules={[{ required: true, message: "请输入请求方法" }]}
+          >
             <Input placeholder="POST" />
           </Form.Item>
 
-          <Form.Item name="url" label="请求地址" rules={[{ required: true, message: "请输入请求地址" }]}>
+          <Form.Item
+            name="url"
+            label="请求地址"
+            rules={[{ required: true, message: "请输入请求地址" }]}
+          >
             <Input placeholder="http://example.com/api/login" />
           </Form.Item>
 
           <Form.Item name="headers" label="请求头">
             <Input.TextArea
-              rows={3}
+              rows={2}
               placeholder='{"Content-Type": "application/json"}'
             />
           </Form.Item>
 
           <Form.Item name="body" label="请求体">
             <Input.TextArea
-              rows={4}
+              rows={3}
               placeholder='{"username": "test", "password": "123456"}'
             />
           </Form.Item>
 
           <Form.Item name="expected_result" label="预期结果">
             <Input.TextArea
-              rows={4}
+              rows={3}
               placeholder='{"code": 200, "message": "success"}'
+            />
+          </Form.Item>
+
+          <Form.Item
+            name="project_id"
+            label="归属项目"
+            rules={[{ required: true, message: "请选择项目" }]}
+          >
+            <Select
+              placeholder="请选择项目"
+              options={projects.map((p) => ({ label: p.name, value: p.id }))}
+            />
+          </Form.Item>
+
+          <Form.Item name="module_id" label="归属模块">
+            <InputNumber
+              placeholder="模块ID（可选）"
+              style={{ width: "100%" }}
+            />
+          </Form.Item>
+
+          <Form.Item name="case_type" label="用例类型">
+            <Select
+              placeholder="请选择用例类型"
+              allowClear
+              options={CASE_TYPE_OPTIONS}
+            />
+          </Form.Item>
+
+          <Form.Item name="source" label="来源">
+            <Select
+              placeholder="请选择来源"
+              allowClear
+              options={SOURCE_OPTIONS}
+            />
+          </Form.Item>
+
+          <Form.Item name="priority" label="优先级">
+            <Select
+              placeholder="请选择优先级"
+              allowClear
+              options={PRIORITY_OPTIONS}
+            />
+          </Form.Item>
+
+          <Form.Item name="status" label="状态">
+            <Select
+              placeholder="请选择状态"
+              allowClear
+              options={STATUS_OPTIONS}
             />
           </Form.Item>
         </Form>
