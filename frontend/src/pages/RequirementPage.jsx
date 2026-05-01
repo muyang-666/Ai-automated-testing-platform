@@ -23,6 +23,10 @@ import {
   getRequirementList,
   updateRequirement,
 } from "../api/requirement";
+import {
+  generateFunctionCasesFromRequirement,
+  saveGeneratedFunctionCases,
+} from "../api/functionCase";
 import ModuleTree from "../components/ModuleTree";
 
 function getErrorMessage(error) {
@@ -90,6 +94,13 @@ export default function RequirementPage() {
   const [keyword, setKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
+
+  const [generating, setGenerating] = useState(false);
+  const [generateModalOpen, setGenerateModalOpen] = useState(false);
+  const [generatedCases, setGeneratedCases] = useState([]);
+  const [selectedCaseKeys, setSelectedCaseKeys] = useState([]);
+  const [generatedMeta, setGeneratedMeta] = useState(null);
+  const [generateErrors, setGenerateErrors] = useState([]);
 
   const fetchProjects = async () => {
     try {
@@ -235,6 +246,58 @@ export default function RequirementPage() {
     }
   };
 
+  const handleGenerate = async (record) => {
+    setGenerating(true);
+    setGenerateErrors([]);
+    try {
+      const res = await generateFunctionCasesFromRequirement({
+        requirement_id: record.id,
+      });
+      const data = res.data;
+      const casesWithKey = (data.cases || []).map((c, i) => ({
+        ...c,
+        _temp_key: `gen-${i}-${Date.now()}`,
+      }));
+      setGeneratedCases(casesWithKey);
+      setSelectedCaseKeys([]);
+      setGeneratedMeta({
+        requirement_id: data.requirement_id,
+        project_id: data.project_id,
+        module_id: data.module_id,
+      });
+      setGenerateErrors(data.errors || []);
+      setGenerateModalOpen(true);
+    } catch (error) {
+      message.error(getErrorMessage(error));
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const handleSaveSelected = async () => {
+    if (selectedCaseKeys.length === 0) {
+      message.warning("请选择要保存的用例");
+      return;
+    }
+    const selectedCases = generatedCases
+      .filter((c) => selectedCaseKeys.includes(c._temp_key))
+      .map(({ _temp_key, ...rest }) => rest);
+    try {
+      const res = await saveGeneratedFunctionCases({
+        requirement_id: generatedMeta.requirement_id,
+        project_id: generatedMeta.project_id,
+        module_id: generatedMeta.module_id,
+        cases: selectedCases,
+      });
+      message.success(`已保存 ${res.data.saved_count} 条功能测试用例`);
+      setGenerateModalOpen(false);
+      setGeneratedCases([]);
+      setGeneratedMeta(null);
+    } catch (error) {
+      message.error(getErrorMessage(error));
+    }
+  };
+
   const handleSearch = (value) => {
     setKeyword(value);
   };
@@ -285,11 +348,20 @@ export default function RequirementPage() {
     },
     {
       title: "操作",
-      width: 260,
+      width: 340,
       render: (_, record) => (
         <Space size="small">
           <Button size="small" onClick={() => openDetailModal(record)}>
             查看详情
+          </Button>
+          <Button
+            size="small"
+            type="primary"
+            ghost
+            loading={generating}
+            onClick={() => handleGenerate(record)}
+          >
+            生成用例
           </Button>
           <Button size="small" onClick={() => openEditModal(record)}>
             编辑
@@ -494,6 +566,88 @@ export default function RequirementPage() {
             )}
           </div>
         )}
+      </Modal>
+
+      <Modal
+        title="生成结果预览"
+        open={generateModalOpen}
+        onCancel={() => setGenerateModalOpen(false)}
+        footer={[
+          <Button key="cancel" onClick={() => setGenerateModalOpen(false)}>
+            关闭
+          </Button>,
+          <Button
+            key="save"
+            type="primary"
+            disabled={selectedCaseKeys.length === 0}
+            onClick={handleSaveSelected}
+          >
+            保存选中用例 ({selectedCaseKeys.length})
+          </Button>,
+        ]}
+        width={900}
+      >
+        {generateErrors.length > 0 && (
+          <div
+            style={{
+              background: "#fff2f0",
+              border: "1px solid #ffccc7",
+              borderRadius: 4,
+              padding: 12,
+              marginBottom: 12,
+            }}
+          >
+            <strong>校验警告：</strong>
+            {generateErrors.map((err, i) => (
+              <div key={i} style={{ color: "#cf1322" }}>{err}</div>
+            ))}
+          </div>
+        )}
+        <Table
+          rowKey="_temp_key"
+          dataSource={generatedCases}
+          rowSelection={{
+            selectedRowKeys: selectedCaseKeys,
+            onChange: setSelectedCaseKeys,
+          }}
+          columns={[
+            { title: "编号", dataIndex: "case_code", width: 110, ellipsis: true, render: (v) => v || "-" },
+            { title: "用例名称", dataIndex: "case_name", width: 140, ellipsis: true },
+            { title: "类型", dataIndex: "case_type", width: 100 },
+            { title: "优先级", dataIndex: "priority", width: 70 },
+            {
+              title: "前置条件",
+              dataIndex: "precondition",
+              width: 140,
+              ellipsis: true,
+              render: (v) => v || "-",
+            },
+            {
+              title: "测试步骤",
+              dataIndex: "steps_json",
+              width: 180,
+              ellipsis: true,
+              render: (v) => (v ? JSON.stringify(v) : "-"),
+            },
+            {
+              title: "测试数据",
+              dataIndex: "test_data_json",
+              width: 160,
+              ellipsis: true,
+              render: (v) => (v ? JSON.stringify(v) : "-"),
+            },
+            {
+              title: "预期结果",
+              dataIndex: "expected_result",
+              width: 160,
+              ellipsis: true,
+              render: (v) => v || "-",
+            },
+          ]}
+          pagination={false}
+          scroll={{ x: 1100 }}
+          size="small"
+        />
       </Modal>
     </Space>
   );

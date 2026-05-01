@@ -9,12 +9,22 @@ from app.schemas.function_case import (
     FunctionCaseResponse,
     FunctionCaseUpdate,
 )
+from app.schemas.function_case_generation import (
+    GenerateFunctionCasesRequest,
+    GenerateFunctionCasesResponse,
+    SaveGeneratedFunctionCasesRequest,
+    SaveGeneratedFunctionCasesResponse,
+)
 from app.services.function_case_service import (
     create_function_case,
     delete_function_case,
     get_function_case_by_id,
     get_function_case_list,
     update_function_case,
+)
+from app.services.function_case_generation_service import (
+    generate_function_cases_from_requirement,
+    save_generated_function_cases,
 )
 
 router = APIRouter(prefix="/function-cases", tags=["FunctionCases"])
@@ -50,6 +60,31 @@ def list_func_cases(
         priority=priority,
         status=status,
     )
+
+
+@router.post(
+    "/generate-from-requirement",
+    response_model=GenerateFunctionCasesResponse,
+    summary="根据需求文本生成功能测试用例",
+)
+def generate_func_cases_from_requirement(
+    request: GenerateFunctionCasesRequest, db: Session = Depends(get_db)
+):
+    return generate_function_cases_from_requirement(db, request)
+
+
+@router.post(
+    "/save-generated",
+    response_model=SaveGeneratedFunctionCasesResponse,
+    summary="保存勾选的功能测试用例",
+)
+def save_generated_func_cases(
+    request: SaveGeneratedFunctionCasesRequest, db: Session = Depends(get_db)
+):
+    try:
+        return save_generated_function_cases(db, request)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/{case_id}", response_model=FunctionCaseResponse, summary="查询功能测试用例详情")

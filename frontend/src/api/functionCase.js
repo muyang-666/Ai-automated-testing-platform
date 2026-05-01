@@ -19,3 +19,11 @@ export function updateFunctionCase(caseId, data) {
 export function deleteFunctionCase(caseId) {
   return request.delete(`/function-cases/${caseId}`);
 }
+
+export function generateFunctionCasesFromRequirement(data) {
+  return request.post("/function-cases/generate-from-requirement", data);
+}
+
+export function saveGeneratedFunctionCases(data) {
+  return request.post("/function-cases/save-generated", data);
+}
