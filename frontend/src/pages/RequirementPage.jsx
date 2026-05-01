@@ -1,0 +1,500 @@
+import { useEffect, useState } from "react";
+import {
+  Button,
+  Card,
+  Checkbox,
+  Col,
+  Form,
+  Input,
+  InputNumber,
+  message,
+  Modal,
+  Popconfirm,
+  Row,
+  Select,
+  Space,
+  Table,
+  Tag,
+} from "antd";
+import { getProjectList } from "../api/project";
+import {
+  createRequirement,
+  deleteRequirement,
+  getRequirementList,
+  updateRequirement,
+} from "../api/requirement";
+import ModuleTree from "../components/ModuleTree";
+
+function getErrorMessage(error) {
+  return (
+    error?.response?.data?.detail ||
+    error?.response?.data?.message ||
+    error?.message ||
+    "操作失败"
+  );
+}
+
+const STATUS_OPTIONS = [
+  { label: "全部", value: "" },
+  { label: "draft", value: "draft" },
+  { label: "confirmed", value: "confirmed" },
+  { label: "disabled", value: "disabled" },
+];
+
+const STATUS_TAG_MAP = {
+  draft: { color: "default", label: "draft" },
+  confirmed: { color: "success", label: "confirmed" },
+  disabled: { color: "error", label: "disabled" },
+};
+
+const TYPE_OPTIONS = [
+  { label: "全部", value: "" },
+  { label: "login", value: "login" },
+  { label: "user", value: "user" },
+  { label: "product", value: "product" },
+  { label: "order", value: "order" },
+  { label: "payment", value: "payment" },
+  { label: "other", value: "other" },
+];
+
+const FORM_STATUS_OPTIONS = [
+  { label: "draft", value: "draft" },
+  { label: "confirmed", value: "confirmed" },
+  { label: "disabled", value: "disabled" },
+];
+
+const FORM_TYPE_OPTIONS = [
+  { label: "login", value: "login" },
+  { label: "user", value: "user" },
+  { label: "product", value: "product" },
+  { label: "order", value: "order" },
+  { label: "payment", value: "payment" },
+  { label: "other", value: "other" },
+];
+
+export default function RequirementPage() {
+  const [requirements, setRequirements] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [modalMode, setModalMode] = useState("create");
+  const [editingRequirement, setEditingRequirement] = useState(null);
+  const [detailModalOpen, setDetailModalOpen] = useState(false);
+  const [detailRequirement, setDetailRequirement] = useState(null);
+  const [form] = Form.useForm();
+
+  const [projects, setProjects] = useState([]);
+  const [selectedProjectId, setSelectedProjectId] = useState(null);
+  const [selectedModuleId, setSelectedModuleId] = useState(null);
+  const [includeChildren, setIncludeChildren] = useState(false);
+  const [keyword, setKeyword] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [typeFilter, setTypeFilter] = useState("");
+
+  const fetchProjects = async () => {
+    try {
+      const res = await getProjectList();
+      setProjects(res.data || []);
+    } catch (error) {
+      message.error(getErrorMessage(error));
+    }
+  };
+
+  useEffect(() => {
+    fetchProjects();
+  }, []);
+
+  useEffect(() => {
+    if (projects.length > 0 && selectedProjectId == null) {
+      setSelectedProjectId(projects[0].id);
+    }
+  }, [projects]);
+
+  useEffect(() => {
+    if (selectedProjectId) {
+      fetchRequirements();
+    }
+  }, [
+    selectedProjectId,
+    selectedModuleId,
+    includeChildren,
+    keyword,
+    statusFilter,
+    typeFilter,
+  ]);
+
+  const fetchRequirements = async () => {
+    if (!selectedProjectId) return;
+    setLoading(true);
+    try {
+      const params = { project_id: selectedProjectId };
+      if (selectedModuleId != null) {
+        params.module_id = selectedModuleId;
+        if (includeChildren) {
+          params.include_children = true;
+        }
+      }
+      if (keyword) params.keyword = keyword;
+      if (statusFilter) params.status = statusFilter;
+      if (typeFilter) params.requirement_type = typeFilter;
+      const res = await getRequirementList(params);
+      setRequirements(res.data || []);
+    } catch (error) {
+      message.error(getErrorMessage(error));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleProjectChange = (value) => {
+    setSelectedProjectId(value);
+    setSelectedModuleId(null);
+  };
+
+  const handleModuleSelect = (moduleId) => {
+    setSelectedModuleId(moduleId);
+  };
+
+  const handleModuleChange = () => {
+    fetchRequirements();
+  };
+
+  const openCreateModal = () => {
+    if (!selectedProjectId) {
+      message.warning("请先选择项目");
+      return;
+    }
+    setModalMode("create");
+    setEditingRequirement(null);
+    form.resetFields();
+    form.setFieldsValue({
+      project_id: selectedProjectId,
+      module_id: selectedModuleId || undefined,
+      status: "confirmed",
+    });
+    setModalOpen(true);
+  };
+
+  const openEditModal = (record) => {
+    setModalMode("edit");
+    setEditingRequirement(record);
+    form.setFieldsValue({
+      project_id: record.project_id,
+      module_id: record.module_id,
+      title: record.title,
+      content: record.content,
+      requirement_type: record.requirement_type,
+      status: record.status,
+      remark: record.remark,
+    });
+    setModalOpen(true);
+  };
+
+  const openDetailModal = (record) => {
+    setDetailRequirement(record);
+    setDetailModalOpen(true);
+  };
+
+  const closeModal = () => {
+    setModalOpen(false);
+    setEditingRequirement(null);
+    form.resetFields();
+  };
+
+  const handleSubmit = async () => {
+    try {
+      const values = await form.validateFields();
+      setSubmitting(true);
+
+      if (modalMode === "create") {
+        await createRequirement(values);
+        message.success("需求文本创建成功");
+      } else {
+        await updateRequirement(editingRequirement.id, values);
+        message.success("需求文本更新成功");
+      }
+
+      closeModal();
+      fetchRequirements();
+    } catch (error) {
+      if (error?.response) {
+        message.error(getErrorMessage(error));
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDelete = async (requirementId) => {
+    try {
+      await deleteRequirement(requirementId);
+      message.success("需求文本删除成功");
+      fetchRequirements();
+    } catch (error) {
+      message.error(getErrorMessage(error));
+    }
+  };
+
+  const handleSearch = (value) => {
+    setKeyword(value);
+  };
+
+  const handleStatusChange = (value) => {
+    setStatusFilter(value);
+  };
+
+  const handleTypeChange = (value) => {
+    setTypeFilter(value);
+  };
+
+  const columns = [
+    { title: "ID", dataIndex: "id", width: 60 },
+    { title: "标题", dataIndex: "title", width: 200, ellipsis: true },
+    {
+      title: "模块ID",
+      dataIndex: "module_id",
+      width: 80,
+      render: (value) => (value != null ? value : "-"),
+    },
+    {
+      title: "类型",
+      dataIndex: "requirement_type",
+      width: 90,
+      render: (value) => value || "-",
+    },
+    {
+      title: "状态",
+      dataIndex: "status",
+      width: 100,
+      render: (value) => {
+        const tag = STATUS_TAG_MAP[value] || { color: "default", label: value };
+        return <Tag color={tag.color}>{tag.label}</Tag>;
+      },
+    },
+    {
+      title: "创建时间",
+      dataIndex: "created_at",
+      width: 160,
+      render: (value) => (value ? new Date(value).toLocaleString("zh-CN") : "-"),
+    },
+    {
+      title: "更新时间",
+      dataIndex: "updated_at",
+      width: 160,
+      render: (value) => (value ? new Date(value).toLocaleString("zh-CN") : "-"),
+    },
+    {
+      title: "操作",
+      width: 260,
+      render: (_, record) => (
+        <Space size="small">
+          <Button size="small" onClick={() => openDetailModal(record)}>
+            查看详情
+          </Button>
+          <Button size="small" onClick={() => openEditModal(record)}>
+            编辑
+          </Button>
+          <Popconfirm
+            title="确认删除该需求文本吗？"
+            okText="确认"
+            cancelText="取消"
+            onConfirm={() => handleDelete(record.id)}
+          >
+            <Button size="small" danger>
+              删除
+            </Button>
+          </Popconfirm>
+        </Space>
+      ),
+    },
+  ];
+
+  return (
+    <Space direction="vertical" size="large" style={{ width: "100%" }}>
+      <Card>
+        <Row justify="space-between" align="middle" gutter={[16, 8]}>
+          <Col>
+            <Space wrap>
+              <span>项目：</span>
+              <Select
+                placeholder="请选择项目"
+                value={selectedProjectId}
+                onChange={handleProjectChange}
+                options={projects.map((p) => ({ label: p.name, value: p.id }))}
+                style={{ width: 200 }}
+              />
+              <Input.Search
+                placeholder="搜索标题或内容"
+                allowClear
+                onSearch={handleSearch}
+                style={{ width: 200 }}
+              />
+              <Select
+                placeholder="状态筛选"
+                options={STATUS_OPTIONS}
+                value={statusFilter}
+                onChange={handleStatusChange}
+                style={{ width: 130 }}
+              />
+              <Select
+                placeholder="类型筛选"
+                options={TYPE_OPTIONS}
+                value={typeFilter}
+                onChange={handleTypeChange}
+                style={{ width: 130 }}
+              />
+            </Space>
+          </Col>
+          <Col>
+            <Button type="primary" onClick={openCreateModal}>
+              新增需求
+            </Button>
+          </Col>
+        </Row>
+      </Card>
+
+      <div style={{ display: "flex", gap: 16 }}>
+        <div style={{ width: 260, flexShrink: 0 }}>
+          <ModuleTree
+            projectId={selectedProjectId}
+            selectedModuleId={selectedModuleId}
+            onSelect={handleModuleSelect}
+            onChange={handleModuleChange}
+          />
+          <Checkbox
+            checked={includeChildren}
+            onChange={(e) => setIncludeChildren(e.target.checked)}
+            style={{ marginTop: 8 }}
+          >
+            包含子模块
+          </Checkbox>
+        </div>
+
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <Card title="需求文本列表">
+            <Table
+              rowKey="id"
+              columns={columns}
+              dataSource={requirements}
+              loading={loading}
+              pagination={false}
+              scroll={{ x: 1000 }}
+              size="small"
+            />
+          </Card>
+        </div>
+      </div>
+
+      <Modal
+        title={modalMode === "create" ? "新增需求文本" : "编辑需求文本"}
+        open={modalOpen}
+        onOk={handleSubmit}
+        onCancel={closeModal}
+        confirmLoading={submitting}
+        destroyOnClose
+        width={640}
+      >
+        <Form form={form} layout="vertical">
+          <Form.Item
+            name="project_id"
+            label="归属项目"
+            rules={[{ required: true, message: "请选择项目" }]}
+          >
+            <Select
+              placeholder="请选择项目"
+              options={projects.map((p) => ({ label: p.name, value: p.id }))}
+            />
+          </Form.Item>
+
+          <Form.Item name="module_id" label="归属模块">
+            <InputNumber
+              placeholder="模块ID（可选）"
+              style={{ width: "100%" }}
+            />
+          </Form.Item>
+
+          <Form.Item
+            name="title"
+            label="需求标题"
+            rules={[{ required: true, message: "请输入需求标题" }]}
+          >
+            <Input placeholder="请输入需求标题" maxLength={200} />
+          </Form.Item>
+
+          <Form.Item
+            name="content"
+            label="需求内容"
+            rules={[{ required: true, message: "请输入需求内容" }]}
+          >
+            <Input.TextArea rows={5} placeholder="请输入需求文本内容" />
+          </Form.Item>
+
+          <Form.Item name="requirement_type" label="需求类型">
+            <Select
+              placeholder="请选择需求类型"
+              allowClear
+              options={FORM_TYPE_OPTIONS}
+            />
+          </Form.Item>
+
+          <Form.Item name="status" label="状态">
+            <Select options={FORM_STATUS_OPTIONS} />
+          </Form.Item>
+
+          <Form.Item name="remark" label="备注">
+            <Input.TextArea rows={2} placeholder="备注（可选）" />
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="需求详情"
+        open={detailModalOpen}
+        onCancel={() => setDetailModalOpen(false)}
+        footer={[
+          <Button key="close" onClick={() => setDetailModalOpen(false)}>
+            关闭
+          </Button>,
+        ]}
+        width={640}
+      >
+        {detailRequirement && (
+          <div>
+            <p><strong>标题：</strong>{detailRequirement.title}</p>
+            <p><strong>类型：</strong>{detailRequirement.requirement_type || "-"}</p>
+            <p><strong>状态：</strong>{detailRequirement.status}</p>
+            <p><strong>模块ID：</strong>{detailRequirement.module_id ?? "-"}</p>
+            <p><strong>内容：</strong></p>
+            <div
+              style={{
+                background: "#f5f5f5",
+                padding: 12,
+                borderRadius: 4,
+                whiteSpace: "pre-wrap",
+                maxHeight: 300,
+                overflow: "auto",
+              }}
+            >
+              {detailRequirement.content}
+            </div>
+            {detailRequirement.remark && (
+              <>
+                <p style={{ marginTop: 12 }}><strong>备注：</strong></p>
+                <div
+                  style={{
+                    background: "#f5f5f5",
+                    padding: 12,
+                    borderRadius: 4,
+                    whiteSpace: "pre-wrap",
+                  }}
+                >
+                  {detailRequirement.remark}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </Modal>
+    </Space>
+  );
+}
