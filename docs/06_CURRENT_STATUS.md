@@ -4,38 +4,52 @@
 
 ## 当前阶段
 
-**第一阶段改造前准备** — 文档建设与方案设计阶段。
-
-当前已完成 V1.5 Demo，具备完整的单接口自动化测试闭环。在开始编码改造之前，先完成项目文档建设，明确改造目标和约束。
+**第一阶段已完成，准备进入第二阶段** — 需求文本管理 + 功能测试用例管理。
 
 ---
 
-## 一、第一阶段范围
+## 一、第一阶段已完成内容
 
 **第一阶段名称：「项目管理 + 模块目录树 + 接口测试用例按项目/模块分类」**
 
-### 第一阶段只做
+### 1.1 后端
 
-1. 新增项目管理（`projects` 表 + CRUD 接口 + 前端页面）
-2. 新增模块目录树（`modules` 表 + 多级树形结构 + CRUD 接口 + 前端树形组件）
-3. 给现有 `api_cases` 表增加以下字段：
-   - `project_id` — 归属项目（必填，外键）
-   - `module_id` — 归属模块（可选，外键）
-   - `case_type` — 用例类型（默认 `api`）
-   - `source` — 用例来源（默认 `manual`）
-   - `priority` — 优先级（默认 `P2`）
-   - `status` — 用例状态（默认 `draft`）
-   - `is_deleted` — 软删除标记（默认 `false`）
-4. 用例管理页支持按项目筛选
-5. 用例管理页支持按模块筛选/浏览
-6. 新建/编辑接口测试用例时可以选择项目和模块
-7. 保留原有用例 CRUD、AI 生成代码、规则生成代码、pytest 执行、AI 分析、场景管理、报告生成、参数管理能力
+| 任务 | 内容 | 关键文件 |
+|------|------|---------|
+| Project CRUD | `projects` 表 + 5 个 REST 接口（增/查列表/查详情/改/软删除） | `models/project.py`, `schemas/project.py`, `services/project_service.py`, `routers/project_router.py` |
+| TestModule CRUD + Tree | `test_modules` 表 + 7 个 REST 接口（增/树查询/详情/改/软删除/移动/排序） | `models/test_module.py`, `schemas/test_module.py`, `services/test_module_service.py`, `routers/module_router.py` |
+| api_cases 字段扩展 | 新增 `project_id`, `module_id`, `case_type`, `source`, `priority`, `status`, `is_deleted` 共 7 个字段 | `models/api_case.py` |
+| /cases 筛选增强 | GET /cases 支持 `project_id`, `module_id`, `include_children`, `keyword`, `case_type`, `source`, `priority`, `status` 共 8 个筛选参数 | `services/case_service.py`, `routers/case_router.py` |
+| 用例软删除 | DELETE /cases/{id} 从物理删除改为软删除（`is_deleted = True`） | `services/case_service.py` |
+| 主入口注册 | 在 `main.py` 注册 Project 和 Module 模型及路由 | `main.py` |
+
+### 1.2 前端
+
+| 任务 | 内容 | 关键文件 |
+|------|------|---------|
+| ProjectPage | 项目管理页面：项目列表、新增、编辑、删除、keyword 搜索、status 筛选 | `pages/ProjectPage.jsx`, `api/project.js` |
+| ModuleTree 组件 | 可复用模块目录树组件：树展示、新增一级/子模块、编辑、删除空模块、同级上移/下移排序 | `components/ModuleTree.jsx`, `api/module.js` |
+| CasePage 改造 | 接入项目选择 + ModuleTree 筛选 + 新增/编辑表单支持新字段（project_id/module_id/case_type/source/priority/status） | `pages/CasePage.jsx` |
+| 导航更新 | App.jsx 增加"项目管理"入口 | `App.jsx` |
+
+### 1.3 保留的核心链路（零改动）
+
+以下 6 个核心文件在整个第一阶段**一行未改**：
+
+| 文件 | 承载的链路 |
+|------|-----------|
+| `backend/app/services/ai_service.py` | LLM 代码生成 + 规则生成 |
+| `backend/app/services/run_service.py` | 测试执行编排 |
+| `backend/app/services/analysis_service.py` | AI 失败分析 |
+| `backend/app/services/report_service.py` | 项目报告生成 |
+| `backend/app/utils/pytest_runner.py` | pytest subprocess 执行器 |
+| `backend/app/utils/file_writer.py` | 测试代码文件落盘 |
 
 ---
 
-## 二、第一阶段暂不做
+## 二、第一阶段未做（延后到后续阶段）
 
-以下功能明确不在第一阶段范围，不允许以任何理由提前实现：
+以下功能明确不在第一阶段范围，未实现：
 
 1. 需求文本管理
 2. 功能测试用例管理
@@ -51,9 +65,21 @@
 
 ---
 
-## 三、核心文件禁止修改规则
+## 三、下一阶段目标
 
-以下 6 个文件在第一阶段 **完全禁止修改**，不允许新增函数、不允许新增参数、不允许修改已有逻辑：
+**第二阶段：「需求文本管理 + 功能测试用例管理」**
+
+计划内容：
+1. 新增需求文本管理（`requirements` 表 + CRUD 接口 + 前端页面）
+2. 新增功能测试用例管理（`functional_cases` 表 + CRUD 接口 + 前端页面）
+3. 基于需求文本，LLM 生成功能测试用例
+4. 保留第一阶段所有能力
+
+---
+
+## 四、核心文件禁止修改规则（延续至后续阶段）
+
+以下 6 个文件在后续阶段仍**禁止修改**，除非明确解禁：
 
 | 禁止修改的文件 | 承载的链路 | 禁止级别 |
 |---------------|-----------|---------|
@@ -64,64 +90,15 @@
 | `backend/app/utils/pytest_runner.py` | pytest subprocess 执行器 | 🔴 完全禁止 |
 | `backend/app/utils/file_writer.py` | 测试代码文件落盘 | 🔴 完全禁止 |
 
-> **规则**：以上文件在第一阶段中一行代码都不能改。如改造过程中发现必须修改以上文件才能完成目标，则停止改造，重新设计方案，在不修改这些文件的前提下实现目标。
+> **规则**：以上文件在后续阶段中一行代码都不能改。如改造过程中发现必须修改以上文件才能完成目标，则停止改造，重新设计方案。
 
 ---
 
-## 四、默认项目与默认模块规则
-
-### 4.1 默认测试项目
-
-1. 系统允许创建一个"默认测试项目"（名称可自定义，如"默认项目"）
-2. 如果数据库重建（删除 `.db` 文件后重启），初始化后用户可手动创建默认测试项目
-3. 旧 Demo 数据如果存在（`api_cases` 表中有存量数据），可临时归属到默认测试项目
-4. 旧数据迁移策略：改造后首次启动时，若存在无 `project_id` 的用例，将其批量归属到默认测试项目
-
-### 4.2 project_id 规则
-
-1. 新增用例时 `project_id` **必须指定**（不允许为空）
-2. 编辑用例时不允许将 `project_id` 置空
-
-### 4.3 module_id 规则
-
-1. `module_id` **可以为空**（null）
-2. 如果用户没有选择模块，用例归属到"未分类"
-
-### 4.4 默认模块（"未分类"）
-
-1. 可以在每个项目下创建一个默认模块，名称为"未分类"
-2. 默认模块不可删除
-3. 默认模块的 `parent_id` 为 null（一级模块）
-4. 第一阶段不强制所有用例必须有 `module_id`
-
----
-
-## 五、模块删除规则
-
-1. **仅允许删除空模块** — 模块下无子模块且无用例时才能删除
-2. 如果模块下存在子模块，**不允许删除**（先删除子模块）
-3. 如果模块下存在接口测试用例（含软删除用例），**不允许删除**（先将用例移走或删除）
-4. **删除校验必须以后端为准** — 后端接口负责判断模块是否可删除
-5. **前端只负责提示** — 前端根据后端返回的错误信息提示用户，不作为最终判断
-6. **第一阶段不做级联删除** — 删除模块时不会自动删除子模块或用例
-
----
-
-## 六、模块排序规则
-
-1. 第一阶段支持**同级排序**（同一父模块下的子模块之间排序）
-2. 可以通过上移/下移操作调整 `sort_order` 字段值
-3. 可提供 `POST /modules/reorder` 接口接收排序后的模块 ID 列表，后端批量更新 `sort_order`
-4. 第一阶段**不强制实现跨父模块拖拽**（如将模块从父模块 A 拖到父模块 B）
-5. 如果实现 `POST /modules/{id}/move` 接口（更改父模块），只作为后端能力保留，前端可暂不开放复杂拖拽交互
-
----
-
-## V1.5 已有功能清单
+## V1.5 已有功能清单（第一阶段改造后全部保留）
 
 | 功能模块 | 状态 | 关键文件 |
 |---------|------|---------|
-| 用例 CRUD | ✅ 正常 | `routers/case_router.py`, `services/case_service.py` |
+| 用例 CRUD | ✅ 正常（已增强：支持项目/模块筛选 + 新字段） | `routers/case_router.py`, `services/case_service.py` |
 | LLM 生成测试代码 | ✅ 正常 | `routers/ai_router.py`, `services/ai_service.py` |
 | 规则生成测试代码 | ✅ 正常 | `routers/ai_router.py`, `services/ai_service.py` |
 | pytest 执行 | ✅ 正常 | `routers/run_router.py`, `services/run_service.py`, `utils/pytest_runner.py` |
@@ -131,30 +108,28 @@
 | 场景执行 | ✅ 正常 | `services/scene_service.py` |
 | 报告生成 | ✅ 正常 | `routers/report_router.py`, `services/report_service.py` |
 | 参数管理 | ✅ 正常 | `routers/parameter_file_router.py`, `utils/parameter.py` |
-| 前端 6 页面 | ✅ 正常 | `frontend/src/pages/*.jsx` |
+| 项目管理 | ✅ 新增 | `routers/project_router.py`, `services/project_service.py` |
+| 模块目录树 | ✅ 新增 | `routers/module_router.py`, `services/test_module_service.py` |
+| 前端 7 页面 | ✅ 正常（新增 ProjectPage） | `frontend/src/pages/*.jsx` |
 
-## 当前数据模型局限
-
-| 问题 | 影响 | 改造方向 |
-|------|------|---------|
-| 无项目管理概念 | 所有数据平铺，无法区分不同项目 | 新增 projects 表 |
-| 无用例分类/模块树 | 用例无法按功能模块组织 | 新增 modules 表 + 树结构 |
-| 场景与报告无项目归属 | 多项目场景混在一起 | 后续阶段增加 project_id 外键 |
-| 无功能测试用例 | 仅支持接口用例 | 后续阶段新增功能用例模型 |
-| 无需求文本管理 | AI 生成用例缺乏上下文 | 后续阶段新增需求文本模型 |
+---
 
 ## 数据库当前状态
 
-SQLite 单文件 `ai_test_assistant.db`，6 张表：
+SQLite 单文件 `ai_test_assistant.db`，8 张表：
 
 ```
-api_cases     — 测试用例（无 project_id / module_id / case_type / source / priority / status / is_deleted）
+api_cases     — 测试用例（已增加 project_id / module_id / case_type / source / priority / status / is_deleted）
 test_runs     — 执行记录
 ai_analyses   — AI 分析记录
 reports       — 测试报告（无 project_id）
 scenes        — 测试场景（无 project_id）
 scene_steps   — 场景步骤
+projects      — 项目（新增）
+test_modules  — 模块目录（新增）
 ```
+
+---
 
 ## 项目文件结构
 
@@ -172,16 +147,17 @@ d:\Ai-test-assistant\
 │   ├── app/
 │   │   ├── main.py
 │   │   ├── core/                (config.py, database.py)
-│   │   ├── models/              (6 个 ORM 模型)
-│   │   ├── schemas/             (6 组 Pydantic Schema)
-│   │   ├── routers/             (7 个路由模块)
-│   │   ├── services/            (6 个 Service 模块)
+│   │   ├── models/              (8 个 ORM 模型：含 project 和 test_module)
+│   │   ├── schemas/             (8 组 Pydantic Schema)
+│   │   ├── routers/             (9 个路由模块)
+│   │   ├── services/            (8 个 Service 模块)
 │   │   ├── utils/               (file_writer, pytest_runner, parameter)
 │   │   └── tests_generated/     (生成的测试代码)
 │   └── requirements.txt
 └── frontend/
     └── src/
-        ├── pages/               (6 个页面组件)
-        ├── api/                 (API 调用封装)
+        ├── pages/               (7 个页面组件：含 ProjectPage)
+        ├── components/          (ModuleTree 可复用组件)
+        ├── api/                 (API 调用封装：case/project/module/scene/parameterFile)
         └── services/            (Axios 实例)
 ```

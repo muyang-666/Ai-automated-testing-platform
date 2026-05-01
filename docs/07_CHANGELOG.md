@@ -2,6 +2,71 @@
 
 ---
 
+## [V1.6] — 第一阶段：项目管理 + 模块目录树 + 用例归类
+
+**日期**：2026-05-01
+
+### Added
+
+**后端 — 项目管理**
+- 新增 `backend/app/models/project.py` — Project ORM 模型（`projects` 表）
+- 新增 `backend/app/schemas/project.py` — ProjectCreate / ProjectUpdate / ProjectResponse
+- 新增 `backend/app/services/project_service.py` — 项目 CRUD 业务逻辑
+- 新增 `backend/app/routers/project_router.py` — `POST/GET/PUT/DELETE /projects` 共 5 个接口
+- 支持 keyword 模糊搜索、status 筛选、软删除
+
+**后端 — 模块目录树**
+- 新增 `backend/app/models/test_module.py` — TestModule ORM 模型（`test_modules` 表）
+- 新增 `backend/app/schemas/test_module.py` — Create / Update / Response / TreeResponse / MoveRequest / ReorderRequest
+- 新增 `backend/app/services/test_module_service.py` — 模块树 CRUD + 移动 + 排序 + 子节点查询
+- 新增 `backend/app/routers/module_router.py` — `POST /modules`, `GET /modules/tree`, `GET/PUT/DELETE /modules/{id}`, `PUT /modules/{id}/move`, `PUT /modules/reorder` 共 7 个接口
+- 支持多级树形结构、同级排序、空模块软删除、模块移动
+
+**后端 — api_cases 字段扩展**
+- `api_cases` 表新增 7 个字段：`project_id`, `module_id`, `case_type`, `source`, `priority`, `status`, `is_deleted`
+- `GET /cases` 新增 8 个筛选参数：`project_id`, `module_id`, `include_children`, `keyword`, `case_type`, `source`, `priority`, `status`
+- `DELETE /cases/{id}` 从物理删除改为软删除
+
+**前端 — 项目管理页面**
+- 新增 `frontend/src/api/project.js` — 项目管理 API 封装
+- 新增 `frontend/src/pages/ProjectPage.jsx` — 项目列表、新增、编辑、删除、keyword 搜索、status 筛选
+- `App.jsx` 导航增加"项目管理"入口
+
+**前端 — 模块目录树组件**
+- 新增 `frontend/src/api/module.js` — 模块目录 API 封装
+- 新增 `frontend/src/components/ModuleTree.jsx` — 可复用模块树组件
+- 支持树展示、新增一级/子模块、编辑、删除空模块、同级上移/下移排序
+
+**前端 — CasePage 接入项目与模块**
+- 顶部增加项目选择 Select
+- 左侧接入 ModuleTree 组件 + "包含子模块" Checkbox
+- 右侧用例列表按 project_id / module_id / include_children 筛选
+- 新增/编辑表单支持 project_id, module_id, case_type, source, priority, status
+- 表格新增 6 列：项目ID、模块ID、类型、来源、优先级、状态
+
+### Changed
+- `backend/app/models/api_case.py` — 增加 7 个字段
+- `backend/app/schemas/api_case.py` — APICaseCreate/Response 增加字段，APICaseUpdate 独立定义（全部可选）
+- `backend/app/services/case_service.py` — 全部 5 个函数适配新字段 + 筛选 + 软删除
+- `backend/app/routers/case_router.py` — GET /cases 增加 8 个 Query 参数
+- `backend/app/main.py` — 注册 Project 和 TestModule 模型及路由
+- `backend/app/models/__init__.py` — 追加 Project, TestModule
+- `backend/app/routers/__init__.py` — 追加 project_router, module_router
+- `backend/app/schemas/__init__.py` — 追加 Project 和 TestModule Schema
+- `frontend/src/pages/CasePage.jsx` — 布局和表单改造
+- `frontend/src/App.jsx` — 增加项目管理入口
+
+### Preserved
+- `backend/app/services/ai_service.py` — 零改动
+- `backend/app/services/run_service.py` — 零改动
+- `backend/app/services/analysis_service.py` — 零改动
+- `backend/app/services/report_service.py` — 零改动
+- `backend/app/utils/pytest_runner.py` — 零改动
+- `backend/app/utils/file_writer.py` — 零改动
+- 所有已有前端页面（RunPage, ScenePage, SceneStepPage, ReportPage, ParameterPage）— 零改动
+
+---
+
 ## [UNRELEASED] — 初始化文档
 
 **日期**：2026-05-01
