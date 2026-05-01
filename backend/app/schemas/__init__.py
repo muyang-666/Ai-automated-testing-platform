@@ -15,6 +15,11 @@ from app.schemas.requirement_doc import (
     RequirementDocResponse,
     RequirementDocUpdate,
 )
+from app.schemas.function_case import (
+    FunctionCaseCreate,
+    FunctionCaseResponse,
+    FunctionCaseUpdate,
+)
 
 __all__ = [
     "APICaseCreate",
@@ -29,6 +34,9 @@ __all__ = [
     "RequirementDocCreate",
     "RequirementDocResponse",
     "RequirementDocUpdate",
+    "FunctionCaseCreate",
+    "FunctionCaseResponse",
+    "FunctionCaseUpdate",
     "TestModuleCreate",
     "TestModuleResponse",
     "TestModuleTreeResponse",

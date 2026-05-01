@@ -5,5 +5,6 @@ from app.routers.module_router import router as module_router
 from app.routers.project_router import router as project_router
 from app.routers.report_router import router as report_router
 from app.routers.requirement_doc_router import router as requirement_doc_router
+from app.routers.function_case_router import router as function_case_router
 
-__all__ = ["case_router", "ai_router", "run_router", "module_router", "project_router", "report_router", "requirement_doc_router"]
+__all__ = ["case_router", "ai_router", "run_router", "module_router", "project_router", "report_router", "requirement_doc_router", "function_case_router"]
