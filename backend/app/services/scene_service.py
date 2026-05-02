@@ -3,39 +3,55 @@ from sqlalchemy.orm import Session
 from app.models.api_case import APICase
 from app.models.scene import Scene
 from app.models.scene_step import SceneStep
-from app.schemas.scene import SceneCreate, SceneUpdate, SceneStepCreate
+from app.schemas.scene import (
+    ReorderSceneStepsRequest,
+    SceneCreate,
+    SceneStepCreate,
+    SceneStepUpdate,
+    SceneUpdate,
+)
 from app.services.run_service import execute_case_test
+from app.services.test_module_service import get_child_module_ids
 
 
-# 场景 ORM 对象转字典
-def serialize_scene(scene: Scene):
+def serialize_scene(scene: Scene) -> dict:
     return {
         "id": scene.id,
+        "project_id": scene.project_id,
+        "module_id": scene.module_id,
         "name": scene.name,
         "description": scene.description,
+        "status": scene.status,
         "created_at": scene.created_at,
         "updated_at": scene.updated_at,
     }
 
 
-# 场景步骤 ORM + case 信息 转字典
-def serialize_scene_step(step: SceneStep, api_case: APICase):
+def serialize_scene_step(step: SceneStep, api_case: APICase | None) -> dict:
     return {
         "id": step.id,
         "scene_id": step.scene_id,
         "step_order": step.step_order,
         "case_id": step.case_id,
-        "case_name": api_case.name,
-        "case_url": api_case.url,
+        "case_name": api_case.name if api_case else "已删除用例",
+        "case_url": api_case.url if api_case else "",
+        "step_name": step.step_name,
+        "extract_rules_json": step.extract_rules_json,
+        "request_override_json": step.request_override_json,
+        "assertions_json": step.assertions_json,
+        "enabled": step.enabled,
         "created_at": step.created_at,
+        "updated_at": step.updated_at,
     }
 
 
-# 创建场景
-def create_scene(db: Session, data: SceneCreate):
+def create_scene(db: Session, data: SceneCreate) -> dict:
     scene = Scene(
         name=data.name,
         description=data.description,
+        project_id=data.project_id,
+        module_id=data.module_id,
+        status=data.status,
     )
     db.add(scene)
     db.commit()
@@ -43,56 +59,98 @@ def create_scene(db: Session, data: SceneCreate):
     return serialize_scene(scene)
 
 
-# 查询场景列表
-def get_scene_list(db: Session):
-    scenes = db.query(Scene).order_by(Scene.id.desc()).all()
+def get_scene_list(
+    db: Session,
+    project_id: int = None,
+    module_id: int = None,
+    include_children: bool = False,
+    keyword: str = None,
+    status: str = None,
+):
+    query = db.query(Scene).filter(Scene.is_deleted == False)
+
+    if project_id is not None:
+        query = query.filter(Scene.project_id == project_id)
+
+    if module_id is not None:
+        if include_children:
+            child_ids = get_child_module_ids(db, module_id)
+            query = query.filter(Scene.module_id.in_([module_id] + child_ids))
+        else:
+            query = query.filter(Scene.module_id == module_id)
+
+    if keyword:
+        query = query.filter(
+            (Scene.name.contains(keyword)) | (Scene.description.contains(keyword))
+        )
+
+    if status:
+        query = query.filter(Scene.status == status)
+
+    scenes = query.order_by(Scene.id.desc()).all()
     return [serialize_scene(scene) for scene in scenes]
 
 
-# 查询场景详情
 def get_scene_by_id(db: Session, scene_id: int):
-    scene = db.query(Scene).filter(Scene.id == scene_id).first()
+    scene = db.query(Scene).filter(
+        Scene.id == scene_id,
+        Scene.is_deleted == False,
+    ).first()
     if not scene:
         return None
     return serialize_scene(scene)
 
 
-# 更新场景
 def update_scene(db: Session, scene_id: int, data: SceneUpdate):
-    scene = db.query(Scene).filter(Scene.id == scene_id).first()
+    scene = db.query(Scene).filter(
+        Scene.id == scene_id,
+        Scene.is_deleted == False,
+    ).first()
     if not scene:
         return None
 
-    scene.name = data.name
-    scene.description = data.description
+    update_data = data.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(scene, field, value)
 
     db.commit()
     db.refresh(scene)
     return serialize_scene(scene)
 
 
-# 删除场景
 def delete_scene(db: Session, scene_id: int) -> bool:
-    scene = db.query(Scene).filter(Scene.id == scene_id).first()
+    scene = db.query(Scene).filter(
+        Scene.id == scene_id,
+        Scene.is_deleted == False,
+    ).first()
     if not scene:
         return False
 
-    # 先删场景步骤，再删场景
-    db.query(SceneStep).filter(SceneStep.scene_id == scene_id).delete()
-    db.delete(scene)
+    scene.is_deleted = True
+
+    db.query(SceneStep).filter(
+        SceneStep.scene_id == scene_id,
+        SceneStep.is_deleted == False,
+    ).update({"is_deleted": True})
+
     db.commit()
     return True
 
 
-# 查询某个场景下的步骤列表
 def get_scene_steps(db: Session, scene_id: int):
-    scene = db.query(Scene).filter(Scene.id == scene_id).first()
+    scene = db.query(Scene).filter(
+        Scene.id == scene_id,
+        Scene.is_deleted == False,
+    ).first()
     if not scene:
         return None
 
     steps = (
         db.query(SceneStep)
-        .filter(SceneStep.scene_id == scene_id)
+        .filter(
+            SceneStep.scene_id == scene_id,
+            SceneStep.is_deleted == False,
+        )
         .order_by(SceneStep.step_order.asc(), SceneStep.id.asc())
         .all()
     )
@@ -100,35 +158,47 @@ def get_scene_steps(db: Session, scene_id: int):
     result = []
     for step in steps:
         api_case = db.query(APICase).filter(APICase.id == step.case_id).first()
-        if api_case:
-            result.append(serialize_scene_step(step, api_case))
+        result.append(serialize_scene_step(step, api_case))
 
     return result
 
 
-# 新增场景步骤
 def create_scene_step(db: Session, scene_id: int, data: SceneStepCreate):
-    scene = db.query(Scene).filter(Scene.id == scene_id).first()
+    scene = db.query(Scene).filter(
+        Scene.id == scene_id,
+        Scene.is_deleted == False,
+    ).first()
     if not scene:
         raise ValueError("场景不存在")
 
-    api_case = db.query(APICase).filter(APICase.id == data.case_id).first()
+    api_case = db.query(APICase).filter(
+        APICase.id == data.case_id,
+        APICase.is_deleted == False,
+    ).first()
     if not api_case:
-        raise ValueError("关联测试用例不存在")
+        raise ValueError("关联测试用例不存在或已删除")
 
-    # 同一个场景内，步骤顺序不能重复
-    existed_step = (
+    existing = (
         db.query(SceneStep)
-        .filter(SceneStep.scene_id == scene_id, SceneStep.step_order == data.step_order)
+        .filter(
+            SceneStep.scene_id == scene_id,
+            SceneStep.step_order == data.step_order,
+            SceneStep.is_deleted == False,
+        )
         .first()
     )
-    if existed_step:
+    if existing:
         raise ValueError("该场景下步骤顺序已存在，请更换 step_order")
 
     step = SceneStep(
         scene_id=scene_id,
         step_order=data.step_order,
         case_id=data.case_id,
+        step_name=data.step_name,
+        extract_rules_json=data.extract_rules_json,
+        request_override_json=data.request_override_json,
+        assertions_json=data.assertions_json,
+        enabled=data.enabled,
     )
     db.add(step)
     db.commit()
@@ -137,26 +207,115 @@ def create_scene_step(db: Session, scene_id: int, data: SceneStepCreate):
     return serialize_scene_step(step, api_case)
 
 
-# 删除场景步骤
+def update_scene_step(db: Session, step_id: int, data: SceneStepUpdate) -> dict:
+    step = db.query(SceneStep).filter(
+        SceneStep.id == step_id,
+        SceneStep.is_deleted == False,
+    ).first()
+    if not step:
+        raise ValueError("场景步骤不存在")
+
+    update_data = data.model_dump(exclude_unset=True)
+
+    if "case_id" in update_data:
+        api_case = db.query(APICase).filter(
+            APICase.id == update_data["case_id"],
+            APICase.is_deleted == False,
+        ).first()
+        if not api_case:
+            raise ValueError("关联测试用例不存在或已删除")
+
+    new_step_order = update_data.get("step_order", step.step_order)
+    if "step_order" in update_data and new_step_order != step.step_order:
+        conflict = (
+            db.query(SceneStep)
+            .filter(
+                SceneStep.scene_id == step.scene_id,
+                SceneStep.step_order == new_step_order,
+                SceneStep.is_deleted == False,
+                SceneStep.id != step_id,
+            )
+            .first()
+        )
+        if conflict:
+            raise ValueError("该场景下步骤顺序已存在，请更换 step_order")
+
+    for field, value in update_data.items():
+        setattr(step, field, value)
+
+    db.commit()
+    db.refresh(step)
+
+    api_case = db.query(APICase).filter(APICase.id == step.case_id).first()
+    return serialize_scene_step(step, api_case)
+
+
 def delete_scene_step(db: Session, step_id: int) -> bool:
-    step = db.query(SceneStep).filter(SceneStep.id == step_id).first()
+    step = db.query(SceneStep).filter(
+        SceneStep.id == step_id,
+        SceneStep.is_deleted == False,
+    ).first()
     if not step:
         return False
 
-    db.delete(step)
+    step.is_deleted = True
     db.commit()
     return True
 
 
-# 执行场景：按 step_order 从小到大执行，失败即停止
-def execute_scene(db: Session, scene_id: int):
-    scene = db.query(Scene).filter(Scene.id == scene_id).first()
+def reorder_scene_steps(db: Session, scene_id: int, data: ReorderSceneStepsRequest) -> bool:
+    scene = db.query(Scene).filter(
+        Scene.id == scene_id,
+        Scene.is_deleted == False,
+    ).first()
     if not scene:
         raise ValueError("场景不存在")
 
+    if not data.ordered_step_ids:
+        raise ValueError("排序列表不能为空")
+
     steps = (
         db.query(SceneStep)
-        .filter(SceneStep.scene_id == scene_id)
+        .filter(
+            SceneStep.id.in_(data.ordered_step_ids),
+            SceneStep.is_deleted == False,
+        )
+        .all()
+    )
+
+    if len(steps) != len(data.ordered_step_ids):
+        raise ValueError("排序列表中存在不存在的步骤或已删除的步骤")
+
+    for s in steps:
+        if s.scene_id != scene_id:
+            raise ValueError("排序列表中的步骤不属于该场景")
+
+    for idx, step_id in enumerate(data.ordered_step_ids):
+        db.query(SceneStep).filter(SceneStep.id == step_id).update(
+            {"step_order": idx + 1}
+        )
+
+    db.commit()
+    return True
+
+
+def execute_scene(db: Session, scene_id: int):
+    scene = db.query(Scene).filter(
+        Scene.id == scene_id,
+        Scene.is_deleted == False,
+    ).first()
+    if not scene:
+        raise ValueError("场景不存在")
+    if scene.status != "active":
+        raise ValueError("场景状态不是 active，无法执行")
+
+    steps = (
+        db.query(SceneStep)
+        .filter(
+            SceneStep.scene_id == scene_id,
+            SceneStep.is_deleted == False,
+            SceneStep.enabled == True,
+        )
         .order_by(SceneStep.step_order.asc(), SceneStep.id.asc())
         .all()
     )
@@ -202,7 +361,6 @@ def execute_scene(db: Session, scene_id: int):
             passed_steps += 1
         else:
             failed_steps += 1
-            # V1 先采用失败即停止
             break
 
     final_result = "passed" if failed_steps == 0 else "failed"

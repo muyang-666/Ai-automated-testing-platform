@@ -1,25 +1,32 @@
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
 
-# 创建场景
 class SceneCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100, description="场景名称")
     description: Optional[str] = Field(default=None, max_length=255, description="场景描述")
+    project_id: Optional[int] = Field(default=None, description="归属项目ID")
+    module_id: Optional[int] = Field(default=None, description="归属模块ID")
+    status: str = Field(default="active", description="状态：active/disabled/draft")
 
 
-# 更新场景
-class SceneUpdate(SceneCreate):
-    pass
+class SceneUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=100, description="场景名称")
+    description: Optional[str] = Field(default=None, max_length=255, description="场景描述")
+    project_id: Optional[int] = Field(default=None, description="归属项目ID")
+    module_id: Optional[int] = Field(default=None, description="归属模块ID")
+    status: Optional[str] = Field(default=None, description="状态：active/disabled/draft")
 
 
-# 返回场景
 class SceneResponse(BaseModel):
     id: int
+    project_id: Optional[int]
+    module_id: Optional[int]
     name: str
     description: Optional[str]
+    status: str
     created_at: datetime
     updated_at: datetime
 
@@ -27,13 +34,26 @@ class SceneResponse(BaseModel):
         from_attributes = True
 
 
-# 新增场景步骤
 class SceneStepCreate(BaseModel):
     step_order: int = Field(..., ge=1, description="步骤顺序")
     case_id: int = Field(..., ge=1, description="关联测试用例ID")
+    step_name: Optional[str] = Field(default=None, max_length=100, description="步骤名称")
+    extract_rules_json: Optional[Any] = Field(default=None, description="变量提取规则JSON")
+    request_override_json: Optional[Any] = Field(default=None, description="请求覆盖配置JSON")
+    assertions_json: Optional[Any] = Field(default=None, description="场景步骤断言规则JSON")
+    enabled: bool = Field(default=True, description="是否启用")
 
 
-# 返回场景步骤
+class SceneStepUpdate(BaseModel):
+    step_order: Optional[int] = Field(default=None, ge=1, description="步骤顺序")
+    case_id: Optional[int] = Field(default=None, ge=1, description="关联测试用例ID")
+    step_name: Optional[str] = Field(default=None, max_length=100, description="步骤名称")
+    extract_rules_json: Optional[Any] = Field(default=None, description="变量提取规则JSON")
+    request_override_json: Optional[Any] = Field(default=None, description="请求覆盖配置JSON")
+    assertions_json: Optional[Any] = Field(default=None, description="场景步骤断言规则JSON")
+    enabled: Optional[bool] = Field(default=None, description="是否启用")
+
+
 class SceneStepResponse(BaseModel):
     id: int
     scene_id: int
@@ -41,10 +61,19 @@ class SceneStepResponse(BaseModel):
     case_id: int
     case_name: str
     case_url: str
+    step_name: Optional[str]
+    extract_rules_json: Optional[Any]
+    request_override_json: Optional[Any]
+    assertions_json: Optional[Any]
+    enabled: bool
     created_at: datetime
+    updated_at: Optional[datetime]
 
 
-# 场景执行结果中的单步结果
+class ReorderSceneStepsRequest(BaseModel):
+    ordered_step_ids: list[int] = Field(..., description="排序后的步骤ID列表")
+
+
 class SceneExecuteStepResult(BaseModel):
     step_order: int
     case_id: int
@@ -57,7 +86,6 @@ class SceneExecuteStepResult(BaseModel):
     error_message: Optional[str] = None
 
 
-# 场景执行总结果
 class SceneExecuteResponse(BaseModel):
     scene_id: int
     scene_name: str
