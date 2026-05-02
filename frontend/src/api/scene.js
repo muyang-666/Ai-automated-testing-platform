@@ -35,6 +35,11 @@ export function executeScene(sceneId) {
   return request.post(`/scenes/${sceneId}/execute`);
 }
 
+// 真实串联执行场景
+export function runSceneChain(sceneId) {
+  return request.post(`/scenes/${sceneId}/run-chain`);
+}
+
 // 已有测试用例列表（复用）
 export function getCaseList() {
   return request.get("/cases");

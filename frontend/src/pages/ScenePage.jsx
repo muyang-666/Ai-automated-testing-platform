@@ -17,6 +17,7 @@ import {
   deleteScene,
   executeScene,
   getSceneList,
+  runSceneChain,
   updateScene,
 } from "../api/scene";
 import SceneStepPage from "./SceneStepPage";
@@ -35,6 +36,10 @@ export default function ScenePage() {
 
   const [executeModalOpen, setExecuteModalOpen] = useState(false);
   const [executeResult, setExecuteResult] = useState(null);
+
+  const [chainRunning, setChainRunning] = useState(false);
+  const [chainResultModalOpen, setChainResultModalOpen] = useState(false);
+  const [chainResult, setChainResult] = useState(null);
 
   const loadScenes = async () => {
     try {
@@ -100,6 +105,25 @@ export default function ScenePage() {
     }
   };
 
+  const handleRunChain = async (sceneId) => {
+    setChainRunning(true);
+    try {
+      const res = await runSceneChain(sceneId);
+      setChainResult(res.data);
+      setChainResultModalOpen(true);
+      message.success("串联执行完成");
+    } catch (error) {
+      message.error(
+        error?.response?.data?.detail ||
+        error?.response?.data?.message ||
+        error?.message ||
+        "串联执行失败"
+      );
+    } finally {
+      setChainRunning(false);
+    }
+  };
+
   const handleExecute = async (sceneId) => {
     try {
       const res = await executeScene(sceneId);
@@ -133,13 +157,24 @@ export default function ScenePage() {
       key: "name",
     },
     {
-      title: "执行结果查看",
+      title: "执行",
       key: "result",
-      width: 140,
+      width: 260,
       render: (_, record) => (
-        <Button size="small" onClick={() => handleExecute(record.id)}>
-          一键执行
-        </Button>
+        <Space>
+          <Button size="small" onClick={() => handleExecute(record.id)}>
+            一键执行
+          </Button>
+          <Button
+            size="small"
+            type="primary"
+            ghost
+            loading={chainRunning}
+            onClick={() => handleRunChain(record.id)}
+          >
+            串联执行
+          </Button>
+        </Space>
       ),
     },
     {
@@ -298,6 +333,114 @@ export default function ScenePage() {
               columns={stepColumns}
               pagination={false}
               size="small"
+            />
+          </Space>
+        )}
+      </Modal>
+
+      <Modal
+        title={chainResult ? `串联执行结果：${chainResult.scene_name}` : "串联执行结果"}
+        open={chainResultModalOpen}
+        onCancel={() => {
+          setChainResultModalOpen(false);
+          setChainResult(null);
+        }}
+        footer={[
+          <Button
+            key="close"
+            onClick={() => {
+              setChainResultModalOpen(false);
+              setChainResult(null);
+            }}
+          >
+            关闭
+          </Button>,
+        ]}
+        width={900}
+      >
+        {chainResult && (
+          <Space direction="vertical" style={{ width: "100%" }} size={16}>
+            <Space>
+              <Tag
+                color={
+                  chainResult.status === "passed" ? "success" : "error"
+                }
+              >
+                {chainResult.status}
+              </Tag>
+              <Text>Run ID：{chainResult.scene_run_id}</Text>
+              <Text>总步骤：{chainResult.total_steps}</Text>
+              <Text>通过：{chainResult.passed_steps}</Text>
+              <Text>失败：{chainResult.failed_steps}</Text>
+              <Text>跳过：{chainResult.skipped_steps}</Text>
+            </Space>
+
+            {chainResult.context && Object.keys(chainResult.context).length > 0 && (
+              <div>
+                <Text strong>运行时上下文：</Text>
+                <pre
+                  style={{
+                    background: "#f5f5f5",
+                    padding: 12,
+                    borderRadius: 4,
+                    maxHeight: 200,
+                    overflow: "auto",
+                    fontSize: 12,
+                  }}
+                >
+                  {JSON.stringify(chainResult.context, null, 2)}
+                </pre>
+              </div>
+            )}
+
+            <Table
+              rowKey="step_order"
+              dataSource={chainResult.steps || []}
+              columns={[
+                { title: "步骤", dataIndex: "step_order", width: 60 },
+                { title: "名称", dataIndex: "step_name", ellipsis: true },
+                { title: "用例ID", dataIndex: "case_id", width: 80 },
+                {
+                  title: "状态",
+                  dataIndex: "status",
+                  width: 80,
+                  render: (v) => {
+                    const map = { passed: "success", failed: "error", error: "error", skipped: "warning" };
+                    return <Tag color={map[v] || "default"}>{v}</Tag>;
+                  },
+                },
+                {
+                  title: "响应码",
+                  dataIndex: "response_status_code",
+                  width: 80,
+                  render: (v) => v ?? "-",
+                },
+                {
+                  title: "提取变量",
+                  dataIndex: "extracted_variables",
+                  width: 160,
+                  ellipsis: true,
+                  render: (v) =>
+                    v && Object.keys(v).length > 0 ? JSON.stringify(v) : "-",
+                },
+                {
+                  title: "耗时",
+                  dataIndex: "duration_ms",
+                  width: 80,
+                  render: (v) => (v != null ? `${v}ms` : "-"),
+                },
+                {
+                  title: "错误",
+                  dataIndex: "error_message",
+                  width: 160,
+                  ellipsis: true,
+                  render: (v) =>
+                    v ? <span style={{ color: "red" }}>{v}</span> : "-",
+                },
+              ]}
+              pagination={false}
+              size="small"
+              scroll={{ x: 900 }}
             />
           </Space>
         )}
