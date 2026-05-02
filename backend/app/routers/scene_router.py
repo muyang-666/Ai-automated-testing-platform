@@ -18,6 +18,7 @@ from app.schemas.scene_run import (
     SceneRunDetailResponse,
     SceneRunResponse,
 )
+from app.services.scene_chain_service import execute_scene_chain
 from app.services.scene_run_service import (
     get_scene_run_detail,
     get_scene_run_list,
@@ -155,9 +156,19 @@ def reorder_scene_steps_api(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.post("/{scene_id}/execute", response_model=SceneExecuteResponse, summary="执行场景")
+@router.post("/{scene_id}/execute", response_model=SceneExecuteResponse, summary="执行场景（pytest 方式）")
 def execute_scene_api(scene_id: int, db: Session = Depends(get_db)):
     try:
         return execute_scene(db, scene_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/{scene_id}/run-chain", summary="真实串联执行场景")
+def run_chain_api(scene_id: int, db: Session = Depends(get_db)):
+    try:
+        return execute_scene_chain(db, scene_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"场景执行异常：{str(e)}")
