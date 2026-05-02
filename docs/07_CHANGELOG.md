@@ -2,6 +2,70 @@
 
 ---
 
+## [V1.7] — 第二阶段：需求文本管理与功能测试用例生成
+
+**日期**：2026-05-02
+
+### Added
+
+**后端 — 需求文本管理**
+- 新增 `backend/app/models/requirement_doc.py` — RequirementDoc ORM 模型（`requirement_docs` 表）
+- 新增 `backend/app/schemas/requirement_doc.py` — RequirementDocCreate / Update / Response
+- 新增 `backend/app/services/requirement_doc_service.py` — 需求 CRUD + 6 个筛选参数（project_id / module_id / include_children / keyword / status / requirement_type）
+- 新增 `backend/app/routers/requirement_doc_router.py` — `POST/GET/PUT/DELETE /requirements` 共 5 个接口
+
+**后端 — 功能测试用例管理**
+- 新增 `backend/app/models/function_case.py` — FunctionCase ORM 模型（`function_cases` 表，18 个字段）
+  - 包含 `case_code` 用例编号字段
+  - `steps_json` 和 `test_data_json` 使用 SQLAlchemy JSON 类型
+- 新增 `backend/app/schemas/function_case.py` — FunctionCaseCreate / Update / Response
+- 新增 `backend/app/services/function_case_service.py` — 功能用例 CRUD + 9 个筛选参数
+- 新增 `backend/app/routers/function_case_router.py` — `POST/GET/PUT/DELETE /function-cases` 共 5 个接口
+
+**后端 — 需求生成功能测试用例**
+- 新增 `backend/app/schemas/function_case_generation.py` — 5 个 Schema（GenerateRequest / GeneratedItem / GenerateResponse / SaveRequest / SaveResponse）
+- 新增 `backend/app/services/function_case_generation_service.py` — Prompt 构建、3 级 JSON 解析回退、字段校验、LLM 生成、批量保存
+- 新增 `POST /function-cases/generate-from-requirement` — 根据需求文本调用 LLM 生成功能用例预览（不写表）
+- 新增 `POST /function-cases/save-generated` — 保存勾选的生成用例（project_id 以后端查询为准，source 固定 llm）
+- 复用 `ai_service.call_llm_generate_code()` — 不修改 ai_service.py，仅调用已有函数
+
+**前端 — 需求文本管理页面**
+- 新增 `frontend/src/api/requirement.js` — 需求文本 API 封装
+- 新增 `frontend/src/pages/RequirementPage.jsx` — 项目选择、模块树筛选、keyword/status/type 筛选、CRUD、详情弹窗
+- `App.jsx` 导航增加"需求管理"入口
+
+**前端 — 功能测试用例管理页面**
+- 新增 `frontend/src/api/functionCase.js` — 功能测试用例 API 封装 + 生成接口封装
+- 新增 `frontend/src/pages/FunctionCasePage.jsx` — 项目选择、模块树筛选、需求筛选、多条件筛选、JSON 字段解析/回填、查看详情
+- `App.jsx` 导航增加"功能用例"入口
+
+**前端 — RequirementPage "生成用例"按钮**
+- 操作列增加"生成用例"按钮 → 调 LLM 生成接口 → 预览弹窗（Table + rowSelection）
+- 支持勾选部分生成结果 → 批量保存
+- 保存后 `source=llm`，可在 FunctionCasePage 查看
+
+### Changed
+- `backend/app/main.py` — 注册 RequirementDoc 和 FunctionCase 模型及路由
+- `backend/app/models/__init__.py` — 追加 RequirementDoc, FunctionCase
+- `backend/app/routers/__init__.py` — 追加 requirement_doc_router, function_case_router
+- `backend/app/schemas/__init__.py` — 追加 RequirementDoc 和 FunctionCase Schema
+- `backend/app/routers/function_case_router.py` — 追加 2 个生成端点
+- `frontend/src/App.jsx` — 增加"需求管理"和"功能用例"导航入口
+- `frontend/src/pages/RequirementPage.jsx` — 追加"生成用例"按钮和预览弹窗
+- `frontend/src/api/functionCase.js` — 追加 2 个生成 API 函数
+
+### Preserved
+- `backend/app/services/ai_service.py` — 零修改（仅调用 `call_llm_generate_code`）
+- `backend/app/services/run_service.py` — 零修改
+- `backend/app/services/analysis_service.py` — 零修改
+- `backend/app/services/report_service.py` — 零修改
+- `backend/app/utils/pytest_runner.py` — 零修改
+- `backend/app/utils/file_writer.py` — 零修改
+- 所有第一阶段页面（ProjectPage, CasePage, ModuleTree）— 零修改
+- 所有原有页面（RunPage, ScenePage, SceneStepPage, ReportPage, ParameterPage）— 零修改
+
+---
+
 ## [V1.6] — 第一阶段：项目管理 + 模块目录树 + 用例归类
 
 **日期**：2026-05-01
