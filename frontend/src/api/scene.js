@@ -30,6 +30,16 @@ export function deleteSceneStep(stepId) {
   return request.delete(`/scenes/steps/${stepId}`);
 }
 
+// 编辑场景步骤
+export function updateSceneStep(stepId, data) {
+  return request.put(`/scenes/steps/${stepId}`, data);
+}
+
+// 调整场景步骤顺序
+export function reorderSceneSteps(sceneId, data) {
+  return request.put(`/scenes/${sceneId}/steps/reorder`, data);
+}
+
 // 场景执行
 export function executeScene(sceneId) {
   return request.post(`/scenes/${sceneId}/execute`);
