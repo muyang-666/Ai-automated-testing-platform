@@ -20,6 +20,11 @@ from app.schemas.function_case import (
     FunctionCaseResponse,
     FunctionCaseUpdate,
 )
+from app.schemas.scene_run import (
+    SceneRunDetailResponse,
+    SceneRunResponse,
+    SceneStepRunResponse,
+)
 
 __all__ = [
     "APICaseCreate",
@@ -37,6 +42,9 @@ __all__ = [
     "FunctionCaseCreate",
     "FunctionCaseResponse",
     "FunctionCaseUpdate",
+    "SceneRunDetailResponse",
+    "SceneRunResponse",
+    "SceneStepRunResponse",
     "TestModuleCreate",
     "TestModuleResponse",
     "TestModuleTreeResponse",

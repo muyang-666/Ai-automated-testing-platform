@@ -14,6 +14,14 @@ from app.schemas.scene import (
     SceneStepUpdate,
     SceneUpdate,
 )
+from app.schemas.scene_run import (
+    SceneRunDetailResponse,
+    SceneRunResponse,
+)
+from app.services.scene_run_service import (
+    get_scene_run_detail,
+    get_scene_run_list,
+)
 from app.services.scene_service import (
     create_scene,
     create_scene_step,
@@ -53,6 +61,29 @@ def list_scenes_api(
         keyword=keyword,
         status=status,
     )
+
+
+@router.get("/runs", response_model=list[SceneRunResponse], summary="查询场景执行历史列表")
+def list_scene_runs_api(
+    scene_id: Optional[int] = Query(default=None, description="按场景筛选"),
+    project_id: Optional[int] = Query(default=None, description="按项目筛选"),
+    status: Optional[str] = Query(default=None, description="按执行状态筛选"),
+    db: Session = Depends(get_db),
+):
+    return get_scene_run_list(db, scene_id=scene_id, project_id=project_id, status=status)
+
+
+@router.get("/runs/{run_id}", response_model=SceneRunDetailResponse, summary="查询场景执行详情")
+def get_scene_run_api(run_id: int, db: Session = Depends(get_db)):
+    detail = get_scene_run_detail(db, run_id)
+    if not detail:
+        raise HTTPException(status_code=404, detail="执行记录不存在")
+    return detail
+
+
+@router.get("/{scene_id}/runs", response_model=list[SceneRunResponse], summary="查询某个场景的执行历史")
+def list_scene_runs_by_scene_api(scene_id: int, db: Session = Depends(get_db)):
+    return get_scene_run_list(db, scene_id=scene_id)
 
 
 @router.get("/{scene_id}", response_model=SceneResponse, summary="查询场景详情")

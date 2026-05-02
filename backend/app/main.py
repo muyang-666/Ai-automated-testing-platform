@@ -10,6 +10,8 @@ from app.models.api_case import APICase
 from app.models.project import Project
 from app.models.requirement_doc import RequirementDoc
 from app.models.function_case import FunctionCase
+from app.models.scene_run import SceneRun
+from app.models.scene_step_run import SceneStepRun
 from app.models.test_module import TestModule
 from app.models.test_run import TestRun
 from app.models.ai_analysis import AIAnalysis
