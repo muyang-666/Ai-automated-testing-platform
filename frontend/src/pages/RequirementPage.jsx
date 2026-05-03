@@ -4,6 +4,7 @@ import {
   Card,
   Checkbox,
   Col,
+  Drawer,
   Form,
   Input,
   InputNumber,
@@ -90,6 +91,7 @@ export default function RequirementPage() {
   const [projects, setProjects] = useState([]);
   const [selectedProjectId, setSelectedProjectId] = useState(null);
   const [selectedModuleId, setSelectedModuleId] = useState(null);
+  const [unboundModuleOnly, setUnboundModuleOnly] = useState(false);
   const [includeChildren, setIncludeChildren] = useState(false);
   const [keyword, setKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
@@ -129,6 +131,7 @@ export default function RequirementPage() {
   }, [
     selectedProjectId,
     selectedModuleId,
+    unboundModuleOnly,
     includeChildren,
     keyword,
     statusFilter,
@@ -140,7 +143,9 @@ export default function RequirementPage() {
     setLoading(true);
     try {
       const params = { project_id: selectedProjectId };
-      if (selectedModuleId != null) {
+      if (unboundModuleOnly) {
+        params.unbound_module = true;
+      } else if (selectedModuleId != null) {
         params.module_id = selectedModuleId;
         if (includeChildren) {
           params.include_children = true;
@@ -161,10 +166,18 @@ export default function RequirementPage() {
   const handleProjectChange = (value) => {
     setSelectedProjectId(value);
     setSelectedModuleId(null);
+    setUnboundModuleOnly(false);
   };
 
   const handleModuleSelect = (moduleId) => {
     setSelectedModuleId(moduleId);
+    setUnboundModuleOnly(false);
+  };
+
+  const handleUnboundModuleClick = () => {
+    setSelectedModuleId(null);
+    setIncludeChildren(false);
+    setUnboundModuleOnly(true);
   };
 
   const handleModuleChange = () => {
@@ -285,7 +298,11 @@ export default function RequirementPage() {
     }
     const selectedCases = generatedCases
       .filter((c) => selectedCaseKeys.includes(c._temp_key))
-      .map(({ _temp_key, ...rest }) => rest);
+      .map((item) => {
+        const next = { ...item };
+        delete next._temp_key;
+        return next;
+      });
     try {
       const res = await saveGeneratedFunctionCases({
         requirement_id: generatedMeta.requirement_id,
@@ -335,7 +352,7 @@ export default function RequirementPage() {
       width: 100,
       render: (value) => {
         const tag = STATUS_TAG_MAP[value] || { color: "default", label: value };
-        return <Tag color={tag.color}>{tag.label}</Tag>;
+        return <Tag className="requirement-status-tag">{tag.label}</Tag>;
       },
     },
     {
@@ -355,28 +372,31 @@ export default function RequirementPage() {
       width: 340,
       render: (_, record) => (
         <Space size="small">
-          <Button size="small" onClick={() => openDetailModal(record)}>
+          <Button size="small" className="requirement-action-btn" onClick={() => openDetailModal(record)}>
             查看详情
           </Button>
           <Button
             size="small"
-            type="primary"
-            ghost
+            className="requirement-action-btn"
             loading={generatingId === record.id}
             onClick={() => handleGenerate(record)}
           >
             生成用例
           </Button>
-          <Button size="small" onClick={() => openEditModal(record)}>
+          <Button size="small" className="requirement-action-btn" onClick={() => openEditModal(record)}>
             编辑
           </Button>
           <Popconfirm
             title="确认删除该需求文本吗？"
+            description="删除后不可恢复，请确认。"
             okText="确认"
             cancelText="取消"
+            overlayClassName="requirement-popconfirm"
+            okButtonProps={{ className: "requirement-popconfirm-ok" }}
+            cancelButtonProps={{ className: "requirement-popconfirm-cancel" }}
             onConfirm={() => handleDelete(record.id)}
           >
-            <Button size="small" danger>
+            <Button size="small" className="requirement-delete-btn">
               删除
             </Button>
           </Popconfirm>
@@ -386,18 +406,20 @@ export default function RequirementPage() {
   ];
 
   return (
-    <Space direction="vertical" size="large" style={{ width: "100%" }}>
-      <Card>
+    <div className="requirement-page">
+      <Space direction="vertical" size="large" style={{ width: "100%" }}>
+      <Card className="requirement-toolbar-card">
         <Row justify="space-between" align="middle" gutter={[16, 8]}>
           <Col>
             <Space wrap>
-              <span>项目：</span>
+              <span className="requirement-project-label">项目：</span>
               <Select
                 placeholder="请选择项目"
                 value={selectedProjectId}
                 onChange={handleProjectChange}
                 options={projects.map((p) => ({ label: p.name, value: p.id }))}
                 style={{ width: 200 }}
+                popupClassName="requirement-select-dropdown"
               />
               <Input.Search
                 placeholder="搜索标题或内容"
@@ -411,6 +433,7 @@ export default function RequirementPage() {
                 value={statusFilter}
                 onChange={handleStatusChange}
                 style={{ width: 130 }}
+                popupClassName="requirement-select-dropdown"
               />
               <Select
                 placeholder="类型筛选"
@@ -418,24 +441,33 @@ export default function RequirementPage() {
                 value={typeFilter}
                 onChange={handleTypeChange}
                 style={{ width: 130 }}
+                popupClassName="requirement-select-dropdown"
               />
             </Space>
           </Col>
           <Col>
-            <Button type="primary" onClick={openCreateModal}>
+            <Button type="primary" className="requirement-primary-btn" onClick={openCreateModal}>
               新增需求
             </Button>
           </Col>
         </Row>
       </Card>
 
-      <div style={{ display: "flex", gap: 16 }}>
-        <div style={{ width: 260, flexShrink: 0 }}>
+      <div className="requirement-layout">
+        <div className="requirement-module-shell">
           <ModuleTree
             projectId={selectedProjectId}
             selectedModuleId={selectedModuleId}
             onSelect={handleModuleSelect}
             onChange={handleModuleChange}
+            createButtonLabel="新增模块"
+            createButtonClassName="requirement-module-header-btn"
+            createButtonIcon={null}
+            headerExtra={
+              <Button className="requirement-module-header-btn" onClick={handleUnboundModuleClick} block>
+                无模块用例
+              </Button>
+            }
           />
           <Checkbox
             checked={includeChildren}
@@ -446,8 +478,8 @@ export default function RequirementPage() {
           </Checkbox>
         </div>
 
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <Card title="需求文本列表">
+        <div className="requirement-list-panel">
+          <Card title="需求文本列表" className="requirement-list-card">
             <Table
               rowKey="id"
               columns={columns}
@@ -461,14 +493,29 @@ export default function RequirementPage() {
         </div>
       </div>
 
-      <Modal
+      <Drawer
         title={modalMode === "create" ? "新增需求文本" : "编辑需求文本"}
+        placement="right"
+        width="50vw"
+        rootClassName="requirement-drawer"
         open={modalOpen}
-        onOk={handleSubmit}
-        onCancel={closeModal}
-        confirmLoading={submitting}
+        onClose={closeModal}
         destroyOnClose
-        width={640}
+        footer={
+          <div className="requirement-drawer-footer">
+            <Button onClick={closeModal} disabled={submitting}>
+              取消
+            </Button>
+            <Button
+              type="primary"
+              className="requirement-primary-btn"
+              onClick={handleSubmit}
+              loading={submitting}
+            >
+              保存
+            </Button>
+          </div>
+        }
       >
         <Form form={form} layout="vertical">
           <Form.Item
@@ -479,6 +526,7 @@ export default function RequirementPage() {
             <Select
               placeholder="请选择项目"
               options={projects.map((p) => ({ label: p.name, value: p.id }))}
+              popupClassName="requirement-select-dropdown"
             />
           </Form.Item>
 
@@ -510,11 +558,12 @@ export default function RequirementPage() {
               placeholder="请选择需求类型"
               allowClear
               options={FORM_TYPE_OPTIONS}
+              popupClassName="requirement-select-dropdown"
             />
           </Form.Item>
 
           <Form.Item name="status" label="状态">
-            <Select options={FORM_STATUS_OPTIONS} />
+            <Select options={FORM_STATUS_OPTIONS} popupClassName="requirement-select-dropdown" />
           </Form.Item>
 
           <Form.Item name="remark" label="备注">
@@ -525,7 +574,7 @@ export default function RequirementPage() {
             <Input.TextArea rows={3} placeholder="例如：重点覆盖登录态异常、并发场景、SQL注入测试…" />
           </Form.Item>
         </Form>
-      </Modal>
+      </Drawer>
 
       <Modal
         title="需求详情"
@@ -576,24 +625,28 @@ export default function RequirementPage() {
         )}
       </Modal>
 
-      <Modal
+      <Drawer
         title="生成结果预览"
+        placement="right"
+        width="50vw"
+        rootClassName="requirement-drawer"
         open={generateModalOpen}
-        onCancel={() => setGenerateModalOpen(false)}
-        footer={[
-          <Button key="cancel" onClick={() => setGenerateModalOpen(false)}>
-            关闭
-          </Button>,
-          <Button
-            key="save"
-            type="primary"
-            disabled={selectedCaseKeys.length === 0}
-            onClick={handleSaveSelected}
-          >
-            保存选中用例 ({selectedCaseKeys.length})
-          </Button>,
-        ]}
-        width={900}
+        onClose={() => setGenerateModalOpen(false)}
+        destroyOnClose
+        footer={
+          <div className="requirement-drawer-footer">
+            <Button onClick={() => setGenerateModalOpen(false)}>
+              关闭
+            </Button>
+            <Button
+              className="requirement-save-cases-btn"
+              disabled={selectedCaseKeys.length === 0}
+              onClick={handleSaveSelected}
+            >
+              保存选中用例 ({selectedCaseKeys.length})
+            </Button>
+          </div>
+        }
       >
         {generateErrors.length > 0 && (
           <div
@@ -621,7 +674,7 @@ export default function RequirementPage() {
               marginBottom: 12,
             }}
           >
-            本次使用模型：<Tag color="green">{generatedMeta.provider_name} / {generatedMeta.model_name}</Tag>
+            本次使用模型：<Tag className="requirement-status-tag">{generatedMeta.provider_name} / {generatedMeta.model_name}</Tag>
           </div>
         )}
         <Table
@@ -669,7 +722,8 @@ export default function RequirementPage() {
           scroll={{ x: 1100 }}
           size="small"
         />
-      </Modal>
+      </Drawer>
     </Space>
+    </div>
   );
 }

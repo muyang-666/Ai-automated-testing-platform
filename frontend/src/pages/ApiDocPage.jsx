@@ -4,6 +4,7 @@ import {
   Card,
   Checkbox,
   Col,
+  Drawer,
   Form,
   Input,
   InputNumber,
@@ -259,7 +260,11 @@ function ApiDocPage() {
       const selected = selectedCaseKeys
         .map((key) => genPreview.cases.find((c) => c._temp_key === key))
         .filter(Boolean)
-        .map(({ _temp_key, ...rest }) => rest);
+        .map((item) => {
+          const next = { ...item };
+          delete next._temp_key;
+          return next;
+        });
 
       await saveGeneratedApiCases({
         document_id: genPreview.document_id,
@@ -320,21 +325,27 @@ function ApiDocPage() {
       width: 280,
       render: (_, record) => (
         <Space size="small" wrap>
-          <Button size="small" onClick={() => openDetail(record)}>
+          <Button size="small" className="standard-action-btn" onClick={() => openDetail(record)}>
             详情
           </Button>
-          <Button size="small" onClick={() => openEdit(record)}>
+          <Button size="small" className="standard-action-btn" onClick={() => openEdit(record)}>
             编辑
           </Button>
           <Popconfirm
             title="确认删除此接口文档？"
+            description="删除后不可恢复，请确认。"
+            okText="确认"
+            cancelText="取消"
+            overlayClassName="standard-popconfirm"
+            okButtonProps={{ className: "standard-popconfirm-ok" }}
+            cancelButtonProps={{ className: "standard-popconfirm-cancel" }}
             onConfirm={() => handleDelete(record.id)}
           >
-            <Button size="small" danger>删除</Button>
+            <Button size="small" className="standard-delete-btn">删除</Button>
           </Popconfirm>
           <Button
             size="small"
-            type="primary"
+            className="standard-action-btn"
             loading={generating === record.id}
             onClick={() => handleGenerateCases(record)}
           >
@@ -403,13 +414,14 @@ function ApiDocPage() {
   ];
 
   return (
+    <div className="standard-page">
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
       {/* Top bar */}
-      <Card>
+      <Card className="standard-toolbar-card">
         <Row justify="space-between" align="middle" gutter={[16, 12]}>
           <Col>
             <Space wrap>
-              <span>项目：</span>
+              <span className="standard-project-label">项目：</span>
               <Select
                 placeholder="请选择项目"
                 value={selectedProjectId}
@@ -417,6 +429,7 @@ function ApiDocPage() {
                 options={projects.map((p) => ({ label: p.name, value: p.id }))}
                 style={{ width: 180 }}
                 loading={projects.length === 0}
+                popupClassName="standard-select-dropdown"
               />
               <Input
                 placeholder="关键词搜索"
@@ -425,6 +438,7 @@ function ApiDocPage() {
                 onPressEnter={handleSearch}
                 style={{ width: 160 }}
                 allowClear
+                popupClassName="standard-select-dropdown"
               />
               <Select
                 placeholder="请求方法"
@@ -441,12 +455,13 @@ function ApiDocPage() {
                 options={STATUS_OPTIONS}
                 style={{ width: 110 }}
                 allowClear
+                popupClassName="standard-select-dropdown"
               />
-              <Button onClick={handleSearch}>搜索</Button>
+              <Button className="standard-action-btn" onClick={handleSearch}>搜索</Button>
             </Space>
           </Col>
           <Col>
-            <Button type="primary" onClick={openCreate}>
+            <Button type="primary" className="standard-primary-btn" onClick={openCreate}>
               新增接口文档
             </Button>
           </Col>
@@ -454,13 +469,21 @@ function ApiDocPage() {
       </Card>
 
       {/* Main area */}
-      <div style={{ display: "flex", gap: 16 }}>
-        <div style={{ width: 260, flexShrink: 0 }}>
+      <div className="standard-layout">
+        <div className="standard-module-shell">
           <ModuleTree
             projectId={selectedProjectId}
             selectedModuleId={selectedModuleId}
             onSelect={setSelectedModuleId}
             onChange={fetchDocuments}
+            createButtonLabel="新增模块"
+            createButtonClassName="requirement-module-header-btn"
+            createButtonIcon={null}
+            headerExtra={
+              <Button className="requirement-module-header-btn" block>
+                无模块用例
+              </Button>
+            }
           />
           <Checkbox
             checked={includeChildren}
@@ -470,8 +493,8 @@ function ApiDocPage() {
             包含子模块
           </Checkbox>
         </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <Card title="接口文档列表">
+        <div className="standard-list-panel">
+          <Card title="接口文档列表" className="standard-list-card">
             <Table
               rowKey="id"
               columns={columns}
@@ -486,14 +509,22 @@ function ApiDocPage() {
       </div>
 
       {/* CRUD Modal */}
-      <Modal
+      <Drawer
         title={modalMode === "create" ? "新增接口文档" : "编辑接口文档"}
+        placement="right"
+        width="50vw"
+        rootClassName="standard-drawer"
         open={modalOpen}
-        onCancel={handleCancel}
-        onOk={() => form.submit()}
-        confirmLoading={submitting}
+        onClose={handleCancel}
         destroyOnClose
-        width={720}
+        footer={
+          <div className="standard-drawer-footer">
+            <Button onClick={handleCancel} disabled={submitting}>取消</Button>
+            <Button type="primary" className="standard-primary-btn" onClick={() => form.submit()} loading={submitting}>
+              保存
+            </Button>
+          </div>
+        }
       >
         <Form form={form} layout="vertical" onFinish={handleSubmit}>
           <Row gutter={16}>
@@ -505,6 +536,7 @@ function ApiDocPage() {
               >
                 <Select
                   options={projects.map((p) => ({ label: p.name, value: p.id }))}
+                  popupClassName="standard-select-dropdown"
                 />
               </Form.Item>
             </Col>
@@ -554,10 +586,10 @@ GET /api/user/info
             />
           </Form.Item>
           <Form.Item name="status" label="状态">
-            <Select options={FORM_STATUS_OPTIONS} />
+            <Select options={FORM_STATUS_OPTIONS} popupClassName="standard-select-dropdown" />
           </Form.Item>
         </Form>
-      </Modal>
+      </Drawer>
 
       {/* Detail Modal */}
       <Modal
@@ -600,16 +632,19 @@ GET /api/user/info
       </Modal>
 
       {/* Generate Preview Modal */}
-      <Modal
+      <Drawer
         title="生成接口测试用例预览"
+        placement="right"
+        width="50vw"
+        rootClassName="standard-drawer"
         open={genPreviewOpen}
-        onCancel={() => {
+        onClose={() => {
           setGenPreviewOpen(false);
           setGenPreview(null);
           setSelectedCaseKeys([]);
         }}
         footer={
-          <Space>
+          <div className="standard-drawer-footer">
             <Button
               onClick={() => {
                 setGenPreviewOpen(false);
@@ -620,16 +655,15 @@ GET /api/user/info
               取消
             </Button>
             <Button
-              type="primary"
+              className="standard-save-btn"
               loading={saving}
               disabled={selectedCaseKeys.length === 0}
               onClick={handleSaveCases}
             >
               保存选中 ({selectedCaseKeys.length})
             </Button>
-          </Space>
+          </div>
         }
-        width={1000}
       >
         {genPreview ? (
           <>
@@ -667,8 +701,9 @@ GET /api/user/info
         ) : (
           <p>无预览数据</p>
         )}
-      </Modal>
+      </Drawer>
     </Space>
+    </div>
   );
 }
 

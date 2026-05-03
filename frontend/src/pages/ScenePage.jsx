@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   Button,
   Card,
+  Drawer,
   Form,
   Input,
   message,
@@ -46,7 +47,7 @@ export default function ScenePage() {
       setLoading(true);
       const res = await getSceneList();
       setScenes(res.data || []);
-    } catch (error) {
+    } catch {
       message.error("读取场景列表失败");
     } finally {
       setLoading(false);
@@ -100,7 +101,7 @@ export default function ScenePage() {
       await deleteScene(sceneId);
       message.success("场景删除成功");
       loadScenes();
-    } catch (error) {
+    } catch {
       message.error("场景删除失败");
     }
   };
@@ -162,13 +163,12 @@ export default function ScenePage() {
       width: 260,
       render: (_, record) => (
         <Space>
-          <Button size="small" onClick={() => handleExecute(record.id)}>
+          <Button size="small" className="standard-action-btn" onClick={() => handleExecute(record.id)}>
             一键执行
           </Button>
           <Button
             size="small"
-            type="primary"
-            ghost
+            className="standard-action-btn"
             loading={chainRunning}
             onClick={() => handleRunChain(record.id)}
           >
@@ -182,7 +182,7 @@ export default function ScenePage() {
       key: "manage",
       width: 120,
       render: (_, record) => (
-        <Button size="small" onClick={() => setCurrentScene(record)}>
+        <Button size="small" className="standard-action-btn" onClick={() => setCurrentScene(record)}>
           管理用例
         </Button>
       ),
@@ -193,14 +193,20 @@ export default function ScenePage() {
       width: 180,
       render: (_, record) => (
         <Space>
-          <Button size="small" onClick={() => openEditModal(record)}>
+          <Button size="small" className="standard-action-btn" onClick={() => openEditModal(record)}>
             编辑
           </Button>
           <Popconfirm
             title="确定删除这个场景吗？"
+            description="删除后不可恢复，请确认。"
+            okText="确认"
+            cancelText="取消"
+            overlayClassName="standard-popconfirm"
+            okButtonProps={{ className: "standard-popconfirm-ok" }}
+            cancelButtonProps={{ className: "standard-popconfirm-cancel" }}
             onConfirm={() => handleDelete(record.id)}
           >
-            <Button danger size="small">
+            <Button className="standard-delete-btn" size="small">
               删除
             </Button>
           </Popconfirm>
@@ -247,15 +253,15 @@ export default function ScenePage() {
   ];
 
   return (
-    <>
-      <Card>
+    <div className="standard-page">
+      <Card className="standard-list-card">
         <Space
           style={{ width: "100%", justifyContent: "space-between", marginBottom: 16 }}
         >
           <Title level={4} style={{ margin: 0 }}>
             场景管理
           </Title>
-          <Button type="primary" onClick={openCreateModal}>
+          <Button type="primary" className="standard-primary-btn" onClick={openCreateModal}>
             新增场景
           </Button>
         </Space>
@@ -268,16 +274,34 @@ export default function ScenePage() {
         />
       </Card>
 
-      <Modal
+      <Drawer
         title={editingScene ? "编辑场景" : "新增场景"}
+        placement="right"
+        width="50vw"
+        rootClassName="standard-drawer"
         open={modalOpen}
-        onOk={handleSave}
-        onCancel={() => {
+        onClose={() => {
           setModalOpen(false);
           setEditingScene(null);
           form.resetFields();
         }}
         destroyOnClose
+        footer={
+          <div className="standard-drawer-footer">
+            <Button
+              onClick={() => {
+                setModalOpen(false);
+                setEditingScene(null);
+                form.resetFields();
+              }}
+            >
+              取消
+            </Button>
+            <Button type="primary" className="standard-primary-btn" onClick={handleSave}>
+              保存
+            </Button>
+          </div>
+        }
       >
         <Form form={form} layout="vertical">
           <Form.Item
@@ -292,7 +316,7 @@ export default function ScenePage() {
             <Input.TextArea rows={3} placeholder="请输入场景描述" />
           </Form.Item>
         </Form>
-      </Modal>
+      </Drawer>
 
       <Modal
         title={executeResult ? `场景执行结果：${executeResult.scene_name}` : "场景执行结果"}
@@ -445,6 +469,6 @@ export default function ScenePage() {
           </Space>
         )}
       </Modal>
-    </>
+    </div>
   );
 }

@@ -197,8 +197,10 @@ export default function App() {
           }}
         >
           <Space>
-            <Text>{currentUser.display_name || currentUser.username}</Text>
-            <Button size="small" onClick={handleLogout}>
+            <Text style={{ fontSize: 18, fontWeight: 700 }}>
+              {currentUser.display_name || currentUser.username}
+            </Text>
+            <Button size="small" style={{ fontSize: 16, fontWeight: 600 }} onClick={handleLogout}>
               退出
             </Button>
           </Space>

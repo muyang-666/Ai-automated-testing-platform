@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   Button,
+  Drawer,
   Dropdown,
   Form,
   Input,
@@ -53,6 +54,11 @@ export default function ModuleTree({
   selectedModuleId,
   onSelect,
   onChange,
+  showCreateButton = true,
+  createButtonLabel = "新增一级模块",
+  createButtonClassName = "",
+  createButtonIcon = <PlusOutlined />,
+  headerExtra = null,
 }) {
   const [treeData, setTreeData] = useState([]);
   const [flatMap, setFlatMap] = useState({});
@@ -319,17 +325,24 @@ export default function ModuleTree({
 
   return (
     <div>
-      <div style={{ marginBottom: 12 }}>
-        <Button
-          type="primary"
-          size="small"
-          icon={<PlusOutlined />}
-          onClick={() => openCreateModal(null)}
-          block
-        >
-          新增一级模块
-        </Button>
-      </div>
+      {(showCreateButton || headerExtra) && (
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ display: "flex", gap: 8 }}>
+            {showCreateButton && (
+              <Button
+                size="small"
+                icon={createButtonIcon}
+                onClick={() => openCreateModal(null)}
+                className={createButtonClassName}
+                block
+              >
+                {createButtonLabel}
+              </Button>
+            )}
+            {headerExtra}
+          </div>
+        </div>
+      )}
 
       <Spin spinning={loading}>
         {treeData.length === 0 ? (
@@ -357,7 +370,7 @@ export default function ModuleTree({
         )}
       </Spin>
 
-      <Modal
+      <Drawer
         title={
           modalMode === "create"
             ? targetParentId
@@ -365,10 +378,20 @@ export default function ModuleTree({
               : "新增一级模块"
             : "编辑模块"
         }
+        placement="right"
+        width="50vw"
+        rootClassName="module-tree-drawer"
         open={modalOpen}
-        onOk={handleSubmit}
-        onCancel={closeModal}
+        onClose={closeModal}
         destroyOnClose
+        footer={
+          <div className="module-tree-drawer-footer">
+            <Button onClick={closeModal}>取消</Button>
+            <Button type="primary" className="module-tree-save-btn" onClick={handleSubmit}>
+              保存
+            </Button>
+          </div>
+        }
       >
         <Form form={form} layout="vertical">
           <Form.Item
@@ -383,7 +406,7 @@ export default function ModuleTree({
             <Input.TextArea rows={3} placeholder="请输入模块描述" />
           </Form.Item>
         </Form>
-      </Modal>
+      </Drawer>
     </div>
   );
 }

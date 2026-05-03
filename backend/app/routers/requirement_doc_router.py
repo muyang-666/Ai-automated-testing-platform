@@ -29,6 +29,7 @@ def create_requirement(doc_data: RequirementDocCreate, db: Session = Depends(get
 def list_requirements(
     project_id: Optional[int] = Query(default=None, description="按项目筛选"),
     module_id: Optional[int] = Query(default=None, description="按模块筛选"),
+    unbound_module: bool = Query(default=False, description="仅查询未绑定模块的需求"),
     include_children: bool = Query(default=False, description="是否包含子模块"),
     keyword: Optional[str] = Query(default=None, description="按标题或内容模糊搜索"),
     status: Optional[str] = Query(default=None, description="按状态筛选"),
@@ -39,6 +40,7 @@ def list_requirements(
         db,
         project_id=project_id,
         module_id=module_id,
+        unbound_module=unbound_module,
         include_children=include_children,
         keyword=keyword,
         status=status,

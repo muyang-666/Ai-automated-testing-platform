@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   Button,
   Card,
+  Drawer,
   Form,
   Input,
   InputNumber,
@@ -53,8 +54,8 @@ function ModelConfigPage() {
   // ── Provider state ──
   const [providers, setProviders] = useState([]);
   const [providerLoading, setProviderLoading] = useState(false);
-  const [providerModalOpen, setProviderModalOpen] = useState(false);
-  const [providerModalMode, setProviderModalMode] = useState("create");
+  const [providerCreateModalOpen, setProviderCreateModalOpen] = useState(false);
+  const [providerEditDrawerOpen, setProviderEditDrawerOpen] = useState(false);
   const [currentProvider, setCurrentProvider] = useState(null);
   const [providerSubmitting, setProviderSubmitting] = useState(false);
   const [providerForm] = Form.useForm();
@@ -62,8 +63,8 @@ function ModelConfigPage() {
   // ── Model state ──
   const [models, setModels] = useState([]);
   const [modelLoading, setModelLoading] = useState(false);
-  const [modelModalOpen, setModelModalOpen] = useState(false);
-  const [modelModalMode, setModelModalMode] = useState("create");
+  const [modelCreateModalOpen, setModelCreateModalOpen] = useState(false);
+  const [modelEditDrawerOpen, setModelEditDrawerOpen] = useState(false);
   const [currentModel, setCurrentModel] = useState(null);
   const [modelSubmitting, setModelSubmitting] = useState(false);
   const [modelForm] = Form.useForm();
@@ -74,7 +75,7 @@ function ModelConfigPage() {
   // ── Scene state ──
   const [sceneConfigs, setSceneConfigs] = useState([]);
   const [sceneLoading, setSceneLoading] = useState(false);
-  const [sceneModalOpen, setSceneModalOpen] = useState(false);
+  const [sceneEditDrawerOpen, setSceneEditDrawerOpen] = useState(false);
   const [currentScene, setCurrentScene] = useState(null);
   const [sceneSubmitting, setSceneSubmitting] = useState(false);
   const [sceneForm] = Form.useForm();
@@ -86,7 +87,7 @@ function ModelConfigPage() {
     try {
       const res = await getProviderList();
       setProviders(res.data || []);
-    } catch (error) {
+    } catch {
       message.error("获取供应商列表失败");
     } finally {
       setProviderLoading(false);
@@ -98,15 +99,13 @@ function ModelConfigPage() {
   }, []);
 
   const openProviderCreate = () => {
-    setProviderModalMode("create");
     setCurrentProvider(null);
     providerForm.resetFields();
     providerForm.setFieldsValue({ provider_type: "openai_compatible", status: "active" });
-    setProviderModalOpen(true);
+    setProviderCreateModalOpen(true);
   };
 
   const openProviderEdit = (record) => {
-    setProviderModalMode("edit");
     setCurrentProvider(record);
     providerForm.setFieldsValue({
       name: record.name,
@@ -116,11 +115,17 @@ function ModelConfigPage() {
       status: record.status,
       remark: record.remark || "",
     });
-    setProviderModalOpen(true);
+    setProviderEditDrawerOpen(true);
   };
 
-  const handleProviderCancel = () => {
-    setProviderModalOpen(false);
+  const closeProviderCreateModal = () => {
+    setProviderCreateModalOpen(false);
+    setCurrentProvider(null);
+    providerForm.resetFields();
+  };
+
+  const closeProviderEditDrawer = () => {
+    setProviderEditDrawerOpen(false);
     setCurrentProvider(null);
     providerForm.resetFields();
   };
@@ -128,16 +133,17 @@ function ModelConfigPage() {
   const handleProviderSubmit = async (values) => {
     setProviderSubmitting(true);
     try {
-      if (providerModalMode === "create") {
+      if (!currentProvider) {
         await createProvider(values);
         message.success("供应商创建成功");
+        closeProviderCreateModal();
       } else {
         const payload = { ...values };
         if (!payload.api_key) delete payload.api_key;
         await updateProvider(currentProvider.id, payload);
         message.success("供应商更新成功");
+        closeProviderEditDrawer();
       }
-      handleProviderCancel();
       fetchProviders();
     } catch (error) {
       const detail = error?.response?.data?.detail || error?.message || "操作失败";
@@ -159,7 +165,7 @@ function ModelConfigPage() {
   };
 
   const providerColumns = [
-    { title: "ID", dataIndex: "id", width: 60 },
+    { title: "ID", dataIndex: "id", width: 30 },
     { title: "名称", dataIndex: "name", width: 120 },
     {
       title: "类型",
@@ -173,11 +179,8 @@ function ModelConfigPage() {
       title: "状态",
       dataIndex: "status",
       width: 80,
-      render: (v) => (
-        <Tag color={v === "active" ? "green" : "red"}>{v}</Tag>
-      ),
+      render: (v) => <Tag>{v}</Tag>,
     },
-    { title: "备注", dataIndex: "remark", width: 120, ellipsis: true },
     {
       title: "操作",
       width: 160,
@@ -187,10 +190,16 @@ function ModelConfigPage() {
             编辑
           </Button>
           <Popconfirm
-            title="确认删除此供应商？"
+            title="确认删除该供应商？"
+            description="删除后不可恢复，请确认。"
+            okText="确认删除"
+            cancelText="取消"
+            overlayClassName="model-config-popconfirm"
+            okButtonProps={{ className: "model-config-popconfirm-ok" }}
+            cancelButtonProps={{ className: "model-config-popconfirm-cancel" }}
             onConfirm={() => handleDeleteProvider(record.id)}
           >
-            <Button size="small" danger>删除</Button>
+            <Button size="small" className="model-config-delete-btn">删除</Button>
           </Popconfirm>
         </Space>
       ),
@@ -204,7 +213,7 @@ function ModelConfigPage() {
     try {
       const res = await getModelList();
       setModels(res.data || []);
-    } catch (error) {
+    } catch {
       message.error("获取模型列表失败");
     } finally {
       setModelLoading(false);
@@ -216,15 +225,13 @@ function ModelConfigPage() {
   }, []);
 
   const openModelCreate = () => {
-    setModelModalMode("create");
     setCurrentModel(null);
     modelForm.resetFields();
     modelForm.setFieldsValue({ temperature: 0.7, max_tokens: 2048, timeout_seconds: 60, status: "active" });
-    setModelModalOpen(true);
+    setModelCreateModalOpen(true);
   };
 
   const openModelEdit = (record) => {
-    setModelModalMode("edit");
     setCurrentModel(record);
     modelForm.setFieldsValue({
       provider_id: record.provider_id,
@@ -236,11 +243,17 @@ function ModelConfigPage() {
       status: record.status,
       remark: record.remark || "",
     });
-    setModelModalOpen(true);
+    setModelEditDrawerOpen(true);
   };
 
-  const handleModelCancel = () => {
-    setModelModalOpen(false);
+  const closeModelCreateModal = () => {
+    setModelCreateModalOpen(false);
+    setCurrentModel(null);
+    modelForm.resetFields();
+  };
+
+  const closeModelEditDrawer = () => {
+    setModelEditDrawerOpen(false);
     setCurrentModel(null);
     modelForm.resetFields();
   };
@@ -248,14 +261,15 @@ function ModelConfigPage() {
   const handleModelSubmit = async (values) => {
     setModelSubmitting(true);
     try {
-      if (modelModalMode === "create") {
+      if (!currentModel) {
         await createModel(values);
         message.success("模型创建成功");
+        closeModelCreateModal();
       } else {
         await updateModel(currentModel.id, values);
         message.success("模型更新成功");
+        closeModelEditDrawer();
       }
-      handleModelCancel();
       fetchModels();
     } catch (error) {
       const detail = error?.response?.data?.detail || error?.message || "操作失败";
@@ -282,7 +296,7 @@ function ModelConfigPage() {
       const res = await testModel(id);
       setTestResult(res.data);
       setTestResultModalOpen(true);
-    } catch (error) {
+    } catch {
       message.error("测试请求失败");
     } finally {
       setTesting(null);
@@ -290,7 +304,7 @@ function ModelConfigPage() {
   };
 
   const modelColumns = [
-    { title: "ID", dataIndex: "id", width: 60 },
+    { title: "ID", dataIndex: "id", width: 30 },
     { title: "模型名称", dataIndex: "model_name", width: 140 },
     { title: "展示名称", dataIndex: "display_name", width: 120, render: (v) => v || "-" },
     { title: "供应商", dataIndex: "provider_name", width: 100, render: (v) => v || "-" },
@@ -301,9 +315,7 @@ function ModelConfigPage() {
       title: "状态",
       dataIndex: "status",
       width: 80,
-      render: (v) => (
-        <Tag color={v === "active" ? "green" : "red"}>{v}</Tag>
-      ),
+      render: (v) => <Tag>{v}</Tag>,
     },
     {
       title: "操作",
@@ -314,10 +326,16 @@ function ModelConfigPage() {
             编辑
           </Button>
           <Popconfirm
-            title="确认删除此模型？"
+            title="确认删除该模型？"
+            description="删除后不可恢复，请确认。"
+            okText="确认删除"
+            cancelText="取消"
+            overlayClassName="model-config-popconfirm"
+            okButtonProps={{ className: "model-config-popconfirm-ok" }}
+            cancelButtonProps={{ className: "model-config-popconfirm-cancel" }}
             onConfirm={() => handleDeleteModel(record.id)}
           >
-            <Button size="small" danger>删除</Button>
+            <Button size="small" className="model-config-delete-btn">删除</Button>
           </Popconfirm>
           <Button
             size="small"
@@ -338,7 +356,7 @@ function ModelConfigPage() {
     try {
       const res = await getSceneConfigList();
       setSceneConfigs(res.data || []);
-    } catch (error) {
+    } catch {
       message.error("获取业务场景配置失败");
     } finally {
       setSceneLoading(false);
@@ -357,11 +375,11 @@ function ModelConfigPage() {
       prompt_template: record.prompt_template || "",
       remark: record.remark || "",
     });
-    setSceneModalOpen(true);
+    setSceneEditDrawerOpen(true);
   };
 
-  const handleSceneCancel = () => {
-    setSceneModalOpen(false);
+  const closeSceneEditDrawer = () => {
+    setSceneEditDrawerOpen(false);
     setCurrentScene(null);
     sceneForm.resetFields();
   };
@@ -371,7 +389,7 @@ function ModelConfigPage() {
     try {
       await updateSceneConfig(currentScene.id, values);
       message.success("业务场景配置更新成功");
-      handleSceneCancel();
+      closeSceneEditDrawer();
       fetchSceneConfigs();
     } catch (error) {
       const detail = error?.response?.data?.detail || error?.message || "操作失败";
@@ -382,7 +400,7 @@ function ModelConfigPage() {
   };
 
   const sceneColumns = [
-    { title: "ID", dataIndex: "id", width: 60 },
+    { title: "ID", dataIndex: "id", width: 30 },
     {
       title: "场景编码",
       dataIndex: "scene_code",
@@ -398,7 +416,7 @@ function ModelConfigPage() {
       title: "绑定模型",
       dataIndex: "model_name",
       width: 140,
-      render: (v) => v || <Tag color="default">未绑定</Tag>,
+      render: (v) => v || <Tag>未绑定</Tag>,
     },
     {
       title: "供应商",
@@ -410,9 +428,7 @@ function ModelConfigPage() {
       title: "启用",
       dataIndex: "enabled",
       width: 60,
-      render: (v) => (
-        <Tag color={v ? "green" : "red"}>{v ? "是" : "否"}</Tag>
-      ),
+      render: (v) => <Tag>{v ? "是" : "否"}</Tag>,
     },
     {
       title: "操作",
@@ -432,9 +448,9 @@ function ModelConfigPage() {
       key: "providers",
       label: "供应商配置",
       children: (
-        <Card>
+        <Card className="model-config-card">
           <Space direction="vertical" style={{ width: "100%" }} size={16}>
-            <Button type="primary" onClick={openProviderCreate}>
+            <Button type="primary" className="model-config-primary-btn" onClick={openProviderCreate}>
               新增供应商
             </Button>
             <Table
@@ -454,9 +470,9 @@ function ModelConfigPage() {
       key: "models",
       label: "模型配置",
       children: (
-        <Card>
+        <Card className="model-config-card">
           <Space direction="vertical" style={{ width: "100%" }} size={16}>
-            <Button type="primary" onClick={openModelCreate}>
+            <Button type="primary" className="model-config-primary-btn" onClick={openModelCreate}>
               新增模型
             </Button>
             <Table
@@ -476,7 +492,7 @@ function ModelConfigPage() {
       key: "scenes",
       label: "业务场景配置",
       children: (
-        <Card>
+        <Card className="model-config-card">
           <Table
             rowKey="id"
             columns={sceneColumns}
@@ -492,18 +508,33 @@ function ModelConfigPage() {
   ];
 
   return (
-    <>
-      <Tabs defaultActiveKey="providers" items={tabItems} />
+    <div className="model-config-page">
+      <Tabs defaultActiveKey="providers" items={tabItems} className="model-config-tabs" />
 
-      {/* Provider Modal */}
-      <Modal
-        title={providerModalMode === "create" ? "新增供应商" : "编辑供应商"}
-        open={providerModalOpen}
-        onCancel={handleProviderCancel}
-        onOk={() => providerForm.submit()}
-        confirmLoading={providerSubmitting}
+      {/* Provider Create Drawer */}
+      <Drawer
+        title="新增供应商"
+        placement="right"
+        width="50vw"
+        rootClassName="model-config-drawer"
+        open={providerCreateModalOpen}
+        onClose={closeProviderCreateModal}
         destroyOnClose
-        width={560}
+        footer={
+          <div className="model-config-drawer-footer">
+            <Button onClick={closeProviderCreateModal} disabled={providerSubmitting}>
+              取消
+            </Button>
+            <Button
+              type="primary"
+              className="model-config-primary-btn"
+              onClick={() => providerForm.submit()}
+              loading={providerSubmitting}
+            >
+              保存
+            </Button>
+          </div>
+        }
       >
         <Form form={providerForm} layout="vertical" onFinish={handleProviderSubmit}>
           <Form.Item
@@ -526,15 +557,9 @@ function ModelConfigPage() {
           <Form.Item
             name="api_key"
             label="API Key"
-            rules={
-              providerModalMode === "create"
-                ? [{ required: true, message: "请输入 API Key" }]
-                : []
-            }
+            rules={[{ required: true, message: "请输入 API Key" }]}
           >
-            <Input.Password
-              placeholder={providerModalMode === "edit" ? "留空则不修改" : ""}
-            />
+            <Input.Password />
           </Form.Item>
           <Form.Item name="status" label="状态">
             <Select options={STATUS_OPTIONS} />
@@ -543,17 +568,87 @@ function ModelConfigPage() {
             <Input.TextArea rows={2} />
           </Form.Item>
         </Form>
-      </Modal>
+      </Drawer>
 
-      {/* Model Modal */}
-      <Modal
-        title={modelModalMode === "create" ? "新增模型" : "编辑模型"}
-        open={modelModalOpen}
-        onCancel={handleModelCancel}
-        onOk={() => modelForm.submit()}
-        confirmLoading={modelSubmitting}
+      {/* Provider Edit Drawer */}
+      <Drawer
+        title="编辑供应商"
+        placement="right"
+        width="50vw"
+        rootClassName="model-config-drawer"
+        open={providerEditDrawerOpen}
+        onClose={closeProviderEditDrawer}
         destroyOnClose
-        width={560}
+        footer={
+          <div className="model-config-drawer-footer">
+            <Button onClick={closeProviderEditDrawer} disabled={providerSubmitting}>
+              取消
+            </Button>
+            <Button
+              type="primary"
+              className="model-config-primary-btn"
+              onClick={() => providerForm.submit()}
+              loading={providerSubmitting}
+            >
+              保存
+            </Button>
+          </div>
+        }
+      >
+        <Form form={providerForm} layout="vertical" onFinish={handleProviderSubmit}>
+          <Form.Item
+            name="name"
+            label="供应商名称"
+            rules={[{ required: true, message: "请输入供应商名称" }]}
+          >
+            <Input placeholder="如 DeepSeek" />
+          </Form.Item>
+          <Form.Item name="provider_type" label="供应商类型" rules={[{ required: true }]}>
+            <Select options={PROVIDER_TYPE_OPTIONS} />
+          </Form.Item>
+          <Form.Item
+            name="base_url"
+            label="API Base URL"
+            rules={[{ required: true, message: "请输入 API Base URL" }]}
+          >
+            <Input placeholder="https://api.deepseek.com/v1" />
+          </Form.Item>
+          <Form.Item name="api_key" label="API Key">
+            <Input.Password placeholder="留空则不修改" />
+          </Form.Item>
+          <Form.Item name="status" label="状态">
+            <Select options={STATUS_OPTIONS} />
+          </Form.Item>
+          <Form.Item name="remark" label="备注">
+            <Input.TextArea rows={2} />
+          </Form.Item>
+        </Form>
+      </Drawer>
+
+      {/* Model Create Drawer */}
+      <Drawer
+        title="新增模型"
+        placement="right"
+        width="50vw"
+        rootClassName="model-config-drawer"
+        open={modelCreateModalOpen}
+        onClose={closeModelCreateModal}
+        destroyOnClose
+        footer={
+          <div className="model-config-drawer-footer">
+            <Button onClick={closeModelCreateModal} disabled={modelSubmitting}>
+              取消
+            </Button>
+            <Button
+              type="primary"
+              className="model-config-primary-btn"
+              onClick={() => modelForm.submit()}
+              loading={modelSubmitting}
+            >
+              保存
+            </Button>
+          </div>
+        }
       >
         <Form form={modelForm} layout="vertical" onFinish={handleModelSubmit}>
           <Form.Item
@@ -594,7 +689,73 @@ function ModelConfigPage() {
             <Input.TextArea rows={2} />
           </Form.Item>
         </Form>
-      </Modal>
+      </Drawer>
+
+      {/* Model Edit Drawer */}
+      <Drawer
+        title="编辑模型"
+        placement="right"
+        width="50vw"
+        rootClassName="model-config-drawer"
+        open={modelEditDrawerOpen}
+        onClose={closeModelEditDrawer}
+        destroyOnClose
+        footer={
+          <div className="model-config-drawer-footer">
+            <Button onClick={closeModelEditDrawer} disabled={modelSubmitting}>
+              取消
+            </Button>
+            <Button
+              type="primary"
+              className="model-config-primary-btn"
+              onClick={() => modelForm.submit()}
+              loading={modelSubmitting}
+            >
+              保存
+            </Button>
+          </div>
+        }
+      >
+        <Form form={modelForm} layout="vertical" onFinish={handleModelSubmit}>
+          <Form.Item
+            name="provider_id"
+            label="供应商"
+            rules={[{ required: true, message: "请选择供应商" }]}
+          >
+            <Select
+              placeholder="请选择供应商"
+              options={providers
+                .filter((p) => p.status === "active")
+                .map((p) => ({ label: p.name, value: p.id }))}
+            />
+          </Form.Item>
+          <Form.Item
+            name="model_name"
+            label="模型名称"
+            rules={[{ required: true, message: "请输入模型名称" }]}
+          >
+            <Input placeholder="如 deepseek-chat" />
+          </Form.Item>
+          <Form.Item name="display_name" label="展示名称">
+            <Input placeholder="可选，如 DeepSeek Chat V3" />
+          </Form.Item>
+          <Form.Item name="temperature" label="Temperature">
+            <InputNumber min={0} max={2} step={0.1} style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item name="max_tokens" label="Max Tokens">
+            <InputNumber min={1} max={128000} style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item name="timeout_seconds" label="超时时间(秒)">
+            <InputNumber min={1} max={600} style={{ width: "100%" }} />
+          </Form.Item>
+          <Form.Item name="status" label="状态">
+            <Select options={STATUS_OPTIONS} />
+          </Form.Item>
+          <Form.Item name="remark" label="备注">
+            <Input.TextArea rows={2} />
+          </Form.Item>
+        </Form>
+      </Drawer>
 
       {/* Test Result Modal */}
       <Modal
@@ -608,7 +769,7 @@ function ModelConfigPage() {
           <Space direction="vertical" style={{ width: "100%" }} size={12}>
             <p>
               结果：{" "}
-              <Tag color={testResult.success ? "green" : "red"}>
+              <Tag>
                 {testResult.success ? "成功" : "失败"}
               </Tag>
             </p>
@@ -644,15 +805,30 @@ function ModelConfigPage() {
         )}
       </Modal>
 
-      {/* Scene Config Modal */}
-      <Modal
+      {/* Scene Edit Drawer */}
+      <Drawer
         title="编辑业务场景配置"
-        open={sceneModalOpen}
-        onCancel={handleSceneCancel}
-        onOk={() => sceneForm.submit()}
-        confirmLoading={sceneSubmitting}
+        placement="right"
+        width="50vw"
+        rootClassName="model-config-drawer"
+        open={sceneEditDrawerOpen}
+        onClose={closeSceneEditDrawer}
         destroyOnClose
-        width={600}
+        footer={
+          <div className="model-config-drawer-footer">
+            <Button onClick={closeSceneEditDrawer} disabled={sceneSubmitting}>
+              取消
+            </Button>
+            <Button
+              type="primary"
+              className="model-config-primary-btn"
+              onClick={() => sceneForm.submit()}
+              loading={sceneSubmitting}
+            >
+              保存
+            </Button>
+          </div>
+        }
       >
         <Form form={sceneForm} layout="vertical" onFinish={handleSceneSubmit}>
           {currentScene && (
@@ -685,8 +861,8 @@ function ModelConfigPage() {
             <Input.TextArea rows={2} />
           </Form.Item>
         </Form>
-      </Modal>
-    </>
+      </Drawer>
+    </div>
   );
 }
 

@@ -26,6 +26,7 @@ def get_requirement_doc_list(
     db: Session,
     project_id: int = None,
     module_id: int = None,
+    unbound_module: bool = False,
     include_children: bool = False,
     keyword: str = None,
     status: str = None,
@@ -36,7 +37,9 @@ def get_requirement_doc_list(
     if project_id is not None:
         query = query.filter(RequirementDoc.project_id == project_id)
 
-    if module_id is not None:
+    if unbound_module:
+        query = query.filter(RequirementDoc.module_id.is_(None))
+    elif module_id is not None:
         if include_children:
             child_ids = get_child_module_ids(db, module_id)
             query = query.filter(RequirementDoc.module_id.in_([module_id] + child_ids))

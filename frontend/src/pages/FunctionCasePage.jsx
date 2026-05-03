@@ -4,6 +4,7 @@ import {
   Card,
   Checkbox,
   Col,
+  Drawer,
   Form,
   Input,
   InputNumber,
@@ -70,9 +71,11 @@ const PRIORITY_OPTIONS = [
 ];
 
 const STATUS_OPTIONS = [
-  { label: "active", value: "active" },
-  { label: "disabled", value: "disabled" },
-  { label: "draft", value: "draft" },
+  { label: "未开始", value: "未开始" },
+  { label: "通过", value: "通过" },
+  { label: "失败", value: "失败" },
+  { label: "跳过", value: "跳过" },
+  { label: "堵塞", value: "堵塞" },
 ];
 
 const SOURCE_TAG_MAP = {
@@ -87,12 +90,19 @@ const PRIORITY_TAG_MAP = {
 };
 
 const STATUS_TAG_MAP = {
-  active: { color: "green", label: "active" },
-  disabled: { color: "error", label: "disabled" },
-  draft: { color: "default", label: "draft" },
+  未开始: { color: "default", label: "未开始" },
+  通过: { color: "success", label: "通过" },
+  失败: { color: "error", label: "失败" },
+  跳过: { color: "default", label: "跳过" },
+  堵塞: { color: "warning", label: "堵塞" },
+  active: { color: "default", label: "未开始" },
+  disabled: { color: "warning", label: "堵塞" },
+  draft: { color: "default", label: "未开始" },
 };
 
 const FILTER_ALL = "";
+
+const getStatusLabel = (value) => STATUS_TAG_MAP[value]?.label || value || "-";
 
 export default function FunctionCasePage() {
   const [cases, setCases] = useState([]);
@@ -217,7 +227,7 @@ export default function FunctionCasePage() {
       module_id: selectedModuleId || undefined,
       source: "manual",
       priority: "P1",
-      status: "active",
+      status: "未开始",
     });
     setModalOpen(true);
   };
@@ -294,20 +304,18 @@ export default function FunctionCasePage() {
   };
 
   const columns = [
-    { title: "ID", dataIndex: "id", width: 55 },
+    { title: "ID", dataIndex: "id", width: 28 },
     { title: "编号", dataIndex: "case_code", width: 120, ellipsis: true, render: (v) => v || "-" },
-    { title: "名称", dataIndex: "case_name", width: 160, ellipsis: true },
+    { title: "名称", dataIndex: "case_name", width: 285, ellipsis: true },
     {
-      title: "模块ID",
-      dataIndex: "module_id",
-      width: 70,
-      render: (value) => (value != null ? value : "-"),
-    },
-    {
-      title: "需求ID",
-      dataIndex: "requirement_id",
-      width: 70,
-      render: (value) => (value != null ? value : "-"),
+      title: "优先级",
+      dataIndex: "priority",
+      width: 75,
+      render: (value) => {
+        if (!value) return "-";
+        const tag = PRIORITY_TAG_MAP[value] || { color: "default", label: value };
+        return <Tag color={tag.color}>{tag.label}</Tag>;
+      },
     },
     {
       title: "类型",
@@ -327,16 +335,6 @@ export default function FunctionCasePage() {
       },
     },
     {
-      title: "优先级",
-      dataIndex: "priority",
-      width: 65,
-      render: (value) => {
-        if (!value) return "-";
-        const tag = PRIORITY_TAG_MAP[value] || { color: "default", label: value };
-        return <Tag color={tag.color}>{tag.label}</Tag>;
-      },
-    },
-    {
       title: "状态",
       dataIndex: "status",
       width: 75,
@@ -345,12 +343,6 @@ export default function FunctionCasePage() {
         const tag = STATUS_TAG_MAP[value] || { color: "default", label: value };
         return <Tag color={tag.color}>{tag.label}</Tag>;
       },
-    },
-    {
-      title: "创建时间",
-      dataIndex: "created_at",
-      width: 150,
-      render: (value) => (value ? new Date(value).toLocaleString("zh-CN") : "-"),
     },
     {
       title: "更新时间",
@@ -363,19 +355,23 @@ export default function FunctionCasePage() {
       width: 260,
       render: (_, record) => (
         <Space size="small">
-          <Button size="small" onClick={() => openDetailModal(record)}>
+          <Button size="small" className="standard-action-btn" onClick={() => openDetailModal(record)}>
             查看详情
           </Button>
-          <Button size="small" onClick={() => openEditModal(record)}>
+          <Button size="small" className="standard-action-btn" onClick={() => openEditModal(record)}>
             编辑
           </Button>
           <Popconfirm
             title="确认删除该功能测试用例吗？"
+            description="删除后不可恢复，请确认。"
             okText="确认"
             cancelText="取消"
+            overlayClassName="standard-popconfirm"
+            okButtonProps={{ className: "standard-popconfirm-ok" }}
+            cancelButtonProps={{ className: "standard-popconfirm-cancel" }}
             onConfirm={() => handleDelete(record.id)}
           >
-            <Button size="small" danger>
+            <Button size="small" className="standard-delete-btn">
               删除
             </Button>
           </Popconfirm>
@@ -385,18 +381,20 @@ export default function FunctionCasePage() {
   ];
 
   return (
+    <div className="standard-page">
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
-      <Card>
+      <Card className="standard-toolbar-card">
         <Row justify="space-between" align="middle" gutter={[16, 8]}>
           <Col flex="auto">
             <Space wrap>
-              <span>项目：</span>
+              <span className="standard-project-label">项目：</span>
               <Select
                 placeholder="请选择项目"
                 value={selectedProjectId}
                 onChange={handleProjectChange}
                 options={projects.map((p) => ({ label: p.name, value: p.id }))}
                 style={{ width: 180 }}
+                popupClassName="standard-select-dropdown"
               />
               <Input.Search
                 placeholder="搜索编号/名称/前置条件/预期"
@@ -411,6 +409,7 @@ export default function FunctionCasePage() {
                 onChange={(v) => setSelectedRequirementId(v || FILTER_ALL)}
                 options={requirements.map((r) => ({ label: r.title, value: r.id }))}
                 style={{ width: 160 }}
+                popupClassName="standard-select-dropdown"
               />
               <Select
                 placeholder="类型"
@@ -419,6 +418,7 @@ export default function FunctionCasePage() {
                 onChange={(v) => setCaseTypeFilter(v || FILTER_ALL)}
                 options={CASE_TYPE_OPTIONS}
                 style={{ width: 120 }}
+                popupClassName="standard-select-dropdown"
               />
               <Select
                 placeholder="来源"
@@ -427,6 +427,7 @@ export default function FunctionCasePage() {
                 onChange={(v) => setSourceFilter(v || FILTER_ALL)}
                 options={SOURCE_OPTIONS}
                 style={{ width: 100 }}
+                popupClassName="standard-select-dropdown"
               />
               <Select
                 placeholder="优先级"
@@ -435,6 +436,7 @@ export default function FunctionCasePage() {
                 onChange={(v) => setPriorityFilter(v || FILTER_ALL)}
                 options={PRIORITY_OPTIONS}
                 style={{ width: 90 }}
+                popupClassName="standard-select-dropdown"
               />
               <Select
                 placeholder="状态"
@@ -443,24 +445,33 @@ export default function FunctionCasePage() {
                 onChange={(v) => setStatusFilter(v || FILTER_ALL)}
                 options={STATUS_OPTIONS}
                 style={{ width: 100 }}
+                popupClassName="standard-select-dropdown"
               />
             </Space>
           </Col>
           <Col>
-            <Button type="primary" onClick={openCreateModal}>
+            <Button type="primary" className="standard-primary-btn" onClick={openCreateModal}>
               新增功能用例
             </Button>
           </Col>
         </Row>
       </Card>
 
-      <div style={{ display: "flex", gap: 16 }}>
-        <div style={{ width: 260, flexShrink: 0 }}>
+      <div className="standard-layout">
+        <div className="standard-module-shell">
           <ModuleTree
             projectId={selectedProjectId}
             selectedModuleId={selectedModuleId}
             onSelect={handleModuleSelect}
             onChange={handleModuleChange}
+            createButtonLabel="新增模块"
+            createButtonClassName="requirement-module-header-btn"
+            createButtonIcon={null}
+            headerExtra={
+              <Button className="requirement-module-header-btn" block>
+                无模块用例
+              </Button>
+            }
           />
           <Checkbox
             checked={includeChildren}
@@ -471,8 +482,8 @@ export default function FunctionCasePage() {
           </Checkbox>
         </div>
 
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <Card title="功能测试用例列表">
+        <div className="standard-list-panel">
+          <Card title="功能测试用例列表" className="standard-list-card">
             <Table
               rowKey="id"
               columns={columns}
@@ -486,38 +497,54 @@ export default function FunctionCasePage() {
         </div>
       </div>
 
-      <Modal
+      <Drawer
         title={modalMode === "create" ? "新增功能测试用例" : "编辑功能测试用例"}
+        placement="right"
+        width="50vw"
+        rootClassName="standard-drawer"
         open={modalOpen}
-        onOk={handleSubmit}
-        onCancel={closeModal}
-        confirmLoading={submitting}
+        onClose={closeModal}
         destroyOnClose
-        width={700}
+        footer={
+          <div className="standard-drawer-footer">
+            <Button onClick={closeModal} disabled={submitting}>取消</Button>
+            <Button type="primary" className="standard-primary-btn" onClick={handleSubmit} loading={submitting}>
+              保存
+            </Button>
+          </div>
+        }
       >
         <Form form={form} layout="vertical">
-          <Form.Item
-            name="project_id"
-            label="归属项目"
-            rules={[{ required: true, message: "请选择项目" }]}
-          >
-            <Select
-              placeholder="请选择项目"
-              options={projects.map((p) => ({ label: p.name, value: p.id }))}
-            />
-          </Form.Item>
-
-          <Form.Item name="module_id" label="归属模块">
-            <InputNumber placeholder="模块ID（可选）" style={{ width: "100%" }} />
-          </Form.Item>
-
-          <Form.Item name="requirement_id" label="关联需求">
-            <Select
-              placeholder="请选择需求（可选）"
-              allowClear
-              options={requirements.map((r) => ({ label: r.title, value: r.id }))}
-            />
-          </Form.Item>
+          <Row gutter={16}>
+            <Col span={8}>
+              <Form.Item
+                name="project_id"
+                label="归属项目"
+                rules={[{ required: true, message: "请选择项目" }]}
+              >
+                <Select
+                  placeholder="请选择项目"
+                  options={projects.map((p) => ({ label: p.name, value: p.id }))}
+                  popupClassName="standard-select-dropdown"
+                />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="module_id" label="归属模块">
+                <InputNumber placeholder="模块ID（可选）" style={{ width: "100%" }} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="requirement_id" label="关联需求">
+                <Select
+                  placeholder="请选择需求（可选）"
+                  allowClear
+                  options={requirements.map((r) => ({ label: r.title, value: r.id }))}
+                  popupClassName="standard-select-dropdown"
+                />
+              </Form.Item>
+            </Col>
+          </Row>
 
           <Form.Item name="case_code" label="用例编号">
             <Input placeholder="如 FC-LOGIN-001" maxLength={100} />
@@ -531,20 +558,26 @@ export default function FunctionCasePage() {
             <Input placeholder="请输入用例名称" maxLength={200} />
           </Form.Item>
 
-          <Form.Item name="case_type" label="用例类型">
-            <Select placeholder="请选择用例类型" allowClear options={CASE_TYPE_OPTIONS} />
-          </Form.Item>
-
-          <Form.Item name="source" label="来源">
-            <Select options={SOURCE_OPTIONS} />
-          </Form.Item>
-
-          <Form.Item name="priority" label="优先级">
-            <Select options={PRIORITY_OPTIONS} />
-          </Form.Item>
+          <Row gutter={16}>
+            <Col span={8}>
+              <Form.Item name="case_type" label="用例类型">
+                <Select placeholder="请选择用例类型" allowClear options={CASE_TYPE_OPTIONS} popupClassName="standard-select-dropdown" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="source" label="来源">
+                <Select options={SOURCE_OPTIONS} popupClassName="standard-select-dropdown" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="priority" label="优先级">
+                <Select options={PRIORITY_OPTIONS} popupClassName="standard-select-dropdown" />
+              </Form.Item>
+            </Col>
+          </Row>
 
           <Form.Item name="precondition" label="前置条件">
-            <Input.TextArea rows={2} placeholder="前置条件（可选）" />
+            <Input.TextArea rows={1} placeholder="前置条件（可选）" />
           </Form.Item>
 
           <Form.Item name="steps_json" label="测试步骤 (JSON)">
@@ -566,14 +599,14 @@ export default function FunctionCasePage() {
           </Form.Item>
 
           <Form.Item name="status" label="状态">
-            <Select options={STATUS_OPTIONS} />
+            <Select options={STATUS_OPTIONS} popupClassName="standard-select-dropdown" />
           </Form.Item>
 
           <Form.Item name="remark" label="备注">
             <Input.TextArea rows={2} placeholder="备注（可选）" />
           </Form.Item>
         </Form>
-      </Modal>
+      </Drawer>
 
       <Modal
         title="功能用例详情"
@@ -593,7 +626,7 @@ export default function FunctionCasePage() {
             <p><strong>用例类型：</strong>{detailCase.case_type || "-"}</p>
             <p><strong>来源：</strong>{detailCase.source || "-"}</p>
             <p><strong>优先级：</strong>{detailCase.priority || "-"}</p>
-            <p><strong>状态：</strong>{detailCase.status || "-"}</p>
+            <p><strong>状态：</strong>{getStatusLabel(detailCase.status)}</p>
             <p><strong>项目ID：</strong>{detailCase.project_id}</p>
             <p><strong>模块ID：</strong>{detailCase.module_id ?? "-"}</p>
             <p><strong>需求ID：</strong>{detailCase.requirement_id ?? "-"}</p>
@@ -625,5 +658,6 @@ export default function FunctionCasePage() {
         )}
       </Modal>
     </Space>
+    </div>
   );
 }

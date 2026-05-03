@@ -4,6 +4,7 @@ import {
   Card,
   Checkbox,
   Col,
+  Drawer,
   Form,
   Input,
   InputNumber,
@@ -112,7 +113,7 @@ function CasePage() {
     try {
       const res = await getProjectList();
       setProjects(res.data || []);
-    } catch (error) {
+    } catch {
       message.error("获取项目列表失败");
     }
   };
@@ -140,7 +141,7 @@ function CasePage() {
       }
       const res = await api.get("/cases", { params });
       setCases(res.data);
-    } catch (error) {
+    } catch {
       message.error("获取用例列表失败");
     } finally {
       setLoading(false);
@@ -219,7 +220,7 @@ function CasePage() {
       }
       handleCancelModal();
       fetchCases();
-    } catch (error) {
+    } catch {
       message.error(
         modalMode === "create" ? "创建测试用例失败" : "更新测试用例失败"
       );
@@ -233,23 +234,8 @@ function CasePage() {
       await api.delete(`/cases/${caseId}`);
       message.success("测试用例删除成功");
       fetchCases();
-    } catch (error) {
+    } catch {
       message.error("删除测试用例失败");
-    }
-  };
-
-  const handleGenerateByLLM = async (caseId) => {
-    try {
-      const res = await api.post(`/ai/generate-case/${caseId}`);
-      message.success(`AI生成成功（来源：${res.data.generated_by}）`);
-      try {
-        await fetchCases();
-      } catch (refreshError) {
-        message.warning("代码已生成成功，但列表刷新失败，请手动刷新页面");
-      }
-    } catch (error) {
-      const detail = error?.response?.data?.detail || "AI生成失败";
-      message.error(detail);
     }
   };
 
@@ -259,7 +245,7 @@ function CasePage() {
       message.success(`规则生成成功（来源：${res.data.generated_by}）`);
       try {
         await fetchCases();
-      } catch (refreshError) {
+      } catch {
         message.warning("代码已生成成功，但列表刷新失败，请手动刷新页面");
       }
     } catch (error) {
@@ -363,25 +349,29 @@ function CasePage() {
       width: 420,
       render: (_, record) => (
         <Space size="small" wrap>
-          <Button size="small" onClick={() => openEditModal(record)}>
+          <Button size="small" className="standard-action-btn" onClick={() => openEditModal(record)}>
             编辑
           </Button>
           <Popconfirm
             title="确认删除这条测试用例吗？"
+            description="删除后不可恢复，请确认。"
             okText="确认"
             cancelText="取消"
+            overlayClassName="standard-popconfirm"
+            okButtonProps={{ className: "standard-popconfirm-ok" }}
+            cancelButtonProps={{ className: "standard-popconfirm-cancel" }}
             onConfirm={() => handleDeleteCase(record.id)}
           >
-            <Button size="small" danger>
+            <Button size="small" className="standard-delete-btn">
               删除
             </Button>
           </Popconfirm>
-          <Button size="small" onClick={() => handleGenerateByRule(record.id)}>
+          <Button size="small" className="standard-action-btn" onClick={() => handleGenerateByRule(record.id)}>
             规则生成
           </Button>
           <Button
             size="small"
-            type="primary"
+            className="standard-action-btn"
             loading={executing === record.id}
             onClick={() => handleExecute(record.id)}
           >
@@ -393,12 +383,13 @@ function CasePage() {
   ];
 
   return (
+    <div className="standard-page">
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
-      <Card>
+      <Card className="standard-toolbar-card">
         <Row justify="space-between" align="middle">
           <Col>
             <Space>
-              <span>项目：</span>
+              <span className="standard-project-label">项目：</span>
               <Select
                 placeholder="请选择项目"
                 value={selectedProjectId}
@@ -406,24 +397,33 @@ function CasePage() {
                 options={projects.map((p) => ({ label: p.name, value: p.id }))}
                 style={{ width: 200 }}
                 loading={projects.length === 0}
+                popupClassName="standard-select-dropdown"
               />
             </Space>
           </Col>
           <Col>
-            <Button type="primary" onClick={openCreateModal}>
+            <Button type="primary" className="standard-primary-btn" onClick={openCreateModal}>
               新建测试用例
             </Button>
           </Col>
         </Row>
       </Card>
 
-      <div style={{ display: "flex", gap: 16 }}>
-        <div style={{ width: 260, flexShrink: 0 }}>
+      <div className="standard-layout">
+        <div className="standard-module-shell">
           <ModuleTree
             projectId={selectedProjectId}
             selectedModuleId={selectedModuleId}
             onSelect={handleModuleSelect}
             onChange={handleModuleChange}
+            createButtonLabel="新增模块"
+            createButtonClassName="requirement-module-header-btn"
+            createButtonIcon={null}
+            headerExtra={
+              <Button className="requirement-module-header-btn" block>
+                无模块用例
+              </Button>
+            }
           />
           <Checkbox
             checked={includeChildren}
@@ -434,8 +434,8 @@ function CasePage() {
           </Checkbox>
         </div>
 
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <Card title="测试用例列表">
+        <div className="standard-list-panel">
+          <Card title="测试用例列表" className="standard-list-card">
             <Table
               rowKey="id"
               columns={columns}
@@ -449,14 +449,22 @@ function CasePage() {
         </div>
       </div>
 
-      <Modal
+      <Drawer
         title={modalMode === "create" ? "新建测试用例" : "编辑测试用例"}
+        placement="right"
+        width="50vw"
+        rootClassName="standard-drawer"
         open={modalOpen}
-        onCancel={handleCancelModal}
-        onOk={() => form.submit()}
-        confirmLoading={submitting}
+        onClose={handleCancelModal}
         destroyOnClose
-        width={640}
+        footer={
+          <div className="standard-drawer-footer">
+            <Button onClick={handleCancelModal} disabled={submitting}>取消</Button>
+            <Button type="primary" className="standard-primary-btn" onClick={() => form.submit()} loading={submitting}>
+              保存
+            </Button>
+          </div>
+        }
       >
         <Form form={form} layout="vertical" onFinish={handleSubmitCase}>
           <Form.Item
@@ -516,6 +524,7 @@ function CasePage() {
             <Select
               placeholder="请选择项目"
               options={projects.map((p) => ({ label: p.name, value: p.id }))}
+              popupClassName="standard-select-dropdown"
             />
           </Form.Item>
 
@@ -531,6 +540,7 @@ function CasePage() {
               placeholder="请选择用例类型"
               allowClear
               options={CASE_TYPE_OPTIONS}
+              popupClassName="standard-select-dropdown"
             />
           </Form.Item>
 
@@ -539,6 +549,7 @@ function CasePage() {
               placeholder="请选择来源"
               allowClear
               options={SOURCE_OPTIONS}
+              popupClassName="standard-select-dropdown"
             />
           </Form.Item>
 
@@ -547,6 +558,7 @@ function CasePage() {
               placeholder="请选择优先级"
               allowClear
               options={PRIORITY_OPTIONS}
+              popupClassName="standard-select-dropdown"
             />
           </Form.Item>
 
@@ -555,10 +567,11 @@ function CasePage() {
               placeholder="请选择状态"
               allowClear
               options={STATUS_OPTIONS}
+              popupClassName="standard-select-dropdown"
             />
           </Form.Item>
         </Form>
-      </Modal>
+      </Drawer>
 
       <Modal
         title={`执行结果（Run ID: ${executeResult?.run_id ?? "-"}）`}
@@ -717,6 +730,7 @@ function CasePage() {
         )}
       </Modal>
     </Space>
+    </div>
   );
 }
 
