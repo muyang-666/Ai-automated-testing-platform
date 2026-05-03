@@ -15,6 +15,7 @@ import {
   Space,
   Table,
   Tag,
+  Typography,
 } from "antd";
 import api from "../services/api";
 import { getProjectList } from "../api/project";
@@ -48,6 +49,44 @@ const STATUS_OPTIONS = [
   { label: "draft", value: "draft" },
 ];
 
+const { Paragraph } = Typography;
+
+const parseAnalysisContent = (content) => {
+  const text = content || "";
+  const getSection = (title, nextTitles = []) => {
+    const escapedNextTitles = nextTitles.map((item) =>
+      item.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    );
+    const allTitles =
+      escapedNextTitles.length > 0 ? escapedNextTitles.join("|") : "$";
+    const titleRegex = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const regex = new RegExp(
+      `${titleRegex}[：:]?([\\s\\S]*?)(?=${allTitles}|$)`
+    );
+    const match = text.match(regex);
+    return match ? match[1].trim() : "";
+  };
+  return {
+    phenomenon: getSection("问题现象", [
+      "问题本质",
+      "责任归属",
+      "关键证据",
+      "修复建议",
+      "风险等级",
+    ]),
+    essence: getSection("问题本质", [
+      "责任归属",
+      "关键证据",
+      "修复建议",
+      "风险等级",
+    ]),
+    owner: getSection("责任归属", ["关键证据", "修复建议", "风险等级"]),
+    evidence: getSection("关键证据", ["修复建议", "风险等级"]),
+    suggestion: getSection("修复建议", ["风险等级"]),
+    risk: getSection("风险等级", []),
+  };
+};
+
 function CasePage() {
   const [cases, setCases] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -61,6 +100,13 @@ function CasePage() {
   const [selectedProjectId, setSelectedProjectId] = useState(null);
   const [selectedModuleId, setSelectedModuleId] = useState(null);
   const [includeChildren, setIncludeChildren] = useState(false);
+
+  const [executing, setExecuting] = useState(null);
+  const [executeResult, setExecuteResult] = useState(null);
+  const [executeResultModalOpen, setExecuteResultModalOpen] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analysisModalOpen, setAnalysisModalOpen] = useState(false);
+  const [currentAnalysis, setCurrentAnalysis] = useState(null);
 
   const fetchProjects = async () => {
     try {
@@ -222,6 +268,36 @@ function CasePage() {
     }
   };
 
+  const handleExecute = async (caseId) => {
+    setExecuting(caseId);
+    try {
+      const res = await api.post(`/runs/${caseId}/execute`);
+      setExecuteResult(res.data);
+      setExecuteResultModalOpen(true);
+      message.success("测试执行完成");
+    } catch (error) {
+      const detail = error?.response?.data?.detail || "测试执行失败";
+      message.error(detail);
+    } finally {
+      setExecuting(null);
+    }
+  };
+
+  const handleAnalyze = async (runId) => {
+    setAnalyzing(true);
+    try {
+      const res = await api.post(`/ai/analyze/${runId}`);
+      setCurrentAnalysis(res.data);
+      setAnalysisModalOpen(true);
+      message.success("AI 分析完成");
+    } catch (error) {
+      const detail = error?.response?.data?.detail || "AI 分析失败";
+      message.error(detail);
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
   const columns = [
     { title: "ID", dataIndex: "id", width: 60 },
     { title: "名称", dataIndex: "name", width: 120, ellipsis: true },
@@ -284,9 +360,9 @@ function CasePage() {
     },
     {
       title: "操作",
-      width: 380,
+      width: 420,
       render: (_, record) => (
-        <Space size="small">
+        <Space size="small" wrap>
           <Button size="small" onClick={() => openEditModal(record)}>
             编辑
           </Button>
@@ -300,15 +376,16 @@ function CasePage() {
               删除
             </Button>
           </Popconfirm>
+          <Button size="small" onClick={() => handleGenerateByRule(record.id)}>
+            规则生成
+          </Button>
           <Button
             size="small"
             type="primary"
-            onClick={() => handleGenerateByLLM(record.id)}
+            loading={executing === record.id}
+            onClick={() => handleExecute(record.id)}
           >
-            AI生成
-          </Button>
-          <Button size="small" onClick={() => handleGenerateByRule(record.id)}>
-            规则生成
+            执行测试
           </Button>
         </Space>
       ),
@@ -481,6 +558,163 @@ function CasePage() {
             />
           </Form.Item>
         </Form>
+      </Modal>
+
+      <Modal
+        title={`执行结果（Run ID: ${executeResult?.run_id ?? "-"}）`}
+        open={executeResultModalOpen}
+        onCancel={() => {
+          setExecuteResultModalOpen(false);
+          setExecuteResult(null);
+        }}
+        footer={null}
+        width={700}
+      >
+        {executeResult ? (
+          <Space direction="vertical" style={{ width: "100%" }} size={12}>
+            <p>
+              状态：<Tag>{executeResult.status}</Tag>
+            </p>
+            <p>
+              结果：
+              <Tag
+                color={
+                  executeResult.result === "passed"
+                    ? "success"
+                    : executeResult.result === "failed"
+                      ? "error"
+                      : "default"
+                }
+              >
+                {executeResult.result ?? "unknown"}
+              </Tag>
+            </p>
+            <p>总数：{executeResult.total_count ?? "-"}</p>
+            <p>通过：{executeResult.passed_count ?? "-"}</p>
+            <p>失败：{executeResult.failed_count ?? "-"}</p>
+            <p>
+              接口响应状态码：{executeResult.response_status_code ?? "无"}
+            </p>
+            {executeResult.response_content && (
+              <>
+                <p>
+                  <b>响应内容：</b>
+                </p>
+                <Paragraph copyable={{ text: executeResult.response_content }}>
+                  <pre
+                    style={{
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-word",
+                      maxHeight: 300,
+                      overflow: "auto",
+                      background: "#f5f5f5",
+                      padding: 12,
+                      borderRadius: 4,
+                    }}
+                  >
+                    {executeResult.response_content}
+                  </pre>
+                </Paragraph>
+              </>
+            )}
+            {executeResult.result === "failed" && (
+              <Button
+                type="primary"
+                loading={analyzing}
+                onClick={() => handleAnalyze(executeResult.run_id)}
+              >
+                AI 分析
+              </Button>
+            )}
+          </Space>
+        ) : (
+          <p>无执行结果</p>
+        )}
+      </Modal>
+
+      <Modal
+        title="AI 分析结果"
+        open={analysisModalOpen}
+        onCancel={() => {
+          setAnalysisModalOpen(false);
+          setCurrentAnalysis(null);
+        }}
+        footer={null}
+        width={900}
+      >
+        {currentAnalysis ? (
+          (() => {
+            const parsed = parseAnalysisContent(currentAnalysis.content);
+            return (
+              <Space direction="vertical" style={{ width: "100%" }} size={12}>
+                <p>分析类型：{currentAnalysis.analysis_type}</p>
+                <p>风险等级：{currentAnalysis.risk_level}</p>
+                {parsed.owner && (
+                  <p>
+                    <b>责任归属：</b>
+                    {parsed.owner}
+                  </p>
+                )}
+                {parsed.phenomenon && (
+                  <p>
+                    <b>问题现象：</b>
+                    {parsed.phenomenon}
+                  </p>
+                )}
+                {parsed.essence && (
+                  <p>
+                    <b>问题本质：</b>
+                    {parsed.essence}
+                  </p>
+                )}
+                {parsed.evidence && (
+                  <Paragraph>
+                    <b>关键证据：</b>
+                    <pre
+                      style={{
+                        whiteSpace: "pre-wrap",
+                        wordBreak: "break-word",
+                        marginTop: 8,
+                      }}
+                    >
+                      {parsed.evidence}
+                    </pre>
+                  </Paragraph>
+                )}
+                {parsed.suggestion && (
+                  <Paragraph>
+                    <b>修复建议：</b>
+                    <pre
+                      style={{
+                        whiteSpace: "pre-wrap",
+                        wordBreak: "break-word",
+                        marginTop: 8,
+                      }}
+                    >
+                      {parsed.suggestion}
+                    </pre>
+                  </Paragraph>
+                )}
+                <Paragraph copyable={{ text: currentAnalysis.content || "" }}>
+                  <details>
+                    <summary>查看原始分析全文</summary>
+                    <pre
+                      style={{
+                        whiteSpace: "pre-wrap",
+                        wordBreak: "break-word",
+                        marginTop: 8,
+                      }}
+                    >
+                      {currentAnalysis.content || "当前无分析内容"}
+                    </pre>
+                  </details>
+                </Paragraph>
+              </Space>
+            );
+          })()
+        ) : (
+          <p>当前无分析内容</p>
+        )}
       </Modal>
     </Space>
   );

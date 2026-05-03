@@ -1,19 +1,31 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button, Layout, Menu, Space, Spin, Typography } from "antd";
 import { getCurrentUser, logout } from "./api/auth";
+import ApiDocPage from "./pages/ApiDocPage";
 import CasePage from "./pages/CasePage";
 import FunctionCasePage from "./pages/FunctionCasePage";
 import LoginPage from "./pages/LoginPage";
 import ProjectPage from "./pages/ProjectPage";
 import RequirementPage from "./pages/RequirementPage";
-import RunPage from "./pages/RunPage";
 import ReportPage from "./pages/ReportPage";
 import ParameterPage from "./pages/ParameterPage";
 import ScenePage from "./pages/ScenePage";
 import UserPage from "./pages/UserPage";
 
-const { Header, Content } = Layout;
+const { Header, Sider, Content } = Layout;
 const { Text } = Typography;
+
+const PAGE_KEYS = [
+  "cases",
+  "functionCases",
+  "projects",
+  "requirements",
+  "scenes",
+  "reports",
+  "params",
+  "apiDocs",
+  "users",
+];
 
 const clearStoredAuth = () => {
   localStorage.removeItem("auth_token");
@@ -59,12 +71,24 @@ export default function App() {
 
   const menuItems = useMemo(() => {
     const items = [
-      { key: "cases", label: "用例管理" },
-      { key: "functionCases", label: "功能用例" },
       { key: "projects", label: "项目管理" },
-      { key: "requirements", label: "需求管理" },
-      { key: "runs", label: "执行管理" },
-      { key: "scenes", label: "场景管理" },
+      {
+        key: "function-cases-group",
+        label: "功能用例管理",
+        children: [
+          { key: "requirements", label: "需求管理" },
+          { key: "functionCases", label: "功能用例" },
+        ],
+      },
+      {
+        key: "api-cases-group",
+        label: "接口用例管理",
+        children: [
+          { key: "apiDocs", label: "接口文档" },
+          { key: "cases", label: "接口用例" },
+          { key: "scenes", label: "场景管理" },
+        ],
+      },
       { key: "reports", label: "报告管理" },
       { key: "params", label: "参数管理" },
     ];
@@ -83,18 +107,16 @@ export default function App() {
     try {
       await logout();
     } catch {
-      // 本地退出优先，后端 session 已失效或网络异常时也回到登录页。
+      // 本地退出优先
     } finally {
       handleAuthLost();
     }
   };
 
   const handleMenuClick = (e) => {
-    if (e.key === "users" && !isAdmin) {
-      setCurrentPage("cases");
-      return;
+    if (PAGE_KEYS.includes(e.key)) {
+      setCurrentPage(e.key);
     }
-    setCurrentPage(e.key);
   };
 
   const renderPage = () => {
@@ -102,10 +124,10 @@ export default function App() {
     if (currentPage === "functionCases") return <FunctionCasePage />;
     if (currentPage === "projects") return <ProjectPage />;
     if (currentPage === "requirements") return <RequirementPage />;
-    if (currentPage === "runs") return <RunPage />;
     if (currentPage === "reports") return <ReportPage />;
     if (currentPage === "params") return <ParameterPage />;
     if (currentPage === "scenes") return <ScenePage />;
+    if (currentPage === "apiDocs") return <ApiDocPage />;
     if (currentPage === "users" && isAdmin) return <UserPage />;
     return <CasePage />;
   };
@@ -131,27 +153,54 @@ export default function App() {
 
   return (
     <Layout style={{ minHeight: "100vh" }}>
-      <Header style={{ display: "flex", alignItems: "center", gap: 16 }}>
+      <Sider width={220} style={{ background: "#001529" }}>
+        <div
+          style={{
+            height: 64,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <Text
+            style={{
+              color: "#fff",
+              fontSize: 18,
+              fontWeight: "bold",
+              letterSpacing: 1,
+            }}
+          >
+            TestMind
+          </Text>
+        </div>
         <Menu
           theme="dark"
-          mode="horizontal"
+          mode="inline"
           selectedKeys={[currentPage]}
+          defaultOpenKeys={["function-cases-group", "api-cases-group"]}
           onClick={handleMenuClick}
           items={menuItems}
-          style={{ flex: 1, minWidth: 0 }}
         />
-
-        <Space>
-          <Text style={{ color: "rgba(255, 255, 255, 0.88)" }}>
-            {currentUser.display_name || currentUser.username}
-          </Text>
-          <Button size="small" onClick={handleLogout}>
-            退出
-          </Button>
-        </Space>
-      </Header>
-
-      <Content style={{ padding: 24 }}>{renderPage()}</Content>
+      </Sider>
+      <Layout>
+        <Header
+          style={{
+            background: "#fff",
+            padding: "0 24px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "flex-end",
+          }}
+        >
+          <Space>
+            <Text>{currentUser.display_name || currentUser.username}</Text>
+            <Button size="small" onClick={handleLogout}>
+              退出
+            </Button>
+          </Space>
+        </Header>
+        <Content style={{ padding: 24 }}>{renderPage()}</Content>
+      </Layout>
     </Layout>
   );
 }
