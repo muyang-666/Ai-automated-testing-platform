@@ -26,6 +26,18 @@ from app.schemas.scene_run import (
     SceneRunResponse,
     SceneStepRunResponse,
 )
+from app.schemas.llm_config import (
+    LLMModelCreate,
+    LLMModelResponse,
+    LLMModelUpdate,
+    LLMProviderCreate,
+    LLMProviderResponse,
+    LLMProviderUpdate,
+    LLMSceneConfigResponse,
+    LLMSceneConfigUpdate,
+    LLMTestRequest,
+    LLMTestResponse,
+)
 from app.schemas.user import RoleResponse, UserCreate, UserResponse, UserRoleUpdate, UserUpdate
 
 __all__ = [
@@ -57,6 +69,16 @@ __all__ = [
     "TestModuleUpdate",
     "ReportResponse",
     "RoleResponse",
+    "LLMModelCreate",
+    "LLMModelResponse",
+    "LLMModelUpdate",
+    "LLMProviderCreate",
+    "LLMProviderResponse",
+    "LLMProviderUpdate",
+    "LLMSceneConfigResponse",
+    "LLMSceneConfigUpdate",
+    "LLMTestRequest",
+    "LLMTestResponse",
     "UserCreate",
     "UserResponse",
     "UserRoleUpdate",

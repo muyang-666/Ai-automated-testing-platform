@@ -22,6 +22,9 @@ from app.models.ai_analysis import AIAnalysis
 from app.models.report import Report
 from app.models.scene import Scene
 from app.models.scene_step import SceneStep
+from app.models.llm_provider import LLMProvider
+from app.models.llm_model import LLMModel
+from app.models.llm_scene_config import LLMSceneConfig
 
 from app.routers.auth_router import router as auth_router
 from app.routers.case_router import router as case_router
@@ -36,6 +39,7 @@ from app.routers.module_router import router as module_router
 from app.routers.requirement_doc_router import router as requirement_doc_router
 from app.routers.function_case_router import router as function_case_router
 from app.routers.user_router import router as user_router
+from app.routers.llm_config_router import router as llm_config_router
 from app.services.auth_service import init_default_auth_data
 
 
@@ -64,6 +68,8 @@ def startup_init_default_auth_data():
     db = SessionLocal()
     try:
         init_default_auth_data(db)
+        from app.services.llm_config_service import init_default_scene_configs
+        init_default_scene_configs(db)
     finally:
         db.close()
 
@@ -88,3 +94,4 @@ app.include_router(requirement_doc_router)
 app.include_router(function_case_router)
 app.include_router(user_router)
 app.include_router(scene_router)
+app.include_router(llm_config_router)

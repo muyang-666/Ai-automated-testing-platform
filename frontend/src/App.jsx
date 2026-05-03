@@ -5,6 +5,7 @@ import ApiDocPage from "./pages/ApiDocPage";
 import CasePage from "./pages/CasePage";
 import FunctionCasePage from "./pages/FunctionCasePage";
 import LoginPage from "./pages/LoginPage";
+import ModelConfigPage from "./pages/ModelConfigPage";
 import ProjectPage from "./pages/ProjectPage";
 import RequirementPage from "./pages/RequirementPage";
 import ReportPage from "./pages/ReportPage";
@@ -24,6 +25,7 @@ const PAGE_KEYS = [
   "reports",
   "params",
   "apiDocs",
+  "modelConfig",
   "users",
 ];
 
@@ -72,6 +74,7 @@ export default function App() {
   const menuItems = useMemo(() => {
     const items = [
       { key: "projects", label: "项目管理" },
+      { key: "modelConfig", label: "模型管理" },
       {
         key: "function-cases-group",
         label: "功能用例管理",
@@ -128,6 +131,7 @@ export default function App() {
     if (currentPage === "params") return <ParameterPage />;
     if (currentPage === "scenes") return <ScenePage />;
     if (currentPage === "apiDocs") return <ApiDocPage />;
+    if (currentPage === "modelConfig") return <ModelConfigPage />;
     if (currentPage === "users" && isAdmin) return <UserPage />;
     return <CasePage />;
   };
