@@ -8,6 +8,7 @@ from app.routers.report_router import router as report_router
 from app.routers.requirement_doc_router import router as requirement_doc_router
 from app.routers.function_case_router import router as function_case_router
 from app.routers.llm_config_router import router as llm_config_router
+from app.routers.api_document_router import router as api_document_router
 from app.routers.user_router import router as user_router
 
 __all__ = [
@@ -21,5 +22,6 @@ __all__ = [
     "requirement_doc_router",
     "function_case_router",
     "llm_config_router",
+    "api_document_router",
     "user_router",
 ]

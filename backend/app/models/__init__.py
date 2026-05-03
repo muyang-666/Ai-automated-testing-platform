@@ -12,6 +12,7 @@ from app.models.function_case import FunctionCase
 from app.models.scene_run import SceneRun
 from app.models.scene_step_run import SceneStepRun
 from app.models.scene_step import SceneStep
+from app.models.api_document import ApiDocument
 from app.models.llm_provider import LLMProvider
 from app.models.llm_model import LLMModel
 from app.models.llm_scene_config import LLMSceneConfig
@@ -33,6 +34,7 @@ __all__ = [
     "Role",
     "Scene",
     "SceneStep",
+    "ApiDocument",
     "LLMProvider",
     "LLMModel",
     "LLMSceneConfig",

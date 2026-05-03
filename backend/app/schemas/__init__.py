@@ -38,6 +38,18 @@ from app.schemas.llm_config import (
     LLMTestRequest,
     LLMTestResponse,
 )
+from app.schemas.api_document import (
+    ApiDocumentCreate,
+    ApiDocumentResponse,
+    ApiDocumentUpdate,
+)
+from app.schemas.api_document_generation import (
+    GenerateApiCasesRequest,
+    GenerateApiCasesResponse,
+    GeneratedApiCaseItem,
+    SaveGeneratedApiCasesRequest,
+    SaveGeneratedApiCasesResponse,
+)
 from app.schemas.user import RoleResponse, UserCreate, UserResponse, UserRoleUpdate, UserUpdate
 
 __all__ = [
@@ -69,6 +81,14 @@ __all__ = [
     "TestModuleUpdate",
     "ReportResponse",
     "RoleResponse",
+    "ApiDocumentCreate",
+    "ApiDocumentResponse",
+    "ApiDocumentUpdate",
+    "GenerateApiCasesRequest",
+    "GenerateApiCasesResponse",
+    "GeneratedApiCaseItem",
+    "SaveGeneratedApiCasesRequest",
+    "SaveGeneratedApiCasesResponse",
     "LLMModelCreate",
     "LLMModelResponse",
     "LLMModelUpdate",

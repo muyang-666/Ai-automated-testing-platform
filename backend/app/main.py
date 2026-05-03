@@ -25,6 +25,7 @@ from app.models.scene_step import SceneStep
 from app.models.llm_provider import LLMProvider
 from app.models.llm_model import LLMModel
 from app.models.llm_scene_config import LLMSceneConfig
+from app.models.api_document import ApiDocument
 
 from app.routers.auth_router import router as auth_router
 from app.routers.case_router import router as case_router
@@ -40,6 +41,7 @@ from app.routers.requirement_doc_router import router as requirement_doc_router
 from app.routers.function_case_router import router as function_case_router
 from app.routers.user_router import router as user_router
 from app.routers.llm_config_router import router as llm_config_router
+from app.routers.api_document_router import router as api_document_router
 from app.services.auth_service import init_default_auth_data
 
 
@@ -95,3 +97,4 @@ app.include_router(function_case_router)
 app.include_router(user_router)
 app.include_router(scene_router)
 app.include_router(llm_config_router)
+app.include_router(api_document_router)
