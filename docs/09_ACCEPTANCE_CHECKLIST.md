@@ -325,6 +325,144 @@
 
 ---
 
+## 十四、第三阶段改造验收 — 场景模型增强
+
+### 14.1 场景增强
+
+- [x] 场景可以关联 project_id
+- [x] 场景可以关联 module_id
+- [x] 场景支持 status（active/disabled/draft）
+- [x] 场景支持软删除（is_deleted）
+- [x] 场景列表支持 project_id 筛选
+- [x] 场景列表支持 module_id + include_children 筛选
+- [x] 场景列表支持 keyword 搜索
+- [x] 场景列表支持 status 筛选
+
+### 14.2 场景步骤增强
+
+- [x] 步骤可以配置 step_name
+- [x] 步骤可以配置 extract_rules_json（变量提取）
+- [x] 步骤可以配置 request_override_json（请求覆盖）
+- [x] 步骤可以配置 assertions_json（断言规则）
+- [x] 步骤可以配置 enabled（启用/禁用）
+- [x] 步骤支持软删除
+- [x] 支持步骤编辑（PUT /scenes/steps/{step_id}）
+- [x] 支持步骤排序（PUT /scenes/{scene_id}/steps/reorder）
+- [x] JSON 配置非法时前端阻止提交
+
+### 14.3 场景执行结果表
+
+- [x] scene_runs 表可正常创建
+- [x] scene_step_runs 表可正常创建
+- [x] GET /scenes/runs 可查询执行历史
+- [x] GET /scenes/runs/{run_id} 可查询执行详情
+- [x] GET /scenes/{scene_id}/runs 可查询某场景历史
+
+---
+
+## 十五、第三阶段改造验收 — 真实接口串联执行
+
+### 15.1 变量工具
+
+- [x] get_by_json_path 支持 $.data.token / $.items[0].id / $
+- [x] extract_variables 可从响应中批量提取变量
+- [x] replace_variables 可递归替换 ${变量名}
+- [x] 字符串整体为 ${int_var} 时保留整数类型
+- [x] 变量缺失时保留占位符并记录 errors
+- [x] 嵌套 errors 正确汇总
+
+### 15.2 断言工具
+
+- [x] 支持 status_code eq
+- [x] 支持 json_path eq
+- [x] 支持 json_path contains（str/list/dict keys+values）
+- [x] 支持 json_path exists
+- [x] 支持 json_path not_empty
+- [x] assertions=None 时 passed=true
+- [x] 未知 type/operator 时返回 failed，不抛异常
+
+### 15.3 串联执行
+
+- [x] POST /scenes/{scene_id}/run-chain 可执行
+- [x] 场景不存在/非 active 时返回错误
+- [x] 从响应中提取变量到 context
+- [x] 后续步骤 ${变量名} 自动替换
+- [x] URL 中变量替换
+- [x] headers 中变量替换
+- [x] body 中变量替换
+- [x] 断言通过时步骤 passed
+- [x] 断言失败时步骤 failed，后续 skipped
+- [x] 变量缺失时步骤 failed，后续 skipped
+- [x] 默认 2xx 状态码视为 passed
+- [x] 每步结果写入 scene_step_runs
+- [x] 整体结果写入 scene_runs
+- [ ] 本地网络可达的接口串联（需实际接口测试验证）
+
+---
+
+## 十六、第三阶段改造验收 — 前端
+
+### 16.1 ScenePage 串联执行
+
+- [x] 操作列新增"串联执行"按钮
+- [x] "一键执行"旧按钮仍然可用
+- [x] 串联执行结果 Modal 展示 status / total / passed / failed / skipped
+- [x] 展示 scene_run_id
+- [x] 展示 context（JSON 格式化）
+- [x] 步骤明细 Table（step_order / step_name / case_id / status / response_status_code / extracted_variables / duration_ms / error_message）
+- [x] 执行失败时仍可弹出结果 Modal
+- [x] 后端报错时 message.error 提示
+
+### 16.2 SceneStepPage 增强
+
+- [x] 新增步骤支持 step_name 输入
+- [x] 新增步骤支持 enabled Switch
+- [x] 新增步骤支持 JSON 配置 Collapse
+- [x] 步骤编辑 Modal（7 字段回填）
+- [x] JSON 字段回填为格式化字符串
+- [x] 上移/下移排序按钮
+- [x] 首项上移 disabled / 末项下移 disabled
+- [x] 表格列展示 enabled / extract / request / assertions 状态
+
+---
+
+## 十七、第三阶段暂不做 — 确认清单
+
+- [x] 未生成场景 pytest 代码
+- [x] 未做 UI 自动化
+- [x] 未做复杂条件分支/循环/并发
+- [x] 未做 AI 自动生成场景
+- [x] 未做拖拽排序
+- [x] 未做登录权限
+- [x] 未做报告图表增强
+- [x] run_service.py / pytest_runner.py / ai_service.py 未被修改
+
+---
+
+## 十八、回归验收 — 第三阶段完成后
+
+- [ ] ProjectPage 正常
+- [ ] ModuleTree 正常
+- [ ] CasePage（AI 生成/规则生成/执行）正常
+- [ ] AI 分析正常
+- [ ] 需求管理正常
+- [ ] 需求生成功能用例正常
+- [ ] 功能用例管理正常
+- [ ] 场景管理旧功能正常
+- [ ] 报告页面正常
+- [ ] 参数管理正常
+
+---
+
+## 十九、延后校验清单
+
+- [ ] DELETE /modules/{id} 时校验模块下是否存在用例
+- [ ] 模块下存在用例时拒绝删除
+- [ ] 旧数据可正常执行、AI 分析
+- [ ] 本地网络可达的接口串联端到端验证
+
+---
+
 ## 使用说明
 
 每次完成功能改造后：
