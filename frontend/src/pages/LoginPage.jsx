@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { Button, Card, Form, Input, message, Space, Typography } from "antd";
+import { Button, Card, Form, Input, message, Typography } from "antd";
 import { login } from "../api/auth";
 
-const { Paragraph, Title, Text } = Typography;
+const { Title } = Typography;
 
 export default function LoginPage({ onLogin }) {
   const [loading, setLoading] = useState(false);
@@ -35,49 +35,78 @@ export default function LoginPage({ onLogin }) {
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        background: "#f5f7fb",
+        background: "#f5f5f5",
         padding: 24,
       }}
     >
-      <Card style={{ width: 420 }}>
-        <Space direction="vertical" size={20} style={{ width: "100%" }}>
-          <div>
-            <Title level={3} style={{ marginBottom: 8 }}>
-              AI 测试管理平台
-            </Title>
-            <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-              请登录后继续使用系统
-            </Paragraph>
-          </div>
-
-          <Form
-            layout="vertical"
-            initialValues={{ username: "admin", password: "123456" }}
-            onFinish={handleSubmit}
+      <Card
+        style={{ width: 780 }}
+        styles={{ body: { padding: 48 } }}
+      >
+        <div style={{ marginBottom: 40 }}>
+          <Title
+            level={3}
+            style={{
+              marginBottom: 0,
+              fontSize: 28,
+              fontWeight: 700,
+              textAlign: "center",
+              color: "#000",
+            }}
           >
-            <Form.Item
-              name="username"
-              label="用户名"
-              rules={[{ required: true, message: "请输入用户名" }]}
-            >
-              <Input placeholder="请输入用户名" autoComplete="username" />
-            </Form.Item>
+            基于大语言模型的测试管理平台
+          </Title>
+        </div>
 
-            <Form.Item
-              name="password"
-              label="密码"
-              rules={[{ required: true, message: "请输入密码" }]}
-            >
-              <Input.Password placeholder="请输入密码" autoComplete="current-password" />
-            </Form.Item>
+        <Form
+          layout="vertical"
+          size="large"
+          initialValues={{ username: "admin", password: "123456" }}
+          onFinish={handleSubmit}
+        >
+          <Form.Item
+            name="username"
+            label={<span style={{ fontWeight: 600, fontSize: 15 }}>用户名</span>}
+            rules={[{ required: true, message: "请输入用户名" }]}
+          >
+            <Input
+              placeholder="请输入用户名"
+              autoComplete="username"
+              style={{ background: "#f2f2f2", height: 48 }}
+            />
+          </Form.Item>
 
-            <Button type="primary" htmlType="submit" loading={loading} block>
+          <Form.Item
+            name="password"
+            label={<span style={{ fontWeight: 600, fontSize: 15 }}>密码</span>}
+            rules={[{ required: true, message: "请输入密码" }]}
+          >
+            <Input.Password
+              placeholder="请输入密码"
+              autoComplete="current-password"
+              style={{ background: "#f2f2f2", height: 48 }}
+            />
+          </Form.Item>
+
+          <Form.Item style={{ marginTop: 32 }}>
+            <Button
+              htmlType="submit"
+              loading={loading}
+              block
+              size="large"
+              style={{
+                height: 48,
+                background: "#000",
+                borderColor: "#000",
+                color: "#fff",
+                fontWeight: 600,
+                fontSize: 16,
+              }}
+            >
               登录
             </Button>
-          </Form>
-
-          <Text type="secondary">默认账号：admin / 123456</Text>
-        </Space>
+          </Form.Item>
+        </Form>
       </Card>
     </div>
   );

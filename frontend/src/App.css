@@ -40,3 +40,15 @@
 .read-the-docs {
   color: #888;
 }
+
+/* 左侧菜单字体加大加粗 */
+.ant-menu-dark .ant-menu-item,
+.ant-menu-dark .ant-menu-submenu-title {
+  font-size: 15px !important;
+  font-weight: 600 !important;
+}
+
+.ant-menu-dark .ant-menu-sub .ant-menu-item {
+  font-size: 15px !important;
+  font-weight: 600 !important;
+}
