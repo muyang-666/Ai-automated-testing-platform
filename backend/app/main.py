@@ -4,21 +4,26 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.core.database import Base, engine
+from app.core.database import Base, SessionLocal, engine
 
 from app.models.api_case import APICase
+from app.models.auth_session import AuthSession
 from app.models.project import Project
+from app.models.role import Role
 from app.models.requirement_doc import RequirementDoc
 from app.models.function_case import FunctionCase
 from app.models.scene_run import SceneRun
 from app.models.scene_step_run import SceneStepRun
 from app.models.test_module import TestModule
 from app.models.test_run import TestRun
+from app.models.user import User
+from app.models.user_role import UserRole
 from app.models.ai_analysis import AIAnalysis
 from app.models.report import Report
 from app.models.scene import Scene
 from app.models.scene_step import SceneStep
 
+from app.routers.auth_router import router as auth_router
 from app.routers.case_router import router as case_router
 from app.routers.ai_router import router as ai_router
 from app.routers.run_router import router as run_router
@@ -30,6 +35,8 @@ from app.routers.project_router import router as project_router
 from app.routers.module_router import router as module_router
 from app.routers.requirement_doc_router import router as requirement_doc_router
 from app.routers.function_case_router import router as function_case_router
+from app.routers.user_router import router as user_router
+from app.services.auth_service import init_default_auth_data
 
 
 # 根据 models 里定义的表结构，在数据库里把表建出来。 比如你定义了 APICase 这个模型，它对应数据库里就会生成 api_cases 表。
@@ -51,6 +58,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.on_event("startup")
+def startup_init_default_auth_data():
+    db = SessionLocal()
+    try:
+        init_default_auth_data(db)
+    finally:
+        db.close()
+
 @app.get("/", summary="健康检查")
 def health_check():
     return {
@@ -59,6 +75,7 @@ def health_check():
     }
 
 # 把“测试用例相关接口”挂到 /cases 这个路径下
+app.include_router(auth_router)
 app.include_router(case_router)
 app.include_router(ai_router)
 app.include_router(run_router)
@@ -69,4 +86,5 @@ app.include_router(project_router)
 app.include_router(module_router)
 app.include_router(requirement_doc_router)
 app.include_router(function_case_router)
+app.include_router(user_router)
 app.include_router(scene_router)

@@ -2,6 +2,7 @@ from app.schemas.api_case import APICaseCreate, APICaseResponse
 from app.schemas.ai import AICaseGenerateResponse
 from app.schemas.test_run import TestRunExecuteResponse
 from app.schemas.ai_analysis import AIAnalysisResponse, AIAnalysisGenerateResponse
+from app.schemas.auth import CurrentUserResponse, LoginRequest, LoginResponse, LogoutResponse
 from app.schemas.project import ProjectCreate, ProjectResponse, ProjectUpdate
 from app.schemas.test_module import (
     TestModuleCreate,
@@ -25,6 +26,7 @@ from app.schemas.scene_run import (
     SceneRunResponse,
     SceneStepRunResponse,
 )
+from app.schemas.user import RoleResponse, UserCreate, UserResponse, UserRoleUpdate, UserUpdate
 
 __all__ = [
     "APICaseCreate",
@@ -33,6 +35,10 @@ __all__ = [
     "TestRunExecuteResponse",
     "AIAnalysisResponse",
     "AIAnalysisGenerateResponse",
+    "CurrentUserResponse",
+    "LoginRequest",
+    "LoginResponse",
+    "LogoutResponse",
     "ProjectCreate",
     "ProjectResponse",
     "ProjectUpdate",
@@ -50,4 +56,9 @@ __all__ = [
     "TestModuleTreeResponse",
     "TestModuleUpdate",
     "ReportResponse",
+    "RoleResponse",
+    "UserCreate",
+    "UserResponse",
+    "UserRoleUpdate",
+    "UserUpdate",
 ]
