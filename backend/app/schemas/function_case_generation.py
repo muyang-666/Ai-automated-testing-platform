@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 class GenerateFunctionCasesRequest(BaseModel):
     requirement_id: int = Field(..., description="需求文本ID")
-    generate_count: int = Field(default=6, ge=1, le=20, description="生成用例数量")
+    generate_count: int = Field(default=10, ge=1, le=50, description="生成用例数量")
     case_types: list[str] = Field(
         default_factory=lambda: ["正常场景", "异常场景", "边界场景", "业务规则场景"],
         description="覆盖的用例类型",
@@ -25,9 +25,13 @@ class GeneratedFunctionCaseItem(BaseModel):
 
 
 class GenerateFunctionCasesResponse(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
     requirement_id: int
     project_id: Optional[int] = None
     module_id: Optional[int] = None
+    model_name: Optional[str] = None
+    provider_name: Optional[str] = None
     cases: list[GeneratedFunctionCaseItem] = []
     raw_output: Optional[str] = None
     errors: list[str] = []

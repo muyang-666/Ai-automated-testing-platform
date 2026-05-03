@@ -14,6 +14,7 @@ def create_requirement_doc(db: Session, doc_data: RequirementDocCreate) -> Requi
         requirement_type=doc_data.requirement_type,
         status=doc_data.status,
         remark=doc_data.remark,
+        supplementary_prompt=doc_data.supplementary_prompt,
     )
     db.add(db_doc)
     db.commit()

@@ -12,6 +12,7 @@ class RequirementDocCreate(BaseModel):
     requirement_type: Optional[str] = Field(default=None, description="需求类型")
     status: str = Field(default="confirmed", description="状态：draft/confirmed/disabled")
     remark: Optional[str] = Field(default=None, description="备注")
+    supplementary_prompt: Optional[str] = Field(default=None, description="补充提示词")
 
 
 class RequirementDocUpdate(BaseModel):
@@ -22,6 +23,7 @@ class RequirementDocUpdate(BaseModel):
     requirement_type: Optional[str] = Field(default=None, description="需求类型")
     status: Optional[str] = Field(default=None, description="状态：draft/confirmed/disabled")
     remark: Optional[str] = Field(default=None, description="备注")
+    supplementary_prompt: Optional[str] = Field(default=None, description="补充提示词")
 
 
 class RequirementDocResponse(BaseModel):
@@ -33,6 +35,7 @@ class RequirementDocResponse(BaseModel):
     requirement_type: Optional[str]
     status: str
     remark: Optional[str]
+    supplementary_prompt: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

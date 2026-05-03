@@ -42,7 +42,7 @@ def get_model_config_by_scene(db: Session, scene_code: str) -> dict:
     }
 
 
-def call_llm_with_model(provider: LLMProvider, model: LLMModel, prompt: str) -> str:
+def call_llm_with_model(provider: LLMProvider, model: LLMModel, prompt: str, temperature: float | None = None, max_tokens: int | None = None) -> str:
     base_url = provider.base_url.rstrip("/")
     if not base_url.endswith("/chat/completions"):
         url = f"{base_url}/chat/completions"
@@ -59,8 +59,8 @@ def call_llm_with_model(provider: LLMProvider, model: LLMModel, prompt: str) -> 
         "messages": [
             {"role": "user", "content": prompt},
         ],
-        "temperature": model.temperature,
-        "max_tokens": model.max_tokens,
+        "temperature": temperature if temperature is not None else model.temperature,
+        "max_tokens": max_tokens if max_tokens is not None else model.max_tokens,
     }
 
     try:

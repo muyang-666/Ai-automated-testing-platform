@@ -12,7 +12,8 @@ from app.schemas.function_case_generation import (
     SaveGeneratedFunctionCasesRequest,
     SaveGeneratedFunctionCasesResponse,
 )
-from app.services.ai_service import call_llm_generate_code
+from app.services.llm_client_service import call_llm_with_model, get_model_config_by_scene
+from app.services.api_document_generation_service import parse_llm_api_cases as robust_parse_json
 
 ALLOWED_CASE_TYPES = {"正常场景", "异常场景", "边界场景", "业务规则场景", "其他"}
 ALLOWED_PRIORITIES = {"P0", "P1", "P2"}
@@ -21,32 +22,28 @@ ALLOWED_PRIORITIES = {"P0", "P1", "P2"}
 def build_function_case_prompt(
     requirement: RequirementDoc, generate_count: int, case_types: list[str]
 ) -> str:
-    return f"""你是一名资深测试分析师。请根据以下需求文本，设计 {generate_count} 条功能测试用例。
+    lines = ["你是一名资深测试分析师。请根据以下需求文本，设计功能测试用例。"]
 
-【需求信息】
-- 需求标题：{requirement.title}
-- 需求内容：{requirement.content}
-- 需求类型：{requirement.requirement_type or "未指定"}
+    if requirement.supplementary_prompt:
+        lines.append("")
+        lines.append("【补充提示词 - 必须严格遵守】")
+        lines.append(requirement.supplementary_prompt)
 
-【覆盖的场景类型】{", ".join(case_types)}
+    lines.append("")
+    lines.append("【需求信息】")
+    lines.append(f"- 需求标题：{requirement.title}")
+    lines.append(f"- 需求内容：{requirement.content}")
+    lines.append(f"- 需求类型：{requirement.requirement_type or '未指定'}")
 
-【输出要求 - 必须严格遵守】
-1. 只返回一个 JSON 数组，不要任何解释、说明、Markdown 代码块。
-2. 数组中每个元素是一个对象，字段如下：
-   - case_code: 用例编号，如 FC-LOGIN-001（可为空字符串）
-   - case_name: 用例名称，必须简洁明确
-   - case_type: 只能从 [{", ".join(case_types)}] 中选择
-   - priority: 只能从 P0、P1、P2 中选择
-   - precondition: 前置条件，可为空字符串
-   - steps_json: 必须是字符串数组，如 ["步骤1", "步骤2"]
-   - test_data_json: 必须是 JSON 对象，如 {{"phone": "13800000000"}}（无数据用空对象 {{}}）
-   - expected_result: 预期结果，必须具体明确
-   - remark: 备注，可为空字符串
-3. expected_result 必须具体明确，不能含糊。
-4. steps_json 必须具体可执行。
-5. 不要返回任何解释文字。
-6. 不要使用 Markdown 代码块（不要 ```json）。
-7. 只返回 JSON 数组本身。"""
+    lines.append("")
+    lines.append("【输出要求】")
+    lines.append("1. 只返回一个 JSON 数组，不要 Markdown、不要解释、不要 ```。")
+    lines.append("2. 由你根据需求内容判断生成多少条用例，以覆盖全面为准，最多 50 条。")
+    lines.append("3. 每条用例字段：case_code, case_name, case_type, priority, precondition, steps_json(string[]), test_data_json({}), expected_result, remark")
+    lines.append(f"4. case_type 从 [{', '.join(case_types)}] 中选，priority 从 P0/P1/P2 中选")
+    lines.append("5. 简洁输出，expected_result 和 steps_json 精简但明确")
+
+    return "\n".join(lines)
 
 
 def parse_llm_function_cases(raw_output: str) -> list[dict]:
@@ -164,30 +161,91 @@ def generate_function_cases_from_requirement(
             errors=["需求文本不存在"],
         )
 
+    # 从模型配置中心获取 requirement_to_function_case 场景绑定的模型
+    try:
+        config = get_model_config_by_scene(db, "requirement_to_function_case")
+    except ValueError as e:
+        return GenerateFunctionCasesResponse(
+            requirement_id=request.requirement_id,
+            project_id=requirement.project_id,
+            module_id=requirement.module_id,
+            errors=[
+                f"需求生成功能测试用例未配置可用模型，请先在模型管理中配置 requirement_to_function_case 场景模型。详情: {e}"
+            ],
+        )
+
+    model = config["model"]
+    provider = config["provider"]
+    scene_config = config["scene_config"]
+
     prompt = build_function_case_prompt(requirement, request.generate_count, request.case_types)
 
+    # 应用场景 prompt_template
+    if scene_config.prompt_template:
+        if "{input}" in scene_config.prompt_template:
+            prompt = scene_config.prompt_template.replace("{input}", prompt)
+        else:
+            prompt = scene_config.prompt_template + "\n\n" + prompt
+
     try:
-        raw_output = call_llm_generate_code(prompt)
+        raw_output = call_llm_with_model(
+            provider, model, prompt,
+            temperature=0.0,
+            max_tokens=16384,
+        )
     except Exception as e:
         return GenerateFunctionCasesResponse(
             requirement_id=request.requirement_id,
             project_id=requirement.project_id,
             module_id=requirement.module_id,
+            model_name=model.model_name,
+            provider_name=provider.name,
             errors=[f"LLM 调用失败：{str(e)}"],
         )
 
-    parsed = parse_llm_function_cases(raw_output)
+    parsed, parse_errors = robust_parse_json(raw_output)
+
+    if parse_errors:
+        # robust_parse_json 部分成功时也会返回数据，errors 作为警告
+        pass
+
+    all_errors = list(parse_errors)
 
     if not parsed:
+        all_errors.insert(0, "LLM 返回内容无法解析为 JSON 数组")
         return GenerateFunctionCasesResponse(
             requirement_id=request.requirement_id,
             project_id=requirement.project_id,
             module_id=requirement.module_id,
+            model_name=model.model_name,
+            provider_name=provider.name,
             raw_output=raw_output,
-            errors=["LLM 返回内容无法解析为 JSON 数组"],
+            errors=all_errors,
         )
 
-    valid_cases, errors = validate_generated_function_cases(parsed)
+    # 将通用格式转为功能用例格式
+    normalized = []
+    for item in parsed:
+        normalized.append({
+            "case_code": item.get("case_code", ""),
+            "case_name": item.get("case_name", item.get("name", "")),
+            "case_type": item.get("case_type", "其他"),
+            "priority": item.get("priority", "P1"),
+            "precondition": item.get("precondition", ""),
+            "steps_json": item.get("steps_json", item.get("steps", [])),
+            "test_data_json": item.get("test_data_json", item.get("test_data", {})),
+            "expected_result": item.get("expected_result", ""),
+            "remark": item.get("remark", ""),
+        })
+
+    valid_cases, errors = validate_generated_function_cases(normalized)
+    all_errors.extend(errors)
+
+    # 不强制数量，AI 自行判断
+    actual = len(valid_cases)
+    if actual > 50:
+        valid_cases = valid_cases[:50]
+        all_errors.append(f"模型返回数量为 {actual}，已截取前 50 条")
 
     return GenerateFunctionCasesResponse(
         requirement_id=request.requirement_id,
@@ -195,7 +253,9 @@ def generate_function_cases_from_requirement(
         module_id=requirement.module_id,
         cases=[GeneratedFunctionCaseItem(**c) for c in valid_cases],
         raw_output=raw_output,
-        errors=errors,
+        errors=all_errors,
+        model_name=model.model_name,
+        provider_name=provider.name,
     )
 
 

@@ -95,12 +95,13 @@ export default function RequirementPage() {
   const [statusFilter, setStatusFilter] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
 
-  const [generating, setGenerating] = useState(false);
+  const [generatingId, setGeneratingId] = useState(null);
   const [generateModalOpen, setGenerateModalOpen] = useState(false);
   const [generatedCases, setGeneratedCases] = useState([]);
   const [selectedCaseKeys, setSelectedCaseKeys] = useState([]);
   const [generatedMeta, setGeneratedMeta] = useState(null);
   const [generateErrors, setGenerateErrors] = useState([]);
+
 
   const fetchProjects = async () => {
     try {
@@ -197,6 +198,7 @@ export default function RequirementPage() {
       requirement_type: record.requirement_type,
       status: record.status,
       remark: record.remark,
+      supplementary_prompt: record.supplementary_prompt || "",
     });
     setModalOpen(true);
   };
@@ -247,7 +249,7 @@ export default function RequirementPage() {
   };
 
   const handleGenerate = async (record) => {
-    setGenerating(true);
+    setGeneratingId(record.id);
     setGenerateErrors([]);
     try {
       const res = await generateFunctionCasesFromRequirement({
@@ -264,13 +266,15 @@ export default function RequirementPage() {
         requirement_id: data.requirement_id,
         project_id: data.project_id,
         module_id: data.module_id,
+        model_name: data.model_name,
+        provider_name: data.provider_name,
       });
       setGenerateErrors(data.errors || []);
       setGenerateModalOpen(true);
     } catch (error) {
       message.error(getErrorMessage(error));
     } finally {
-      setGenerating(false);
+      setGeneratingId(null);
     }
   };
 
@@ -358,7 +362,7 @@ export default function RequirementPage() {
             size="small"
             type="primary"
             ghost
-            loading={generating}
+            loading={generatingId === record.id}
             onClick={() => handleGenerate(record)}
           >
             生成用例
@@ -516,6 +520,10 @@ export default function RequirementPage() {
           <Form.Item name="remark" label="备注">
             <Input.TextArea rows={2} placeholder="备注（可选）" />
           </Form.Item>
+
+          <Form.Item name="supplementary_prompt" label="补充提示词（生成用例时使用）">
+            <Input.TextArea rows={3} placeholder="例如：重点覆盖登录态异常、并发场景、SQL注入测试…" />
+          </Form.Item>
         </Form>
       </Modal>
 
@@ -601,6 +609,19 @@ export default function RequirementPage() {
             {generateErrors.map((err, i) => (
               <div key={i} style={{ color: "#cf1322" }}>{err}</div>
             ))}
+          </div>
+        )}
+        {generatedMeta?.model_name && (
+          <div
+            style={{
+              background: "#f6ffed",
+              border: "1px solid #b7eb8f",
+              borderRadius: 4,
+              padding: "8px 12px",
+              marginBottom: 12,
+            }}
+          >
+            本次使用模型：<Tag color="green">{generatedMeta.provider_name} / {generatedMeta.model_name}</Tag>
           </div>
         )}
         <Table

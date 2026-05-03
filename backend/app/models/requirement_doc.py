@@ -15,6 +15,7 @@ class RequirementDoc(Base):
     requirement_type = Column(String(50), nullable=True, comment="需求类型")
     status = Column(String(20), default="confirmed", comment="状态：draft/confirmed/disabled")
     remark = Column(Text, nullable=True, comment="备注")
+    supplementary_prompt = Column(Text, nullable=True, comment="补充提示词（生成用例时使用）")
     is_deleted = Column(Boolean, default=False, comment="软删除标记")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), comment="创建时间")
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), comment="更新时间")
