@@ -2,9 +2,12 @@ import { useEffect, useState } from "react";
 import {
   Button,
   Card,
+  Col,
   message,
   Modal,
+  Row,
   Space,
+  Statistic,
   Table,
   Tag,
   Typography,
@@ -17,10 +20,35 @@ const unwrapResponse = (res) => {
   return res?.data !== undefined ? res.data : res;
 };
 
+const statusColorMap = {
+  passed: "green",
+  failed: "red",
+  error: "red",
+  running: "blue",
+  completed: "blue",
+  pending: "default",
+};
+
+const formatDateTime = (value) => {
+  if (!value) {
+    return "-";
+  }
+  return new Date(value).toLocaleString();
+};
+
+const renderStatusTag = (value) => {
+  if (!value) {
+    return "-";
+  }
+  return <Tag color={statusColorMap[value] || "default"}>{value}</Tag>;
+};
+
 function ReportPage() {
   const [reportList, setReportList] = useState([]);
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [reportSummary, setReportSummary] = useState(null);
 
   const [currentReport, setCurrentReport] = useState(null);
   const [reportModalOpen, setReportModalOpen] = useState(false);
@@ -38,6 +66,24 @@ function ReportPage() {
     }
   };
 
+  const fetchReportSummary = async () => {
+    setSummaryLoading(true);
+    try {
+      const res = await api.get("/reports/summary");
+      const data = unwrapResponse(res);
+      setReportSummary(data);
+    } catch (error) {
+      message.error(
+        error.response?.data?.detail ||
+          error.response?.data?.message ||
+          error.message ||
+          "获取报告统计失败"
+      );
+    } finally {
+      setSummaryLoading(false);
+    }
+  };
+
   const handleGenerateProjectReport = async () => {
     try {
       setGenerating(true);
@@ -48,6 +94,7 @@ function ReportPage() {
       setCurrentReport(data);
       setReportModalOpen(true);
       fetchReports();
+      fetchReportSummary();
     } catch (error) {
       message.error(error?.response?.data?.detail || "生成测试报告失败");
     } finally {
@@ -68,7 +115,12 @@ function ReportPage() {
 
   useEffect(() => {
     fetchReports();
+    fetchReportSummary();
   }, []);
+
+  const overview = reportSummary?.overview || {};
+  const apiTest = reportSummary?.api_test || {};
+  const sceneChain = reportSummary?.scene_chain || {};
 
   const columns = [
     {
@@ -118,8 +170,165 @@ function ReportPage() {
     },
   ];
 
+  const recentApiRunColumns = [
+    {
+      title: "执行ID",
+      dataIndex: "id",
+      width: 90,
+    },
+    {
+      title: "用例ID",
+      dataIndex: "case_id",
+      width: 90,
+    },
+    {
+      title: "状态",
+      dataIndex: "status",
+      width: 110,
+      render: renderStatusTag,
+    },
+    {
+      title: "结果",
+      dataIndex: "result",
+      width: 110,
+      render: renderStatusTag,
+    },
+    {
+      title: "响应状态码",
+      dataIndex: "response_status_code",
+      width: 120,
+      render: (value) => value ?? "-",
+    },
+    {
+      title: "创建时间",
+      dataIndex: "created_at",
+      width: 200,
+      render: formatDateTime,
+    },
+  ];
+
+  const recentSceneRunColumns = [
+    {
+      title: "执行ID",
+      dataIndex: "id",
+      width: 90,
+    },
+    {
+      title: "场景ID",
+      dataIndex: "scene_id",
+      width: 90,
+    },
+    {
+      title: "状态",
+      dataIndex: "status",
+      width: 110,
+      render: renderStatusTag,
+    },
+    {
+      title: "总步骤",
+      dataIndex: "total_steps",
+      width: 90,
+    },
+    {
+      title: "通过",
+      dataIndex: "passed_steps",
+      width: 80,
+    },
+    {
+      title: "失败",
+      dataIndex: "failed_steps",
+      width: 80,
+    },
+    {
+      title: "跳过",
+      dataIndex: "skipped_steps",
+      width: 80,
+    },
+    {
+      title: "耗时(ms)",
+      dataIndex: "duration_ms",
+      width: 100,
+      render: (value) => value ?? "-",
+    },
+    {
+      title: "创建时间",
+      dataIndex: "created_at",
+      width: 200,
+      render: formatDateTime,
+    },
+  ];
+
   return (
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
+      <Row gutter={[16, 16]}>
+        <Col xs={24} sm={12} md={8} lg={6}>
+          <Card loading={summaryLoading}>
+            <Statistic title="项目数" value={overview.project_count ?? 0} />
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} md={8} lg={6}>
+          <Card loading={summaryLoading}>
+            <Statistic title="接口用例数" value={overview.api_case_count ?? 0} />
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} md={8} lg={6}>
+          <Card loading={summaryLoading}>
+            <Statistic title="功能用例数" value={overview.function_case_count ?? 0} />
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} md={8} lg={6}>
+          <Card loading={summaryLoading}>
+            <Statistic title="需求数" value={overview.requirement_count ?? 0} />
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} md={8} lg={6}>
+          <Card loading={summaryLoading}>
+            <Statistic title="场景数" value={overview.scene_count ?? 0} />
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} md={8} lg={6}>
+          <Card loading={summaryLoading}>
+            <Statistic
+              title="接口测试通过率"
+              value={apiTest.pass_rate ?? 0}
+              precision={2}
+              suffix="%"
+            />
+          </Card>
+        </Col>
+        <Col xs={24} sm={12} md={8} lg={6}>
+          <Card loading={summaryLoading}>
+            <Statistic
+              title="串联执行通过率"
+              value={sceneChain.pass_rate ?? 0}
+              precision={2}
+              suffix="%"
+            />
+          </Card>
+        </Col>
+      </Row>
+
+      <Card title="最近接口测试执行记录">
+        <Table
+          rowKey="id"
+          columns={recentApiRunColumns}
+          dataSource={reportSummary?.recent_api_runs || []}
+          loading={summaryLoading}
+          pagination={false}
+        />
+      </Card>
+
+      <Card title="最近真实串联场景执行记录">
+        <Table
+          rowKey="id"
+          columns={recentSceneRunColumns}
+          dataSource={reportSummary?.recent_scene_runs || []}
+          loading={summaryLoading}
+          pagination={false}
+          scroll={{ x: 900 }}
+        />
+      </Card>
+
       <Card title="测试报告管理">
         <Space style={{ width: "100%", justifyContent: "space-between" }}>
           <Text>

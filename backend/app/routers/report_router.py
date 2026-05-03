@@ -2,11 +2,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.schemas.report import ReportResponse
+from app.schemas.report import ReportResponse, ReportSummaryResponse
 from app.services.report_service import (
     generate_project_report,
     get_report_by_id,
     get_report_list,
+    get_report_summary,
 )
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
@@ -19,6 +20,15 @@ def generate_project_report_api(db: Session = Depends(get_db)):
         return generate_project_report(db)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# 查询报告统计汇总
+@router.get("/summary", response_model=ReportSummaryResponse, summary="查询报告统计汇总")
+def get_report_summary_api(db: Session = Depends(get_db)):
+    try:
+        return get_report_summary(db)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取报告统计失败: {str(e)}")
 
 
 # 查询报告列表

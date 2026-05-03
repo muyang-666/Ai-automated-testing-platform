@@ -6,9 +6,15 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.api_case import APICase
+from app.models.function_case import FunctionCase
+from app.models.project import Project
 from app.models.report import Report
+from app.models.requirement_doc import RequirementDoc
 from app.models.scene import Scene
+from app.models.scene_run import SceneRun
 from app.models.scene_step import SceneStep
+from app.models.test_module import TestModule
+from app.models.test_run import TestRun
 from app.services.run_service import execute_case_test
 
 
@@ -284,6 +290,93 @@ def generate_project_report(db: Session):
         "created_at": db_report.created_at,
         "updated_at": db_report.updated_at,
         "message": "项目级测试报告生成成功",
+    }
+
+
+def calculate_pass_rate(passed_count: int, total_count: int) -> float:
+    if total_count == 0:
+        return 0.0
+    return round((passed_count / total_count) * 100, 2)
+
+
+# 报告统计汇总
+def get_report_summary(db: Session):
+    project_count = db.query(Project).filter(Project.is_deleted == False).count()
+    module_count = db.query(TestModule).filter(TestModule.is_deleted == False).count()
+    api_case_count = db.query(APICase).filter(APICase.is_deleted == False).count()
+    function_case_count = db.query(FunctionCase).filter(FunctionCase.is_deleted == False).count()
+    requirement_count = db.query(RequirementDoc).filter(RequirementDoc.is_deleted == False).count()
+    scene_count = db.query(Scene).filter(Scene.is_deleted == False).count()
+
+    api_total_runs = db.query(TestRun).count()
+    api_passed_runs = db.query(TestRun).filter(TestRun.result == "passed").count()
+    api_failed_runs = db.query(TestRun).filter(TestRun.result == "failed").count()
+
+    scene_total_runs = db.query(SceneRun).count()
+    scene_passed_runs = db.query(SceneRun).filter(SceneRun.status == "passed").count()
+    scene_failed_runs = db.query(SceneRun).filter(SceneRun.status == "failed").count()
+    scene_error_runs = db.query(SceneRun).filter(SceneRun.status == "error").count()
+
+    recent_api_runs = (
+        db.query(TestRun)
+        .order_by(TestRun.id.desc())
+        .limit(10)
+        .all()
+    )
+    recent_scene_runs = (
+        db.query(SceneRun)
+        .order_by(SceneRun.id.desc())
+        .limit(10)
+        .all()
+    )
+
+    return {
+        "overview": {
+            "project_count": project_count,
+            "module_count": module_count,
+            "api_case_count": api_case_count,
+            "function_case_count": function_case_count,
+            "requirement_count": requirement_count,
+            "scene_count": scene_count,
+        },
+        "api_test": {
+            "total_runs": api_total_runs,
+            "passed_runs": api_passed_runs,
+            "failed_runs": api_failed_runs,
+            "pass_rate": calculate_pass_rate(api_passed_runs, api_total_runs),
+        },
+        "scene_chain": {
+            "total_runs": scene_total_runs,
+            "passed_runs": scene_passed_runs,
+            "failed_runs": scene_failed_runs,
+            "error_runs": scene_error_runs,
+            "pass_rate": calculate_pass_rate(scene_passed_runs, scene_total_runs),
+        },
+        "recent_api_runs": [
+            {
+                "id": run.id,
+                "case_id": run.case_id,
+                "status": run.status,
+                "result": run.result,
+                "response_status_code": run.response_status_code,
+                "created_at": run.created_at,
+            }
+            for run in recent_api_runs
+        ],
+        "recent_scene_runs": [
+            {
+                "id": run.id,
+                "scene_id": run.scene_id,
+                "status": run.status,
+                "total_steps": run.total_steps,
+                "passed_steps": run.passed_steps,
+                "failed_steps": run.failed_steps,
+                "skipped_steps": run.skipped_steps,
+                "duration_ms": run.duration_ms,
+                "created_at": run.created_at,
+            }
+            for run in recent_scene_runs
+        ],
     }
 
 
