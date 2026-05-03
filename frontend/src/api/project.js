@@ -4,6 +4,10 @@ export function getProjectList(params) {
   return request.get("/projects", { params });
 }
 
+export function getProjectSummary(params) {
+  return request.get("/projects/summary", { params });
+}
+
 export function createProject(data) {
   return request.post("/projects", data);
 }

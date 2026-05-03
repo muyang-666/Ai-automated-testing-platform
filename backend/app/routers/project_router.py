@@ -4,11 +4,12 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.schemas.project import ProjectCreate, ProjectResponse, ProjectUpdate
+from app.schemas.project import ProjectCreate, ProjectResponse, ProjectSummaryResponse, ProjectUpdate
 from app.services.project_service import (
     create_project,
     get_project_by_id,
     get_project_list,
+    get_project_summary_list,
     soft_delete_project,
     update_project,
 )
@@ -28,6 +29,15 @@ def list_projects(
     db: Session = Depends(get_db),
 ):
     return get_project_list(db, keyword=keyword, status=status)
+
+
+@router.get("/summary", response_model=list[ProjectSummaryResponse], summary="查询项目统计列表")
+def list_project_summaries(
+    keyword: Optional[str] = Query(default=None, description="按名称模糊搜索"),
+    status: Optional[str] = Query(default=None, description="按状态筛选"),
+    db: Session = Depends(get_db),
+):
+    return get_project_summary_list(db, keyword=keyword, status=status)
 
 
 @router.get("/{project_id}", response_model=ProjectResponse, summary="查询项目详情")

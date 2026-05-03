@@ -26,3 +26,10 @@ class ProjectResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class ProjectSummaryResponse(ProjectResponse):
+    api_case_count: int = 0
+    function_case_count: int = 0
+    requirement_count: int = 0
+    scene_count: int = 0

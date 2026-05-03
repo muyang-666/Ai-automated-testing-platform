@@ -2,20 +2,22 @@ import { useEffect, useState } from "react";
 import {
   Button,
   Card,
+  Drawer,
+  Empty,
   Form,
   Input,
   message,
-  Modal,
   Popconfirm,
   Select,
-  Space,
-  Table,
+  Spin,
   Tag,
 } from "antd";
+import { DeleteOutlined, EditOutlined, PlusOutlined } from "@ant-design/icons";
 import {
   createProject,
   deleteProject,
   getProjectList,
+  getProjectSummary,
   updateProject,
 } from "../api/project";
 
@@ -27,16 +29,27 @@ const STATUS_OPTIONS = [
 ];
 
 const STATUS_TAG_MAP = {
-  active: { color: "success", label: "启用" },
-  archived: { color: "warning", label: "归档" },
-  disabled: { color: "default", label: "停用" },
+  active: { className: "project-status-active", label: "启用" },
+  archived: { className: "project-status-archived", label: "归档" },
+  disabled: { className: "project-status-disabled", label: "停用" },
 };
+
+const toSummaryProject = (project) => ({
+  ...project,
+  api_case_count: project.api_case_count || 0,
+  function_case_count: project.function_case_count || 0,
+  requirement_count: project.requirement_count || 0,
+  scene_count: project.scene_count || 0,
+});
+
+const formatDateTime = (value) => (value ? new Date(value).toLocaleString("zh-CN") : "-");
 
 export default function ProjectPage() {
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [modalOpen, setModalOpen] = useState(false);
+  const [createDrawerOpen, setCreateDrawerOpen] = useState(false);
+  const [editDrawerOpen, setEditDrawerOpen] = useState(false);
   const [editingProject, setEditingProject] = useState(null);
   const [keyword, setKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
@@ -50,9 +63,15 @@ export default function ProjectPage() {
       const st = searchStatus !== undefined ? searchStatus : statusFilter;
       if (kw) params.keyword = kw;
       if (st) params.status = st;
-      const res = await getProjectList(params);
-      setProjects(res.data || []);
-    } catch (error) {
+
+      try {
+        const res = await getProjectSummary(params);
+        setProjects((res.data || []).map(toSummaryProject));
+      } catch {
+        const fallbackRes = await getProjectList(params);
+        setProjects((fallbackRes.data || []).map(toSummaryProject));
+      }
+    } catch {
       message.error("获取项目列表失败");
     } finally {
       setLoading(false);
@@ -61,27 +80,34 @@ export default function ProjectPage() {
 
   useEffect(() => {
     fetchProjects();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const openCreateModal = () => {
+  const openCreateDrawer = () => {
     setEditingProject(null);
     form.resetFields();
     form.setFieldsValue({ status: "active" });
-    setModalOpen(true);
+    setCreateDrawerOpen(true);
   };
 
-  const openEditModal = (record) => {
+  const openEditDrawer = (record) => {
     setEditingProject(record);
     form.setFieldsValue({
-      name: record.name,
-      description: record.description,
+      projectName: record.name,
+      projectDescription: record.description,
       status: record.status,
     });
-    setModalOpen(true);
+    setEditDrawerOpen(true);
   };
 
-  const closeModal = () => {
-    setModalOpen(false);
+  const closeCreateDrawer = () => {
+    setCreateDrawerOpen(false);
+    setEditingProject(null);
+    form.resetFields();
+  };
+
+  const closeEditDrawer = () => {
+    setEditDrawerOpen(false);
     setEditingProject(null);
     form.resetFields();
   };
@@ -89,17 +115,23 @@ export default function ProjectPage() {
   const handleSubmit = async () => {
     try {
       const values = await form.validateFields();
+      const payload = {
+        name: values.projectName,
+        description: values.projectDescription,
+        status: values.status,
+      };
       setSubmitting(true);
 
       if (editingProject) {
-        await updateProject(editingProject.id, values);
+        await updateProject(editingProject.id, payload);
         message.success("项目更新成功");
+        closeEditDrawer();
       } else {
-        await createProject(values);
+        await createProject(payload);
         message.success("项目创建成功");
+        closeCreateDrawer();
       }
 
-      closeModal();
       fetchProjects();
     } catch (error) {
       if (error?.response) {
@@ -115,7 +147,7 @@ export default function ProjectPage() {
       await deleteProject(projectId);
       message.success("项目删除成功");
       fetchProjects();
-    } catch (error) {
+    } catch {
       message.error("项目删除失败");
     }
   };
@@ -130,112 +162,165 @@ export default function ProjectPage() {
     fetchProjects(keyword, value);
   };
 
-  const columns = [
-    { title: "ID", dataIndex: "id", width: 80 },
-    { title: "项目名称", dataIndex: "name" },
-    { title: "项目描述", dataIndex: "description", ellipsis: true },
-    {
-      title: "状态",
-      dataIndex: "status",
-      width: 100,
-      render: (value) => {
-        const tag = STATUS_TAG_MAP[value] || { color: "default", label: value };
-        return <Tag color={tag.color}>{tag.label}</Tag>;
-      },
-    },
-    {
-      title: "创建时间",
-      dataIndex: "created_at",
-      width: 180,
-      render: (value) => (value ? new Date(value).toLocaleString("zh-CN") : "-"),
-    },
-    {
-      title: "更新时间",
-      dataIndex: "updated_at",
-      width: 180,
-      render: (value) => (value ? new Date(value).toLocaleString("zh-CN") : "-"),
-    },
-    {
-      title: "操作",
-      width: 200,
-      render: (_, record) => (
-        <Space>
-          <Button size="small" onClick={() => openEditModal(record)}>
+  const renderProjectCard = (project) => {
+    const tag = STATUS_TAG_MAP[project.status] || {
+      className: "project-status-disabled",
+      label: project.status,
+    };
+
+    return (
+      <Card key={project.id} className="project-card" bordered>
+        <div className="project-card-top">
+          <span className="project-card-id">ID #{project.id}</span>
+          <Tag className={`project-status-tag ${tag.className}`}>{tag.label}</Tag>
+        </div>
+
+        <h2 className="project-card-title">{project.name}</h2>
+        <p className="project-card-description">{project.description || "暂无项目描述"}</p>
+
+        <div className="project-stat-grid">
+          <div className="project-stat-item">
+            <span>{project.function_case_count}</span>
+            <label>功能用例</label>
+          </div>
+          <div className="project-stat-item">
+            <span>{project.api_case_count}</span>
+            <label>接口用例</label>
+          </div>
+          <div className="project-stat-item">
+            <span>{project.requirement_count}</span>
+            <label>需求</label>
+          </div>
+          <div className="project-stat-item">
+            <span>{project.scene_count}</span>
+            <label>场景</label>
+          </div>
+        </div>
+
+        <div className="project-card-meta">
+          <div>
+            <span>创建时间</span>
+            <strong>{formatDateTime(project.created_at)}</strong>
+          </div>
+          <div>
+            <span>更新时间</span>
+            <strong>{formatDateTime(project.updated_at)}</strong>
+          </div>
+        </div>
+
+        <div className="project-card-actions">
+          <Button icon={<EditOutlined />} onClick={() => openEditDrawer(project)}>
             编辑
           </Button>
           <Popconfirm
             title="确认删除该项目吗？"
             okText="确认"
             cancelText="取消"
-            onConfirm={() => handleDelete(record.id)}
+            okButtonProps={{ className: "project-popconfirm-ok-button" }}
+            onConfirm={() => handleDelete(project.id)}
           >
-            <Button danger size="small">
+            <Button className="project-delete-button" icon={<DeleteOutlined />}>
               删除
             </Button>
           </Popconfirm>
-        </Space>
-      ),
-    },
-  ];
+        </div>
+      </Card>
+    );
+  };
 
   return (
-    <Space direction="vertical" size="large" style={{ width: "100%" }}>
-      <Card
-        title="项目管理"
-        extra={
-          <Button type="primary" onClick={openCreateModal}>
-            新增项目
-          </Button>
-        }
-      >
-        <Space style={{ marginBottom: 16 }}>
+    <div className="project-page">
+      <div className="project-page-header">
+        <div>
+          <h1>项目管理</h1>
+          <p>按项目查看基础信息、用例资产和场景统计</p>
+        </div>
+      </div>
+
+      <div className="project-toolbar">
+        <div className="project-toolbar-filters">
           <Input.Search
             placeholder="搜索项目名称"
             allowClear
+            autoComplete="new-password"
+            name="project_search_keyword"
+            value={keyword}
+            onChange={(event) => setKeyword(event.target.value)}
             onSearch={handleSearch}
-            style={{ width: 240 }}
           />
           <Select
             placeholder="状态筛选"
             options={STATUS_OPTIONS}
             value={statusFilter}
             onChange={handleStatusChange}
-            style={{ width: 120 }}
+            popupClassName="project-select-dropdown"
           />
-        </Space>
+        </div>
+        <Button type="primary" icon={<PlusOutlined />} onClick={openCreateDrawer}>
+          新增项目
+        </Button>
+      </div>
 
-        <Table
-          rowKey="id"
-          columns={columns}
-          dataSource={projects}
-          loading={loading}
-          pagination={false}
-        />
-      </Card>
+      <Spin spinning={loading}>
+        {projects.length > 0 ? (
+          <div className="project-card-grid">{projects.map(renderProjectCard)}</div>
+        ) : (
+          <div className="project-empty">
+            <Empty description="暂无项目" />
+          </div>
+        )}
+      </Spin>
 
-      <Modal
-        title={editingProject ? "编辑项目" : "新增项目"}
-        open={modalOpen}
-        onOk={handleSubmit}
-        onCancel={closeModal}
-        confirmLoading={submitting}
+      <Drawer
+        title="新增项目"
+        placement="right"
+        width="50vw"
+        rootClassName="project-drawer"
+        open={createDrawerOpen}
+        onClose={closeCreateDrawer}
         destroyOnClose
+        footer={
+          <div className="project-edit-drawer-footer">
+            <Button onClick={closeCreateDrawer} disabled={submitting}>
+              取消
+            </Button>
+            <Button
+              type="primary"
+              className="project-modal-ok-button"
+              onClick={handleSubmit}
+              loading={submitting}
+            >
+              保存
+            </Button>
+          </div>
+        }
       >
-        <Form form={form} layout="vertical">
+        <Form form={form} layout="vertical" autoComplete="off">
           <Form.Item
-            name="name"
+            name="projectName"
             label="项目名称"
             rules={[{ required: true, message: "请输入项目名称" }]}
           >
-            <Input placeholder="请输入项目名称" maxLength={100} />
+            <Input
+              placeholder="请输入项目名称"
+              maxLength={100}
+              autoComplete="new-password"
+              name="project_form_title_create"
+            />
           </Form.Item>
 
-          <Form.Item name="description" label="项目描述">
-            <Input.TextArea rows={3} placeholder="请输入项目描述" />
+          <Form.Item name="projectDescription" label="项目描述">
+            <Input.TextArea
+              rows={3}
+              placeholder="请输入项目描述"
+              autoComplete="new-password"
+              name="project_form_detail_create"
+            />
           </Form.Item>
 
           <Form.Item name="status" label="项目状态">
             <Select
+              popupClassName="project-select-dropdown"
               options={[
                 { label: "启用", value: "active" },
                 { label: "归档", value: "archived" },
@@ -244,7 +329,67 @@ export default function ProjectPage() {
             />
           </Form.Item>
         </Form>
-      </Modal>
-    </Space>
+      </Drawer>
+
+      <Drawer
+        title="编辑项目"
+        placement="right"
+        width="50vw"
+        rootClassName="project-drawer"
+        open={editDrawerOpen}
+        onClose={closeEditDrawer}
+        destroyOnClose
+        footer={
+          <div className="project-edit-drawer-footer">
+            <Button onClick={closeEditDrawer} disabled={submitting}>
+              取消
+            </Button>
+            <Button
+              type="primary"
+              className="project-modal-ok-button"
+              onClick={handleSubmit}
+              loading={submitting}
+            >
+              保存
+            </Button>
+          </div>
+        }
+      >
+        <Form form={form} layout="vertical" autoComplete="off">
+          <Form.Item
+            name="projectName"
+            label="项目名称"
+            rules={[{ required: true, message: "请输入项目名称" }]}
+          >
+            <Input
+              placeholder="请输入项目名称"
+              maxLength={100}
+              autoComplete="new-password"
+              name="project_form_title_edit"
+            />
+          </Form.Item>
+
+          <Form.Item name="projectDescription" label="项目描述">
+            <Input.TextArea
+              rows={3}
+              placeholder="请输入项目描述"
+              autoComplete="new-password"
+              name="project_form_detail_edit"
+            />
+          </Form.Item>
+
+          <Form.Item name="status" label="项目状态">
+            <Select
+              popupClassName="project-select-dropdown"
+              options={[
+                { label: "启用", value: "active" },
+                { label: "归档", value: "archived" },
+                { label: "停用", value: "disabled" },
+              ]}
+            />
+          </Form.Item>
+        </Form>
+      </Drawer>
+    </div>
   );
 }
