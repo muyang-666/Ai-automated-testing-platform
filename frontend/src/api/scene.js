@@ -1,8 +1,8 @@
 import request from "../services/api";
 
 // 场景 CRUD
-export function getSceneList() {
-  return request.get("/scenes");
+export function getSceneList(params = {}) {
+  return request.get("/scenes", { params });
 }
 
 export function createScene(data) {
@@ -46,11 +46,11 @@ export function executeScene(sceneId) {
 }
 
 // 真实串联执行场景
-export function runSceneChain(sceneId) {
-  return request.post(`/scenes/${sceneId}/run-chain`);
+export function runSceneChain(sceneId, data = {}) {
+  return request.post(`/scenes/${sceneId}/run-chain`, data);
 }
 
 // 已有测试用例列表（复用）
-export function getCaseList() {
-  return request.get("/cases");
+export function getCaseList(params = {}) {
+  return request.get("/cases", { params });
 }

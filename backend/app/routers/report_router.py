@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -15,18 +17,26 @@ router = APIRouter(prefix="/reports", tags=["Reports"])
 
 # 一键生成项目级测试报告
 @router.post("/generate-project", response_model=ReportResponse, summary="一键生成项目级测试报告")
-def generate_project_report_api(db: Session = Depends(get_db)):
+def generate_project_report_api(
+    project_id: Optional[int] = Query(default=None, description="按项目生成报告"),
+    module_id: Optional[int] = Query(default=None, description="按模块生成报告"),
+    db: Session = Depends(get_db),
+):
     try:
-        return generate_project_report(db)
+        return generate_project_report(db, project_id=project_id, module_id=module_id)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 
 # 查询报告统计汇总
 @router.get("/summary", response_model=ReportSummaryResponse, summary="查询报告统计汇总")
-def get_report_summary_api(db: Session = Depends(get_db)):
+def get_report_summary_api(
+    project_id: Optional[int] = Query(default=None, description="按项目统计"),
+    module_id: Optional[int] = Query(default=None, description="按模块统计"),
+    db: Session = Depends(get_db),
+):
     try:
-        return get_report_summary(db)
+        return get_report_summary(db, project_id=project_id, module_id=module_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"获取报告统计失败: {str(e)}")
 

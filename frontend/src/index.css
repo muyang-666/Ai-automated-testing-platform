@@ -404,7 +404,7 @@ select:-webkit-autofill {
   font-weight: 600 !important;
 }
 
-.project-drawer .ant-input,
+.project-drawer input.ant-input,
 .project-drawer .ant-input-affix-wrapper,
 .project-drawer .ant-select-selection-item,
 .project-drawer .ant-select-selection-placeholder,
@@ -426,7 +426,7 @@ select:-webkit-autofill {
   font-size: 19px !important;
 }
 
-.project-drawer .ant-input,
+.project-drawer input.ant-input,
 .project-drawer .ant-input-affix-wrapper,
 .project-drawer .ant-select-selector {
   min-height: 44px !important;
@@ -452,6 +452,7 @@ select:-webkit-autofill {
 
 .project-drawer textarea.ant-input {
   min-height: 110px !important;
+  resize: vertical !important;
 }
 
 .project-drawer .ant-form-item-explain-error {
@@ -769,6 +770,12 @@ select:-webkit-autofill {
   box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.08) !important;
 }
 
+textarea.ant-input {
+  max-height: none !important;
+  overflow: auto !important;
+  resize: vertical !important;
+}
+
 .ant-table-thead > tr > th {
   font-size: 18px !important;
 }
@@ -800,13 +807,13 @@ select:-webkit-autofill {
   margin-bottom: 22px;
 }
 
-.ant-modal .ant-input,
+.ant-modal input.ant-input,
 .ant-modal .ant-input-number-input,
 .ant-modal .ant-input::placeholder,
 .ant-modal .ant-select .ant-select-selection-item,
 .ant-modal .ant-select .ant-select-selection-placeholder,
 .ant-modal .ant-select .ant-select-selection-search-input,
-.ant-drawer .ant-input,
+.ant-drawer input.ant-input,
 .ant-drawer .ant-input-number-input,
 .ant-drawer .ant-input::placeholder,
 .ant-drawer .ant-select .ant-select-selection-item,
@@ -815,10 +822,10 @@ select:-webkit-autofill {
   font-size: 20px !important;
 }
 
-.ant-modal .ant-input,
+.ant-modal input.ant-input,
 .ant-modal .ant-input-affix-wrapper,
 .ant-modal .ant-select .ant-select-selector,
-.ant-drawer .ant-input,
+.ant-drawer input.ant-input,
 .ant-drawer .ant-input-affix-wrapper,
 .ant-drawer .ant-select .ant-select-selector {
   min-height: 46px !important;
@@ -827,9 +834,31 @@ select:-webkit-autofill {
   padding-inline: 14px !important;
 }
 
+.ant-modal .ant-input-affix-wrapper input.ant-input,
+.ant-drawer .ant-input-affix-wrapper input.ant-input {
+  height: 100% !important;
+  min-height: 0 !important;
+  padding: 0 !important;
+  line-height: 44px !important;
+}
+
+.ant-modal .ant-input-affix-wrapper,
+.ant-drawer .ant-input-affix-wrapper {
+  display: flex !important;
+  align-items: center !important;
+}
+
+.ant-modal .ant-input-password-icon,
+.ant-drawer .ant-input-password-icon {
+  display: inline-flex !important;
+  align-items: center !important;
+}
+
 .ant-modal textarea.ant-input,
 .ant-drawer textarea.ant-input {
-  min-height: 110px !important;
+  max-height: none !important;
+  overflow: auto !important;
+  resize: vertical !important;
 }
 
 .ant-modal .ant-btn,
@@ -1028,9 +1057,9 @@ select:-webkit-autofill {
   font-weight: 600 !important;
 }
 
-.module-tree-drawer .ant-input,
+.module-tree-drawer input.ant-input,
 .module-tree-drawer textarea.ant-input,
-.requirement-drawer .ant-input,
+.requirement-drawer input.ant-input,
 .requirement-drawer .ant-input-number-input,
 .requirement-drawer .ant-select-selection-item,
 .requirement-drawer .ant-select-selection-placeholder,
@@ -1039,9 +1068,9 @@ select:-webkit-autofill {
   font-size: 20px !important;
 }
 
-.module-tree-drawer .ant-input,
+.module-tree-drawer input.ant-input,
 .module-tree-drawer .ant-input-affix-wrapper,
-.requirement-drawer .ant-input,
+.requirement-drawer input.ant-input,
 .requirement-drawer .ant-input-affix-wrapper,
 .requirement-drawer .ant-input-number,
 .requirement-drawer .ant-select-selector {
@@ -1053,6 +1082,9 @@ select:-webkit-autofill {
 .module-tree-drawer textarea.ant-input,
 .requirement-drawer textarea.ant-input {
   min-height: 120px !important;
+  max-height: none !important;
+  overflow: auto !important;
+  resize: vertical !important;
 }
 
 .module-tree-drawer-footer,
@@ -1197,7 +1229,7 @@ select:-webkit-autofill {
   font-weight: 600 !important;
 }
 
-.standard-drawer .ant-input,
+.standard-drawer input.ant-input,
 .standard-drawer .ant-input-number-input,
 .standard-drawer .ant-select-selection-item,
 .standard-drawer .ant-select-selection-placeholder,
@@ -1206,7 +1238,7 @@ select:-webkit-autofill {
   font-size: 20px !important;
 }
 
-.standard-drawer .ant-input,
+.standard-drawer input.ant-input,
 .standard-drawer .ant-input-affix-wrapper,
 .standard-drawer .ant-input-number,
 .standard-drawer .ant-select-selector {
@@ -1217,6 +1249,347 @@ select:-webkit-autofill {
 
 .standard-drawer textarea.ant-input {
   min-height: 120px !important;
+  max-height: none !important;
+  overflow: auto !important;
+  resize: vertical !important;
+}
+
+.function-case-drawer textarea.ant-input.function-case-compact-textarea {
+  min-height: 46px !important;
+}
+
+.function-case-drawer textarea.ant-input.function-case-steps-textarea {
+  min-height: 240px !important;
+}
+
+.module-tree-node-id {
+  flex: 0 0 auto;
+  margin-left: 8px;
+  color: #888;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.case-result-drawer .ant-drawer-body,
+.case-result-drawer .ant-drawer-body p,
+.case-result-drawer .ant-drawer-body .ant-typography,
+.case-result-drawer .ant-drawer-body .ant-tag,
+.case-result-drawer .ant-drawer-body .ant-btn,
+.case-result-drawer .ant-drawer-body summary {
+  font-size: 20px !important;
+}
+
+.case-result-drawer .ant-drawer-body pre {
+  font-size: 18px !important;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.case-analysis-section {
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid #e5e5e5;
+}
+
+.case-analysis-section h3 {
+  margin: 0 0 12px;
+  color: #111;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.scene-page,
+.scene-page .ant-card,
+.scene-page .ant-table,
+.scene-page .ant-btn,
+.scene-page .ant-input,
+.scene-page .ant-input-number,
+.scene-page .ant-select,
+.scene-page .ant-checkbox-wrapper,
+.scene-page .ant-collapse,
+.scene-page .ant-tag {
+  font-size: 18px !important;
+  font-family: "Microsoft YaHei", "PingFang SC", "Helvetica Neue", Arial, sans-serif !important;
+}
+
+.scene-page .ant-card-head-title,
+.scene-page .ant-form-item-label > label {
+  font-size: 20px !important;
+  font-weight: 700 !important;
+}
+
+.scene-page .ant-table-thead > tr > th {
+  font-size: 18px !important;
+  font-weight: 700 !important;
+}
+
+.scene-page .ant-table-tbody > tr > td {
+  font-size: 18px !important;
+}
+
+.scene-add-step-btn,
+.scene-add-step-btn:hover,
+.scene-add-step-btn:focus {
+  border-color: #111 !important;
+  background: #111 !important;
+  color: #fff !important;
+  box-shadow: none !important;
+}
+
+.scene-enable-switch.ant-switch {
+  background: #d9d9d9 !important;
+  border-color: #d9d9d9 !important;
+}
+
+.scene-enable-switch.ant-switch.ant-switch-checked {
+  background: #111 !important;
+  border-color: #111 !important;
+}
+
+.scene-result-drawer .ant-drawer-body,
+.scene-result-drawer .ant-drawer-body span,
+.scene-result-drawer .ant-drawer-body p,
+.scene-result-drawer .ant-drawer-body .ant-typography,
+.scene-result-drawer .ant-drawer-body .ant-tag {
+  font-size: 20px !important;
+}
+
+.scene-result-pre,
+.scene-result-drawer pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow: auto;
+  margin-top: 8px;
+  padding: 12px;
+  border-radius: 6px;
+  background: #f5f5f5;
+  font-size: 18px !important;
+}
+
+.report-page {
+  background: #f3f3f3;
+  font-family: "Microsoft YaHei", "PingFang SC", "Helvetica Neue", Arial, sans-serif !important;
+}
+
+.report-page .standard-list-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.report-page .standard-module-shell {
+  width: 231px;
+}
+
+.report-page .ant-card,
+.report-page .ant-table,
+.report-page .ant-btn,
+.report-page .ant-select,
+.report-page .ant-tag,
+.report-page .ant-statistic {
+  font-family: "Microsoft YaHei", "PingFang SC", "Helvetica Neue", Arial, sans-serif !important;
+}
+
+.report-page .ant-card-head-title,
+.report-page .ant-table-thead > tr > th {
+  color: #111 !important;
+  font-size: 17px !important;
+  font-weight: 700 !important;
+}
+
+.report-toolbar-scope {
+  justify-content: flex-end;
+}
+
+.report-toolbar-scope .ant-typography {
+  color: #111;
+  font-size: 17px;
+}
+
+.report-ring-card .ant-card-body {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  min-height: 168px;
+}
+
+.report-ring-card h4,
+.report-scope-card h4 {
+  margin: 0 0 8px !important;
+  color: #111;
+  font-size: 20px !important;
+  font-weight: 700 !important;
+}
+
+.report-ring-card .ant-progress-text {
+  color: #111 !important;
+  font-weight: 700;
+}
+
+.report-scope-card .ant-card-body {
+  display: flex;
+  min-height: 168px;
+  flex-direction: column;
+  justify-content: center;
+  gap: 12px;
+}
+
+.report-generate-secondary,
+.report-generate-secondary:hover,
+.report-generate-secondary:focus {
+  width: fit-content;
+  border-color: #111 !important;
+  background: #111 !important;
+  color: #fff !important;
+  box-shadow: none !important;
+}
+
+.report-metric-grid {
+  margin-top: 0;
+}
+
+.report-metric-card .ant-card-body {
+  min-height: 104px;
+}
+
+.report-metric-card .ant-statistic-title {
+  color: #555;
+  font-size: 15px !important;
+}
+
+.report-metric-card .ant-statistic-content {
+  color: #111;
+  font-size: 30px !important;
+  font-weight: 700;
+}
+
+.report-section-card {
+  margin-top: 0;
+}
+
+.report-detail-drawer .ant-drawer-body,
+.report-detail-drawer .ant-typography,
+.report-detail-drawer .ant-tag {
+  font-size: 18px !important;
+}
+
+.report-detail-pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  padding: 14px;
+  border-radius: 6px;
+  background: #f5f5f5;
+  color: #111;
+  font-size: 17px;
+}
+
+.standard-detail-drawer .ant-drawer-body,
+.standard-detail-drawer .ant-drawer-body p,
+.standard-detail-drawer .ant-drawer-body .ant-typography,
+.standard-detail-drawer .ant-drawer-body .ant-tag {
+  font-size: 18px !important;
+}
+
+.standard-detail-drawer pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 360px;
+  overflow: auto;
+  padding: 12px !important;
+  border-radius: 6px !important;
+  background: #f5f5f5 !important;
+  color: #111;
+  font-size: 16px;
+}
+
+.user-page {
+  background: #f3f3f3;
+  font-family: "Microsoft YaHei", "PingFang SC", "Helvetica Neue", Arial, sans-serif !important;
+}
+
+.user-toolbar-card h4 {
+  margin: 0 !important;
+  color: #111;
+  font-size: 24px !important;
+  font-weight: 800 !important;
+}
+
+.user-toolbar-card .ant-typography {
+  color: #555;
+  font-size: 16px;
+}
+
+.user-stat-card .ant-card-body {
+  min-height: 112px;
+}
+
+.user-stat-card .ant-statistic-title {
+  color: #555;
+  font-size: 16px !important;
+  font-weight: 600;
+}
+
+.user-stat-card .ant-statistic-content {
+  color: #111;
+  font-size: 32px !important;
+  font-weight: 800;
+}
+
+.user-list-card .ant-card-head-title,
+.user-list-card .ant-table-thead > tr > th {
+  color: #111 !important;
+  font-size: 18px !important;
+  font-weight: 800 !important;
+}
+
+.user-list-card .ant-table-tbody > tr > td {
+  font-size: 16px !important;
+}
+
+.user-list-tools {
+  margin-bottom: 14px;
+}
+
+.user-drawer .ant-drawer-title {
+  font-size: 25px !important;
+  font-weight: 800 !important;
+}
+
+.parameter-page,
+.parameter-page .ant-card-head-title,
+.parameter-page .ant-input,
+.parameter-page .ant-btn {
+  font-family: "Microsoft YaHei", "PingFang SC", "Helvetica Neue", Arial, sans-serif !important;
+}
+
+.parameter-page .ant-card-head-title {
+  color: #111;
+  font-size: 24px !important;
+  font-weight: 800 !important;
+}
+
+.parameter-page textarea.ant-input {
+  color: #111;
+  font-size: 22px !important;
+  font-weight: 400 !important;
+  line-height: 1.55;
+}
+
+.parameter-page .ant-btn {
+  height: 46px !important;
+  border-color: #111 !important;
+  background: #111 !important;
+  color: #fff !important;
+  font-size: 20px !important;
+  font-weight: 700 !important;
+  box-shadow: none !important;
+}
+
+.standard-drawer .ant-input-number {
+  display: flex !important;
+  align-items: center !important;
 }
 
 .standard-drawer-footer {

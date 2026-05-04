@@ -29,6 +29,11 @@ import {
   saveGeneratedFunctionCases,
 } from "../api/functionCase";
 import ModuleTree from "../components/ModuleTree";
+import {
+  getStoredProjectId,
+  resolveProjectId,
+  storeProjectId,
+} from "../utils/projectSelection";
 
 function getErrorMessage(error) {
   return (
@@ -89,7 +94,7 @@ export default function RequirementPage() {
   const [form] = Form.useForm();
 
   const [projects, setProjects] = useState([]);
-  const [selectedProjectId, setSelectedProjectId] = useState(null);
+  const [selectedProjectId, setSelectedProjectId] = useState(getStoredProjectId);
   const [selectedModuleId, setSelectedModuleId] = useState(null);
   const [unboundModuleOnly, setUnboundModuleOnly] = useState(false);
   const [includeChildren, setIncludeChildren] = useState(false);
@@ -119,10 +124,14 @@ export default function RequirementPage() {
   }, []);
 
   useEffect(() => {
-    if (projects.length > 0 && selectedProjectId == null) {
-      setSelectedProjectId(projects[0].id);
+    if (projects.length > 0) {
+      const nextProjectId = resolveProjectId(projects, selectedProjectId);
+      if (nextProjectId !== selectedProjectId) {
+        setSelectedProjectId(nextProjectId);
+        storeProjectId(nextProjectId);
+      }
     }
-  }, [projects]);
+  }, [projects, selectedProjectId]);
 
   useEffect(() => {
     if (selectedProjectId) {
@@ -165,6 +174,7 @@ export default function RequirementPage() {
 
   const handleProjectChange = (value) => {
     setSelectedProjectId(value);
+    storeProjectId(value);
     setSelectedModuleId(null);
     setUnboundModuleOnly(false);
   };

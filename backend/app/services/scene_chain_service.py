@@ -173,7 +173,11 @@ def _is_2xx(status_code: int | None) -> bool:
     return 200 <= status_code <= 299
 
 
-def execute_scene_chain(db: Session, scene_id: int) -> dict:
+def execute_scene_chain(
+    db: Session,
+    scene_id: int,
+    selected_step_ids: list[int] | None = None,
+) -> dict:
     """Execute a scene by chaining HTTP requests in sequence.
 
     Steps:
@@ -197,16 +201,18 @@ def execute_scene_chain(db: Session, scene_id: int) -> dict:
         raise ValueError("场景状态不是 active，无法执行")
 
     # 2. Get enabled steps
-    steps = (
+    step_query = (
         db.query(SceneStep)
         .filter(
             SceneStep.scene_id == scene_id,
             SceneStep.is_deleted == False,
             SceneStep.enabled == True,
         )
-        .order_by(SceneStep.step_order.asc(), SceneStep.id.asc())
-        .all()
     )
+    if selected_step_ids:
+        step_query = step_query.filter(SceneStep.id.in_(selected_step_ids))
+
+    steps = step_query.order_by(SceneStep.step_order.asc(), SceneStep.id.asc()).all()
 
     if not steps:
         raise ValueError("当前场景下没有可执行步骤")

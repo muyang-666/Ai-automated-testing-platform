@@ -2,15 +2,19 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Button,
   Card,
+  Col,
+  Drawer,
   Form,
   Input,
   message,
-  Modal,
   Popconfirm,
+  Row,
   Select,
   Space,
+  Statistic,
   Table,
   Tag,
+  Typography,
 } from "antd";
 import {
   createUser,
@@ -20,6 +24,8 @@ import {
   updateUser,
   updateUserRoles,
 } from "../api/user";
+
+const { Text, Title } = Typography;
 
 const STATUS_OPTIONS = [
   { label: "全部", value: "" },
@@ -181,9 +187,14 @@ export default function UserPage() {
   };
 
   const columns = [
-    { title: "ID", dataIndex: "id", width: 80 },
-    { title: "用户名", dataIndex: "username", width: 140 },
-    { title: "显示名称", dataIndex: "display_name", width: 160 },
+    { title: "ID", dataIndex: "id", width: 70 },
+    {
+      title: "用户名",
+      dataIndex: "username",
+      width: 160,
+      render: (value) => <Text strong>{value}</Text>,
+    },
+    { title: "显示名称", dataIndex: "display_name", width: 170, render: (value) => value || "-" },
     { title: "邮箱", dataIndex: "email", ellipsis: true },
     {
       title: "状态",
@@ -197,7 +208,7 @@ export default function UserPage() {
     {
       title: "角色",
       dataIndex: "roles",
-      width: 220,
+      width: 240,
       render: (value = []) => (
         <Space size={[4, 4]} wrap>
           {value.length ? value.map((role) => <Tag key={role}>{role}</Tag>) : "-"}
@@ -215,16 +226,19 @@ export default function UserPage() {
       width: 180,
       render: (_, record) => (
         <Space>
-          <Button size="small" onClick={() => openEditModal(record)}>
+          <Button size="small" className="standard-action-btn" onClick={() => openEditModal(record)}>
             编辑
           </Button>
           <Popconfirm
             title="确认删除该用户吗？"
             okText="确认"
             cancelText="取消"
+            overlayClassName="standard-popconfirm"
+            okButtonProps={{ className: "standard-popconfirm-ok" }}
+            cancelButtonProps={{ className: "standard-popconfirm-cancel" }}
             onConfirm={() => handleDelete(record.id)}
           >
-            <Button danger size="small">
+            <Button className="standard-delete-btn" size="small">
               删除
             </Button>
           </Popconfirm>
@@ -233,105 +247,176 @@ export default function UserPage() {
     },
   ];
 
+  const activeCount = users.filter((user) => user.status === "active").length;
+  const disabledCount = users.filter((user) => user.status === "disabled").length;
+
   return (
-    <Space direction="vertical" size="large" style={{ width: "100%" }}>
-      <Card
-        title="用户管理"
-        extra={
-          <Button type="primary" onClick={openCreateModal}>
-            新增用户
-          </Button>
+    <div className="standard-page user-page">
+      <Space direction="vertical" size="large" style={{ width: "100%" }}>
+        <Card className="standard-toolbar-card user-toolbar-card">
+          <Row justify="space-between" align="middle" gutter={[16, 16]}>
+            <Col>
+              <Space direction="vertical" size={2}>
+                <Title level={4}>用户管理</Title>
+                <Text>维护账号状态、角色授权和基础信息</Text>
+              </Space>
+            </Col>
+            <Col>
+              <Button type="primary" className="standard-primary-btn" onClick={openCreateModal}>
+                新增用户
+              </Button>
+            </Col>
+          </Row>
+        </Card>
+
+        <Row gutter={[16, 16]}>
+          <Col xs={24} md={6}>
+            <Card className="user-stat-card">
+              <Statistic title="用户总数" value={users.length} />
+            </Card>
+          </Col>
+          <Col xs={24} md={6}>
+            <Card className="user-stat-card">
+              <Statistic title="启用用户" value={activeCount} />
+            </Card>
+          </Col>
+          <Col xs={24} md={6}>
+            <Card className="user-stat-card">
+              <Statistic title="停用用户" value={disabledCount} />
+            </Card>
+          </Col>
+          <Col xs={24} md={6}>
+            <Card className="user-stat-card">
+              <Statistic title="角色数量" value={roles.length} />
+            </Card>
+          </Col>
+        </Row>
+
+        <Card title="用户列表" className="standard-list-card user-list-card">
+          <Row justify="space-between" align="middle" gutter={[12, 12]} className="user-list-tools">
+            <Col>
+              <Space>
+                <Input.Search
+                  placeholder="搜索用户名、显示名称或邮箱"
+                  allowClear
+                  onSearch={handleSearch}
+                  style={{ width: 320 }}
+                />
+                <Select
+                  placeholder="状态筛选"
+                  options={STATUS_OPTIONS}
+                  value={statusFilter}
+                  onChange={handleStatusChange}
+                  style={{ width: 140 }}
+                  popupClassName="standard-select-dropdown"
+                />
+              </Space>
+            </Col>
+            <Col>
+              <Tag>当前 {users.length} 个用户</Tag>
+            </Col>
+          </Row>
+
+          <Table
+            rowKey="id"
+            columns={columns}
+            dataSource={users}
+            loading={loading}
+            pagination={{ pageSize: 10 }}
+            scroll={{ x: 1040 }}
+          />
+        </Card>
+      </Space>
+
+      <Drawer
+        title={editingUser ? "编辑用户" : "新增用户"}
+        placement="right"
+        width="50vw"
+        rootClassName="standard-drawer user-drawer"
+        open={modalOpen}
+        onClose={closeModal}
+        destroyOnClose
+        footer={
+          <div className="standard-drawer-footer">
+            <Button onClick={closeModal} disabled={submitting}>取消</Button>
+            <Button type="primary" className="standard-primary-btn" onClick={handleSubmit} loading={submitting}>
+              保存
+            </Button>
+          </div>
         }
       >
-        <Space style={{ marginBottom: 16 }}>
-          <Input.Search
-            placeholder="搜索用户名、显示名称或邮箱"
-            allowClear
-            onSearch={handleSearch}
-            style={{ width: 260 }}
-          />
-          <Select
-            placeholder="状态筛选"
-            options={STATUS_OPTIONS}
-            value={statusFilter}
-            onChange={handleStatusChange}
-            style={{ width: 120 }}
-          />
-        </Space>
+        <Form form={form} layout="vertical" autoComplete="off">
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item
+                name="username"
+                label="用户名"
+                rules={
+                  editingUser
+                    ? []
+                    : [{ required: true, message: "请输入用户名" }]
+                }
+              >
+                <Input disabled={!!editingUser} placeholder="请输入用户名" maxLength={50} autoComplete="off" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item
+                name="password"
+                label={editingUser ? "新密码" : "密码"}
+                rules={
+                  editingUser
+                    ? []
+                    : [{ required: true, message: "请输入密码" }]
+                }
+              >
+                <Input.Password
+                  placeholder={editingUser ? "不填写则不修改密码" : "请输入密码"}
+                  autoComplete="new-password"
+                />
+              </Form.Item>
+            </Col>
+          </Row>
 
-        <Table
-          rowKey="id"
-          columns={columns}
-          dataSource={users}
-          loading={loading}
-          pagination={{ pageSize: 10 }}
-          scroll={{ x: 980 }}
-        />
-      </Card>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item name="display_name" label="显示名称">
+                <Input placeholder="请输入显示名称" maxLength={100} autoComplete="off" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="email" label="邮箱">
+                <Input placeholder="请输入邮箱" maxLength={100} autoComplete="off" />
+              </Form.Item>
+            </Col>
+          </Row>
 
-      <Modal
-        title={editingUser ? "编辑用户" : "新增用户"}
-        open={modalOpen}
-        onOk={handleSubmit}
-        onCancel={closeModal}
-        confirmLoading={submitting}
-        destroyOnClose
-      >
-        <Form form={form} layout="vertical">
-          <Form.Item
-            name="username"
-            label="用户名"
-            rules={
-              editingUser
-                ? []
-                : [{ required: true, message: "请输入用户名" }]
-            }
-          >
-            <Input disabled={!!editingUser} placeholder="请输入用户名" maxLength={50} />
-          </Form.Item>
-
-          <Form.Item
-            name="password"
-            label={editingUser ? "新密码" : "密码"}
-            rules={
-              editingUser
-                ? []
-                : [{ required: true, message: "请输入密码" }]
-            }
-          >
-            <Input.Password
-              placeholder={editingUser ? "不填写则不修改密码" : "请输入密码"}
-              autoComplete="new-password"
-            />
-          </Form.Item>
-
-          <Form.Item name="display_name" label="显示名称">
-            <Input placeholder="请输入显示名称" maxLength={100} />
-          </Form.Item>
-
-          <Form.Item name="email" label="邮箱">
-            <Input placeholder="请输入邮箱" maxLength={100} />
-          </Form.Item>
-
-          <Form.Item name="status" label="状态">
-            <Select
-              options={[
-                { label: "启用", value: "active" },
-                { label: "停用", value: "disabled" },
-              ]}
-            />
-          </Form.Item>
-
-          <Form.Item name="role_ids" label="角色">
-            <Select
-              mode="multiple"
-              allowClear
-              placeholder="请选择角色"
-              options={roleOptions}
-            />
-          </Form.Item>
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item name="status" label="状态">
+                <Select
+                  popupClassName="standard-select-dropdown"
+                  options={[
+                    { label: "启用", value: "active" },
+                    { label: "停用", value: "disabled" },
+                  ]}
+                />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="role_ids" label="角色">
+                <Select
+                  mode="multiple"
+                  allowClear
+                  placeholder="请选择角色"
+                  options={roleOptions}
+                  popupClassName="standard-select-dropdown"
+                />
+              </Form.Item>
+            </Col>
+          </Row>
         </Form>
-      </Modal>
-    </Space>
+      </Drawer>
+    </div>
   );
 }

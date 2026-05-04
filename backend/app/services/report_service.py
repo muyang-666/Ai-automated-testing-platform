@@ -16,13 +16,31 @@ from app.models.scene_step import SceneStep
 from app.models.test_module import TestModule
 from app.models.test_run import TestRun
 from app.services.run_service import execute_case_test
+from app.services.test_module_service import get_child_module_ids
+
+
+def _module_filter_ids(db: Session, module_id: int | None) -> list[int] | None:
+    if module_id is None:
+        return None
+    return [module_id] + get_child_module_ids(db, module_id)
 
 
 # 构造“项目场景清单 + 执行结果摘要”
-def build_project_snapshot(db: Session) -> tuple[list[dict], dict]:
-    scenes = db.query(Scene).order_by(Scene.id.asc()).all()
+def build_project_snapshot(
+    db: Session,
+    project_id: int | None = None,
+    module_id: int | None = None,
+) -> tuple[list[dict], dict]:
+    module_ids = _module_filter_ids(db, module_id)
+    scene_query = db.query(Scene).filter(Scene.is_deleted == False)
+    if project_id is not None:
+        scene_query = scene_query.filter(Scene.project_id == project_id)
+    if module_ids is not None:
+        scene_query = scene_query.filter(Scene.module_id.in_(module_ids))
+
+    scenes = scene_query.order_by(Scene.id.asc()).all()
     if not scenes:
-        raise ValueError("当前没有可用于生成报告的场景，请先在场景管理中配置场景")
+        raise ValueError("当前项目或模块下没有可用于生成报告的场景，请先在场景管理中配置场景")
 
     scene_results = []
     total_steps = 0
@@ -32,7 +50,11 @@ def build_project_snapshot(db: Session) -> tuple[list[dict], dict]:
     for scene in scenes:
         steps = (
             db.query(SceneStep)
-            .filter(SceneStep.scene_id == scene.id)
+            .filter(
+                SceneStep.scene_id == scene.id,
+                SceneStep.is_deleted == False,
+                SceneStep.enabled == True,
+            )
             .order_by(SceneStep.step_order.asc(), SceneStep.id.asc())
             .all()
         )
@@ -248,9 +270,13 @@ def extract_risk_summary(summary: str, failed_count: int) -> str:
 
 
 # 一键生成项目级测试报告
-def generate_project_report(db: Session):
+def generate_project_report(
+    db: Session,
+    project_id: int | None = None,
+    module_id: int | None = None,
+):
     # 1. 自动执行全部场景并收集结果
-    scene_results, stats = build_project_snapshot(db)
+    scene_results, stats = build_project_snapshot(db, project_id=project_id, module_id=module_id)
 
     # 2. 构造 Prompt
     prompt = build_project_report_prompt(scene_results, stats)
@@ -261,7 +287,15 @@ def generate_project_report(db: Session):
     # 4. 生成风险总结
     risk_summary = extract_risk_summary(report_summary, stats["failed_steps"])
 
-    report_name = f"项目接口测试报告_{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    scope_parts = []
+    if project_id is not None:
+        project = db.query(Project).filter(Project.id == project_id).first()
+        scope_parts.append(project.name if project else f"项目{project_id}")
+    if module_id is not None:
+        module = db.query(TestModule).filter(TestModule.id == module_id).first()
+        scope_parts.append(module.name if module else f"模块{module_id}")
+    scope_name = "_".join(scope_parts) if scope_parts else "全部项目"
+    report_name = f"{scope_name}_接口测试报告_{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
 
     db_report = Report(
         report_name=report_name,
@@ -300,35 +334,69 @@ def calculate_pass_rate(passed_count: int, total_count: int) -> float:
 
 
 # 报告统计汇总
-def get_report_summary(db: Session):
-    project_count = db.query(Project).filter(Project.is_deleted == False).count()
-    module_count = db.query(TestModule).filter(TestModule.is_deleted == False).count()
-    api_case_count = db.query(APICase).filter(APICase.is_deleted == False).count()
-    function_case_count = db.query(FunctionCase).filter(FunctionCase.is_deleted == False).count()
-    requirement_count = db.query(RequirementDoc).filter(RequirementDoc.is_deleted == False).count()
-    scene_count = db.query(Scene).filter(Scene.is_deleted == False).count()
+def get_report_summary(
+    db: Session,
+    project_id: int | None = None,
+    module_id: int | None = None,
+):
+    module_ids = _module_filter_ids(db, module_id)
 
-    api_total_runs = db.query(TestRun).count()
-    api_passed_runs = db.query(TestRun).filter(TestRun.result == "passed").count()
-    api_failed_runs = db.query(TestRun).filter(TestRun.result == "failed").count()
+    project_query = db.query(Project).filter(Project.is_deleted == False)
+    module_query = db.query(TestModule).filter(TestModule.is_deleted == False)
+    api_case_query = db.query(APICase).filter(APICase.is_deleted == False)
+    function_case_query = db.query(FunctionCase).filter(FunctionCase.is_deleted == False)
+    requirement_query = db.query(RequirementDoc).filter(RequirementDoc.is_deleted == False)
+    scene_query = db.query(Scene).filter(Scene.is_deleted == False)
 
-    scene_total_runs = db.query(SceneRun).count()
-    scene_passed_runs = db.query(SceneRun).filter(SceneRun.status == "passed").count()
-    scene_failed_runs = db.query(SceneRun).filter(SceneRun.status == "failed").count()
-    scene_error_runs = db.query(SceneRun).filter(SceneRun.status == "error").count()
+    if project_id is not None:
+        project_query = project_query.filter(Project.id == project_id)
+        module_query = module_query.filter(TestModule.project_id == project_id)
+        api_case_query = api_case_query.filter(APICase.project_id == project_id)
+        function_case_query = function_case_query.filter(FunctionCase.project_id == project_id)
+        requirement_query = requirement_query.filter(RequirementDoc.project_id == project_id)
+        scene_query = scene_query.filter(Scene.project_id == project_id)
 
-    recent_api_runs = (
-        db.query(TestRun)
-        .order_by(TestRun.id.desc())
-        .limit(10)
-        .all()
-    )
-    recent_scene_runs = (
-        db.query(SceneRun)
-        .order_by(SceneRun.id.desc())
-        .limit(10)
-        .all()
-    )
+    if module_ids is not None:
+        module_query = module_query.filter(TestModule.id.in_(module_ids))
+        api_case_query = api_case_query.filter(APICase.module_id.in_(module_ids))
+        function_case_query = function_case_query.filter(FunctionCase.module_id.in_(module_ids))
+        requirement_query = requirement_query.filter(RequirementDoc.module_id.in_(module_ids))
+        scene_query = scene_query.filter(Scene.module_id.in_(module_ids))
+
+    project_count = project_query.count()
+    module_count = module_query.count()
+    api_case_count = api_case_query.count()
+    function_case_count = function_case_query.count()
+    requirement_count = requirement_query.count()
+    scene_count = scene_query.count()
+
+    function_total_cases = function_case_count
+    function_passed_cases = function_case_query.filter(FunctionCase.status == "通过").count()
+    function_failed_cases = function_case_query.filter(FunctionCase.status == "失败").count()
+
+    api_run_query = db.query(TestRun).join(APICase, TestRun.case_id == APICase.id)
+    if project_id is not None:
+        api_run_query = api_run_query.filter(APICase.project_id == project_id)
+    if module_ids is not None:
+        api_run_query = api_run_query.filter(APICase.module_id.in_(module_ids))
+
+    api_total_runs = api_run_query.count()
+    api_passed_runs = api_run_query.filter(TestRun.result == "passed").count()
+    api_failed_runs = api_run_query.filter(TestRun.result == "failed").count()
+
+    scene_run_query = db.query(SceneRun)
+    if project_id is not None:
+        scene_run_query = scene_run_query.filter(SceneRun.project_id == project_id)
+    if module_ids is not None:
+        scene_run_query = scene_run_query.filter(SceneRun.module_id.in_(module_ids))
+
+    scene_total_runs = scene_run_query.count()
+    scene_passed_runs = scene_run_query.filter(SceneRun.status == "passed").count()
+    scene_failed_runs = scene_run_query.filter(SceneRun.status == "failed").count()
+    scene_error_runs = scene_run_query.filter(SceneRun.status == "error").count()
+
+    recent_api_runs = api_run_query.order_by(TestRun.id.desc()).limit(10).all()
+    recent_scene_runs = scene_run_query.order_by(SceneRun.id.desc()).limit(10).all()
 
     return {
         "overview": {
@@ -344,6 +412,12 @@ def get_report_summary(db: Session):
             "passed_runs": api_passed_runs,
             "failed_runs": api_failed_runs,
             "pass_rate": calculate_pass_rate(api_passed_runs, api_total_runs),
+        },
+        "function_test": {
+            "total_cases": function_total_cases,
+            "passed_cases": function_passed_cases,
+            "failed_cases": function_failed_cases,
+            "pass_rate": calculate_pass_rate(function_passed_cases, function_total_cases),
         },
         "scene_chain": {
             "total_runs": scene_total_runs,

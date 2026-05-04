@@ -9,7 +9,6 @@ import {
   Input,
   InputNumber,
   message,
-  Modal,
   Popconfirm,
   Row,
   Select,
@@ -21,6 +20,11 @@ import {
 import api from "../services/api";
 import { getProjectList } from "../api/project";
 import ModuleTree from "../components/ModuleTree";
+import {
+  getStoredProjectId,
+  resolveProjectId,
+  storeProjectId,
+} from "../utils/projectSelection";
 
 const CASE_TYPE_OPTIONS = [
   { label: "正常场景", value: "正常场景" },
@@ -45,9 +49,10 @@ const PRIORITY_OPTIONS = [
 ];
 
 const STATUS_OPTIONS = [
-  { label: "active", value: "active" },
-  { label: "disabled", value: "disabled" },
-  { label: "draft", value: "draft" },
+  { label: "未开始", value: "未开始" },
+  { label: "通过", value: "通过" },
+  { label: "失败", value: "失败" },
+  { label: "跳过", value: "跳过" },
 ];
 
 const { Paragraph } = Typography;
@@ -98,7 +103,7 @@ function CasePage() {
   const [form] = Form.useForm();
 
   const [projects, setProjects] = useState([]);
-  const [selectedProjectId, setSelectedProjectId] = useState(null);
+  const [selectedProjectId, setSelectedProjectId] = useState(getStoredProjectId);
   const [selectedModuleId, setSelectedModuleId] = useState(null);
   const [includeChildren, setIncludeChildren] = useState(false);
 
@@ -106,7 +111,6 @@ function CasePage() {
   const [executeResult, setExecuteResult] = useState(null);
   const [executeResultModalOpen, setExecuteResultModalOpen] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
-  const [analysisModalOpen, setAnalysisModalOpen] = useState(false);
   const [currentAnalysis, setCurrentAnalysis] = useState(null);
 
   const fetchProjects = async () => {
@@ -123,10 +127,14 @@ function CasePage() {
   }, []);
 
   useEffect(() => {
-    if (projects.length > 0 && selectedProjectId == null) {
-      setSelectedProjectId(projects[0].id);
+    if (projects.length > 0) {
+      const nextProjectId = resolveProjectId(projects, selectedProjectId);
+      if (nextProjectId !== selectedProjectId) {
+        setSelectedProjectId(nextProjectId);
+        storeProjectId(nextProjectId);
+      }
     }
-  }, [projects]);
+  }, [projects, selectedProjectId]);
 
   const fetchCases = async () => {
     if (!selectedProjectId) return;
@@ -154,6 +162,7 @@ function CasePage() {
 
   const handleProjectChange = (value) => {
     setSelectedProjectId(value);
+    storeProjectId(value);
     setSelectedModuleId(null);
   };
 
@@ -177,6 +186,7 @@ function CasePage() {
       project_id: selectedProjectId,
       module_id: selectedModuleId || undefined,
       method: "",
+      status: "未开始",
     });
     setModalOpen(true);
   };
@@ -256,6 +266,7 @@ function CasePage() {
 
   const handleExecute = async (caseId) => {
     setExecuting(caseId);
+    setCurrentAnalysis(null);
     try {
       const res = await api.post(`/runs/${caseId}/execute`);
       setExecuteResult(res.data);
@@ -274,7 +285,6 @@ function CasePage() {
     try {
       const res = await api.post(`/ai/analyze/${runId}`);
       setCurrentAnalysis(res.data);
-      setAnalysisModalOpen(true);
       message.success("AI 分析完成");
     } catch (error) {
       const detail = error?.response?.data?.detail || "AI 分析失败";
@@ -284,22 +294,70 @@ function CasePage() {
     }
   };
 
+  const renderAnalysisContent = () => {
+    if (!currentAnalysis) return null;
+    const parsed = parseAnalysisContent(currentAnalysis.content);
+    return (
+      <div className="case-analysis-section">
+        <h3>AI 分析结果</h3>
+        <Space direction="vertical" style={{ width: "100%" }} size={12}>
+          <p>分析类型：{currentAnalysis.analysis_type}</p>
+          <p>风险等级：{currentAnalysis.risk_level}</p>
+          {parsed.owner && (
+            <p>
+              <b>责任归属：</b>
+              {parsed.owner}
+            </p>
+          )}
+          {parsed.phenomenon && (
+            <p>
+              <b>问题现象：</b>
+              {parsed.phenomenon}
+            </p>
+          )}
+          {parsed.essence && (
+            <p>
+              <b>问题本质：</b>
+              {parsed.essence}
+            </p>
+          )}
+          {parsed.evidence && (
+            <Paragraph>
+              <b>关键证据：</b>
+              <pre>{parsed.evidence}</pre>
+            </Paragraph>
+          )}
+          {parsed.suggestion && (
+            <Paragraph>
+              <b>修复建议：</b>
+              <pre>{parsed.suggestion}</pre>
+            </Paragraph>
+          )}
+          <Paragraph copyable={{ text: currentAnalysis.content || "" }}>
+            <details>
+              <summary>查看原始分析全文</summary>
+              <pre>{currentAnalysis.content || "当前无分析内容"}</pre>
+            </details>
+          </Paragraph>
+        </Space>
+      </div>
+    );
+  };
+
   const columns = [
     { title: "ID", dataIndex: "id", width: 60 },
-    { title: "名称", dataIndex: "name", width: 120, ellipsis: true },
+    { title: "名称", dataIndex: "name", width: 240, ellipsis: true },
     { title: "方法", dataIndex: "method", width: 80 },
     { title: "URL", dataIndex: "url", width: 160, ellipsis: true },
     {
-      title: "项目ID",
-      dataIndex: "project_id",
-      width: 75,
-      render: (value) => (value != null ? value : "-"),
-    },
-    {
-      title: "模块ID",
-      dataIndex: "module_id",
-      width: 75,
-      render: (value) => (value != null ? value : "-"),
+      title: "优先级",
+      dataIndex: "priority",
+      width: 70,
+      render: (value) => {
+        if (!value) return "-";
+        const colorMap = { P0: "red", P1: "orange", P2: "blue" };
+        return <Tag color={colorMap[value] || "default"}>{value}</Tag>;
+      },
     },
     {
       title: "类型",
@@ -319,22 +377,12 @@ function CasePage() {
       },
     },
     {
-      title: "优先级",
-      dataIndex: "priority",
-      width: 70,
-      render: (value) => {
-        if (!value) return "-";
-        const colorMap = { P0: "red", P1: "orange", P2: "blue" };
-        return <Tag color={colorMap[value] || "default"}>{value}</Tag>;
-      },
-    },
-    {
       title: "状态",
       dataIndex: "status",
       width: 75,
       render: (value) => {
         if (!value) return "-";
-        const colorMap = { active: "green", disabled: "red", draft: "default" };
+        const colorMap = { 通过: "success", 失败: "error", 跳过: "default", 未开始: "default" };
         return <Tag color={colorMap[value] || "default"}>{value}</Tag>;
       },
     },
@@ -479,12 +527,70 @@ function CasePage() {
             <Input />
           </Form.Item>
 
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item
+                name="project_id"
+                label="归属项目"
+                rules={[{ required: true, message: "请选择项目" }]}
+              >
+                <Select
+                  placeholder="请选择项目"
+                  options={projects.map((p) => ({ label: p.name, value: p.id }))}
+                  popupClassName="standard-select-dropdown"
+                />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="case_type" label="用例类型">
+                <Select
+                  placeholder="请选择用例类型"
+                  allowClear
+                  options={CASE_TYPE_OPTIONS}
+                  popupClassName="standard-select-dropdown"
+                />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item name="source" label="来源">
+                <Select
+                  placeholder="请选择来源"
+                  allowClear
+                  options={SOURCE_OPTIONS}
+                  popupClassName="standard-select-dropdown"
+                />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="status" label="状态">
+                <Select
+                  placeholder="请选择状态"
+                  allowClear
+                  options={STATUS_OPTIONS}
+                  popupClassName="standard-select-dropdown"
+                />
+              </Form.Item>
+            </Col>
+          </Row>
+
           <Form.Item
             name="method"
             label="请求方法"
             rules={[{ required: true, message: "请输入请求方法" }]}
           >
             <Input placeholder="POST" />
+          </Form.Item>
+
+          <Form.Item name="priority" label="优先级">
+            <Select
+              placeholder="请选择优先级"
+              allowClear
+              options={PRIORITY_OPTIONS}
+              popupClassName="standard-select-dropdown"
+            />
           </Form.Item>
 
           <Form.Item
@@ -516,72 +622,28 @@ function CasePage() {
             />
           </Form.Item>
 
-          <Form.Item
-            name="project_id"
-            label="归属项目"
-            rules={[{ required: true, message: "请选择项目" }]}
-          >
-            <Select
-              placeholder="请选择项目"
-              options={projects.map((p) => ({ label: p.name, value: p.id }))}
-              popupClassName="standard-select-dropdown"
-            />
-          </Form.Item>
-
           <Form.Item name="module_id" label="归属模块">
             <InputNumber
               placeholder="模块ID（可选）"
               style={{ width: "100%" }}
             />
           </Form.Item>
-
-          <Form.Item name="case_type" label="用例类型">
-            <Select
-              placeholder="请选择用例类型"
-              allowClear
-              options={CASE_TYPE_OPTIONS}
-              popupClassName="standard-select-dropdown"
-            />
-          </Form.Item>
-
-          <Form.Item name="source" label="来源">
-            <Select
-              placeholder="请选择来源"
-              allowClear
-              options={SOURCE_OPTIONS}
-              popupClassName="standard-select-dropdown"
-            />
-          </Form.Item>
-
-          <Form.Item name="priority" label="优先级">
-            <Select
-              placeholder="请选择优先级"
-              allowClear
-              options={PRIORITY_OPTIONS}
-              popupClassName="standard-select-dropdown"
-            />
-          </Form.Item>
-
-          <Form.Item name="status" label="状态">
-            <Select
-              placeholder="请选择状态"
-              allowClear
-              options={STATUS_OPTIONS}
-              popupClassName="standard-select-dropdown"
-            />
-          </Form.Item>
         </Form>
       </Drawer>
 
-      <Modal
+      <Drawer
         title={`执行结果（Run ID: ${executeResult?.run_id ?? "-"}）`}
+        placement="right"
+        width="50vw"
+        rootClassName="standard-drawer case-result-drawer"
         open={executeResultModalOpen}
-        onCancel={() => {
+        onClose={() => {
           setExecuteResultModalOpen(false);
           setExecuteResult(null);
+          setCurrentAnalysis(null);
         }}
         footer={null}
-        width={700}
+        destroyOnClose
       >
         {executeResult ? (
           <Space direction="vertical" style={{ width: "100%" }} size={12}>
@@ -639,96 +701,12 @@ function CasePage() {
                 AI 分析
               </Button>
             )}
+            {renderAnalysisContent()}
           </Space>
         ) : (
           <p>无执行结果</p>
         )}
-      </Modal>
-
-      <Modal
-        title="AI 分析结果"
-        open={analysisModalOpen}
-        onCancel={() => {
-          setAnalysisModalOpen(false);
-          setCurrentAnalysis(null);
-        }}
-        footer={null}
-        width={900}
-      >
-        {currentAnalysis ? (
-          (() => {
-            const parsed = parseAnalysisContent(currentAnalysis.content);
-            return (
-              <Space direction="vertical" style={{ width: "100%" }} size={12}>
-                <p>分析类型：{currentAnalysis.analysis_type}</p>
-                <p>风险等级：{currentAnalysis.risk_level}</p>
-                {parsed.owner && (
-                  <p>
-                    <b>责任归属：</b>
-                    {parsed.owner}
-                  </p>
-                )}
-                {parsed.phenomenon && (
-                  <p>
-                    <b>问题现象：</b>
-                    {parsed.phenomenon}
-                  </p>
-                )}
-                {parsed.essence && (
-                  <p>
-                    <b>问题本质：</b>
-                    {parsed.essence}
-                  </p>
-                )}
-                {parsed.evidence && (
-                  <Paragraph>
-                    <b>关键证据：</b>
-                    <pre
-                      style={{
-                        whiteSpace: "pre-wrap",
-                        wordBreak: "break-word",
-                        marginTop: 8,
-                      }}
-                    >
-                      {parsed.evidence}
-                    </pre>
-                  </Paragraph>
-                )}
-                {parsed.suggestion && (
-                  <Paragraph>
-                    <b>修复建议：</b>
-                    <pre
-                      style={{
-                        whiteSpace: "pre-wrap",
-                        wordBreak: "break-word",
-                        marginTop: 8,
-                      }}
-                    >
-                      {parsed.suggestion}
-                    </pre>
-                  </Paragraph>
-                )}
-                <Paragraph copyable={{ text: currentAnalysis.content || "" }}>
-                  <details>
-                    <summary>查看原始分析全文</summary>
-                    <pre
-                      style={{
-                        whiteSpace: "pre-wrap",
-                        wordBreak: "break-word",
-                        marginTop: 8,
-                      }}
-                    >
-                      {currentAnalysis.content || "当前无分析内容"}
-                    </pre>
-                  </details>
-                </Paragraph>
-              </Space>
-            );
-          })()
-        ) : (
-          <p>当前无分析内容</p>
-        )}
-      </Modal>
+      </Drawer>
     </Space>
     </div>
   );

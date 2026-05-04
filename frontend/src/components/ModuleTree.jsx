@@ -263,10 +263,6 @@ export default function ModuleTree({
   };
 
   const titleRender = (nodeData) => {
-    const isSelected =
-      selectedModuleId != null &&
-      String(selectedModuleId) === nodeData.key;
-
     return (
       <div
         style={{
@@ -278,12 +274,24 @@ export default function ModuleTree({
       >
         <span
           style={{
-            color: isSelected ? "#1677ff" : undefined,
-            fontWeight: isSelected ? 500 : undefined,
+            color: "#111",
+            fontSize: 18,
+            fontWeight: 700,
+            flex: 1,
+            minWidth: 0,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
           }}
           title={nodeData.data?.description || nodeData.title}
         >
           {nodeData.title}
+        </span>
+        <span
+          className="module-tree-node-id"
+          title={`#${nodeData.data?.id}`}
+        >
+          #{nodeData.data?.id}
         </span>
         <Dropdown
           menu={{ items: getActionItems(nodeData) }}

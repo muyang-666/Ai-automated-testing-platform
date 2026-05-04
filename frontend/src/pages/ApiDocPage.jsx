@@ -9,7 +9,6 @@ import {
   Input,
   InputNumber,
   message,
-  Modal,
   Popconfirm,
   Row,
   Select,
@@ -27,6 +26,11 @@ import {
   updateApiDocument,
 } from "../api/apiDocument";
 import ModuleTree from "../components/ModuleTree";
+import {
+  getStoredProjectId,
+  resolveProjectId,
+  storeProjectId,
+} from "../utils/projectSelection";
 
 function getErrorMessage(error) {
   return (
@@ -48,16 +52,22 @@ const METHOD_OPTIONS = [
 
 const STATUS_OPTIONS = [
   { label: "全部", value: "" },
-  { label: "active", value: "active" },
-  { label: "disabled", value: "disabled" },
-  { label: "draft", value: "draft" },
+  { label: "启用", value: "active" },
+  { label: "禁用", value: "disabled" },
+  { label: "草稿", value: "draft" },
 ];
 
 const FORM_STATUS_OPTIONS = [
-  { label: "active", value: "active" },
-  { label: "disabled", value: "disabled" },
-  { label: "draft", value: "draft" },
+  { label: "启用", value: "active" },
+  { label: "禁用", value: "disabled" },
+  { label: "草稿", value: "draft" },
 ];
+
+const STATUS_TAG_MAP = {
+  active: { color: "default", label: "启用" },
+  disabled: { color: "default", label: "禁用" },
+  draft: { color: "default", label: "草稿" },
+};
 
 const PRIORITY_TAG_MAP = {
   P0: { color: "red", label: "P0" },
@@ -70,7 +80,7 @@ function ApiDocPage() {
   const [loading, setLoading] = useState(false);
 
   const [projects, setProjects] = useState([]);
-  const [selectedProjectId, setSelectedProjectId] = useState(null);
+  const [selectedProjectId, setSelectedProjectId] = useState(getStoredProjectId);
   const [selectedModuleId, setSelectedModuleId] = useState(null);
   const [includeChildren, setIncludeChildren] = useState(false);
   const [keyword, setKeyword] = useState("");
@@ -109,10 +119,14 @@ function ApiDocPage() {
   }, []);
 
   useEffect(() => {
-    if (projects.length > 0 && selectedProjectId == null) {
-      setSelectedProjectId(projects[0].id);
+    if (projects.length > 0) {
+      const nextProjectId = resolveProjectId(projects, selectedProjectId);
+      if (nextProjectId !== selectedProjectId) {
+        setSelectedProjectId(nextProjectId);
+        storeProjectId(nextProjectId);
+      }
     }
-  }, [projects]);
+  }, [projects, selectedProjectId]);
 
   const fetchDocuments = async () => {
     if (!selectedProjectId) return;
@@ -141,6 +155,7 @@ function ApiDocPage() {
 
   const handleProjectChange = (value) => {
     setSelectedProjectId(value);
+    storeProjectId(value);
     setSelectedModuleId(null);
   };
 
@@ -308,11 +323,10 @@ function ApiDocPage() {
       title: "状态",
       dataIndex: "status",
       width: 80,
-      render: (v) => (
-        <Tag color={v === "active" ? "green" : v === "draft" ? "default" : "red"}>
-          {v}
-        </Tag>
-      ),
+      render: (v) => {
+        const tag = STATUS_TAG_MAP[v] || { color: "default", label: v || "-" };
+        return <Tag color={tag.color}>{tag.label}</Tag>;
+      },
     },
     {
       title: "创建时间",
@@ -591,13 +605,16 @@ GET /api/user/info
         </Form>
       </Drawer>
 
-      {/* Detail Modal */}
-      <Modal
+      {/* Detail Drawer */}
+      <Drawer
         title="接口文档详情"
+        placement="right"
+        width="50vw"
+        rootClassName="standard-drawer standard-detail-drawer"
         open={detailOpen}
-        onCancel={() => setDetailOpen(false)}
+        onClose={() => setDetailOpen(false)}
         footer={null}
-        width={700}
+        destroyOnClose
       >
         {detailDoc && (
           <Space direction="vertical" style={{ width: "100%" }} size={12}>
@@ -605,7 +622,7 @@ GET /api/user/info
             <p><b>名称：</b>{detailDoc.name}</p>
             <p><b>项目ID：</b>{detailDoc.project_id}</p>
             <p><b>模块ID：</b>{detailDoc.module_id ?? "-"}</p>
-            <p><b>状态：</b><Tag>{detailDoc.status}</Tag></p>
+            <p><b>状态：</b><Tag>{STATUS_TAG_MAP[detailDoc.status]?.label || detailDoc.status}</Tag></p>
             {detailDoc.supplementary_prompt && (
               <>
                 <p><b>补充提示词：</b></p>
@@ -629,7 +646,7 @@ GET /api/user/info
             </pre>
           </Space>
         )}
-      </Modal>
+      </Drawer>
 
       {/* Generate Preview Modal */}
       <Drawer

@@ -36,6 +36,13 @@ class ReportApiTestSummary(BaseModel):
     pass_rate: float
 
 
+class ReportFunctionTestSummary(BaseModel):
+    total_cases: int
+    passed_cases: int
+    failed_cases: int
+    pass_rate: float
+
+
 class ReportSceneChainSummary(BaseModel):
     total_runs: int
     passed_runs: int
@@ -67,6 +74,7 @@ class RecentSceneRun(BaseModel):
 
 class ReportSummaryResponse(BaseModel):
     overview: ReportOverview
+    function_test: ReportFunctionTestSummary
     api_test: ReportApiTestSummary
     scene_chain: ReportSceneChainSummary
     recent_api_runs: list[RecentApiRun]

@@ -74,6 +74,10 @@ class ReorderSceneStepsRequest(BaseModel):
     ordered_step_ids: list[int] = Field(..., description="排序后的步骤ID列表")
 
 
+class SceneChainExecuteRequest(BaseModel):
+    selected_step_ids: Optional[list[int]] = Field(default=None, description="只执行选中的场景步骤ID")
+
+
 class SceneExecuteStepResult(BaseModel):
     step_order: int
     case_id: int

@@ -9,7 +9,6 @@ import {
   Input,
   InputNumber,
   message,
-  Modal,
   Popconfirm,
   Row,
   Select,
@@ -26,6 +25,11 @@ import {
 import { getProjectList } from "../api/project";
 import { getRequirementList } from "../api/requirement";
 import ModuleTree from "../components/ModuleTree";
+import {
+  getStoredProjectId,
+  resolveProjectId,
+  storeProjectId,
+} from "../utils/projectSelection";
 
 function getErrorMessage(error) {
   return (
@@ -116,7 +120,7 @@ export default function FunctionCasePage() {
   const [form] = Form.useForm();
 
   const [projects, setProjects] = useState([]);
-  const [selectedProjectId, setSelectedProjectId] = useState(null);
+  const [selectedProjectId, setSelectedProjectId] = useState(getStoredProjectId);
   const [selectedModuleId, setSelectedModuleId] = useState(null);
   const [includeChildren, setIncludeChildren] = useState(false);
   const [requirements, setRequirements] = useState([]);
@@ -154,10 +158,14 @@ export default function FunctionCasePage() {
   }, []);
 
   useEffect(() => {
-    if (projects.length > 0 && selectedProjectId == null) {
-      setSelectedProjectId(projects[0].id);
+    if (projects.length > 0) {
+      const nextProjectId = resolveProjectId(projects, selectedProjectId);
+      if (nextProjectId !== selectedProjectId) {
+        setSelectedProjectId(nextProjectId);
+        storeProjectId(nextProjectId);
+      }
     }
-  }, [projects]);
+  }, [projects, selectedProjectId]);
 
   useEffect(() => {
     if (selectedProjectId) {
@@ -201,6 +209,7 @@ export default function FunctionCasePage() {
 
   const handleProjectChange = (value) => {
     setSelectedProjectId(value);
+    storeProjectId(value);
     setSelectedModuleId(null);
     setSelectedRequirementId(FILTER_ALL);
     fetchRequirements(value);
@@ -501,7 +510,7 @@ export default function FunctionCasePage() {
         title={modalMode === "create" ? "新增功能测试用例" : "编辑功能测试用例"}
         placement="right"
         width="50vw"
-        rootClassName="standard-drawer"
+        rootClassName="standard-drawer function-case-drawer"
         open={modalOpen}
         onClose={closeModal}
         destroyOnClose
@@ -530,11 +539,6 @@ export default function FunctionCasePage() {
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item name="module_id" label="归属模块">
-                <InputNumber placeholder="模块ID（可选）" style={{ width: "100%" }} />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
               <Form.Item name="requirement_id" label="关联需求">
                 <Select
                   placeholder="请选择需求（可选）"
@@ -542,6 +546,11 @@ export default function FunctionCasePage() {
                   options={requirements.map((r) => ({ label: r.title, value: r.id }))}
                   popupClassName="standard-select-dropdown"
                 />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="module_id" label="归属模块">
+                <InputNumber placeholder="模块ID（可选）" style={{ width: "100%" }} />
               </Form.Item>
             </Col>
           </Row>
@@ -576,13 +585,22 @@ export default function FunctionCasePage() {
             </Col>
           </Row>
 
+          <Form.Item name="status" label="状态">
+            <Select options={STATUS_OPTIONS} popupClassName="standard-select-dropdown" />
+          </Form.Item>
+
           <Form.Item name="precondition" label="前置条件">
-            <Input.TextArea rows={1} placeholder="前置条件（可选）" />
+            <Input.TextArea
+              className="function-case-compact-textarea"
+              rows={1}
+              placeholder="前置条件（可选）"
+            />
           </Form.Item>
 
           <Form.Item name="steps_json" label="测试步骤 (JSON)">
             <Input.TextArea
-              rows={3}
+              className="function-case-steps-textarea"
+              rows={6}
               placeholder='["步骤1", "步骤2", "步骤3"]'
             />
           </Form.Item>
@@ -598,29 +616,28 @@ export default function FunctionCasePage() {
             <Input.TextArea rows={3} placeholder="预期结果（可选）" />
           </Form.Item>
 
-          <Form.Item name="status" label="状态">
-            <Select options={STATUS_OPTIONS} popupClassName="standard-select-dropdown" />
-          </Form.Item>
-
           <Form.Item name="remark" label="备注">
-            <Input.TextArea rows={2} placeholder="备注（可选）" />
+            <Input.TextArea
+              className="function-case-compact-textarea"
+              rows={1}
+              placeholder="备注（可选）"
+            />
           </Form.Item>
         </Form>
       </Drawer>
 
-      <Modal
+      <Drawer
         title="功能用例详情"
+        placement="right"
+        width="50vw"
+        rootClassName="standard-drawer standard-detail-drawer"
         open={detailModalOpen}
-        onCancel={() => setDetailModalOpen(false)}
-        footer={[
-          <Button key="close" onClick={() => setDetailModalOpen(false)}>
-            关闭
-          </Button>,
-        ]}
-        width={700}
+        onClose={() => setDetailModalOpen(false)}
+        footer={null}
+        destroyOnClose
       >
         {detailCase && (
-          <div style={{ maxHeight: "60vh", overflow: "auto" }}>
+          <div>
             <p><strong>用例编号：</strong>{detailCase.case_code || "-"}</p>
             <p><strong>用例名称：</strong>{detailCase.case_name}</p>
             <p><strong>用例类型：</strong>{detailCase.case_type || "-"}</p>
@@ -656,7 +673,7 @@ export default function FunctionCasePage() {
             )}
           </div>
         )}
-      </Modal>
+      </Drawer>
     </Space>
     </div>
   );

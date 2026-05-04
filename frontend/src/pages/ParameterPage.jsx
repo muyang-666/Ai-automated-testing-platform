@@ -12,7 +12,7 @@ export default function ParameterPage() {
     try {
       const res = await getParameterFile();
       setContent(res.data.content || "");
-    } catch (error) {
+    } catch {
       message.error("读取参数文件失败");
     }
   };
@@ -34,7 +34,7 @@ export default function ParameterPage() {
   }, []);
 
   return (
-    <Card title="参数文件管理">
+    <Card title="参数文件管理" className="parameter-page">
       <TextArea
         rows={20}
         value={content}

@@ -3,6 +3,7 @@ import {
   Button,
   Card,
   Collapse,
+  Drawer,
   Form,
   Input,
   InputNumber,
@@ -22,6 +23,7 @@ import {
   getCaseList,
   getSceneSteps,
   reorderSceneSteps,
+  runSceneChain,
   updateSceneStep,
 } from "../api/scene";
 
@@ -74,6 +76,10 @@ export default function SceneStepPage({ scene, onBack }) {
   const [steps, setSteps] = useState([]);
   const [caseOptions, setCaseOptions] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [selectedStepIds, setSelectedStepIds] = useState([]);
+  const [chainRunning, setChainRunning] = useState(false);
+  const [chainResultOpen, setChainResultOpen] = useState(false);
+  const [chainResult, setChainResult] = useState(null);
 
   // Add form state
   const [selectedCaseId, setSelectedCaseId] = useState(undefined);
@@ -95,6 +101,9 @@ export default function SceneStepPage({ scene, onBack }) {
     try {
       const res = await getSceneSteps(scene.id);
       setSteps(res.data || []);
+      setSelectedStepIds((prev) =>
+        prev.filter((id) => (res.data || []).some((step) => step.id === id))
+      );
     } catch (error) {
       message.error(getErrorMessage(error));
     } finally {
@@ -104,7 +113,10 @@ export default function SceneStepPage({ scene, onBack }) {
 
   const loadCases = async () => {
     try {
-      const res = await getCaseList();
+      const params = {};
+      if (scene.project_id) params.project_id = scene.project_id;
+      if (scene.module_id) params.module_id = scene.module_id;
+      const res = await getCaseList(params);
       setCaseOptions(res.data || []);
     } catch (error) {
       message.error(getErrorMessage(error));
@@ -240,6 +252,72 @@ export default function SceneStepPage({ scene, onBack }) {
     }
   };
 
+  const handleRunSelectedChain = async () => {
+    if (selectedStepIds.length === 0) {
+      message.warning("请先选择要串联执行的用例");
+      return;
+    }
+    setChainRunning(true);
+    try {
+      const res = await runSceneChain(scene.id, {
+        selected_step_ids: selectedStepIds,
+      });
+      setChainResult(res.data);
+      setChainResultOpen(true);
+      message.success("串联执行完成");
+    } catch (error) {
+      message.error(
+        error?.response?.data?.detail ||
+          error?.response?.data?.message ||
+          error?.message ||
+          "串联执行失败"
+      );
+    } finally {
+      setChainRunning(false);
+    }
+  };
+
+  const chainColumns = [
+    { title: "步骤", dataIndex: "step_order", width: 70 },
+    { title: "名称", dataIndex: "step_name", ellipsis: true },
+    { title: "用例ID", dataIndex: "case_id", width: 90 },
+    {
+      title: "状态",
+      dataIndex: "status",
+      width: 90,
+      render: (v) => {
+        const map = { passed: "success", failed: "error", error: "error", skipped: "warning" };
+        return <Tag color={map[v] || "default"}>{v}</Tag>;
+      },
+    },
+    {
+      title: "响应码",
+      dataIndex: "response_status_code",
+      width: 90,
+      render: (v) => v ?? "-",
+    },
+    {
+      title: "提取变量",
+      dataIndex: "extracted_variables",
+      width: 170,
+      ellipsis: true,
+      render: (v) => (v && Object.keys(v).length > 0 ? JSON.stringify(v) : "-"),
+    },
+    {
+      title: "耗时",
+      dataIndex: "duration_ms",
+      width: 90,
+      render: (v) => (v != null ? `${v}ms` : "-"),
+    },
+    {
+      title: "错误",
+      dataIndex: "error_message",
+      width: 170,
+      ellipsis: true,
+      render: (v) => (v ? <span style={{ color: "#b00020" }}>{v}</span> : "-"),
+    },
+  ];
+
   const columns = [
     { title: "步骤", dataIndex: "step_order", width: 60 },
     { title: "名称", dataIndex: "step_name", width: 120, ellipsis: true, render: (v) => v || "-" },
@@ -326,13 +404,23 @@ export default function SceneStepPage({ scene, onBack }) {
   ];
 
   return (
-    <Card>
+    <Card className="scene-page scene-step-page">
       <Space direction="vertical" style={{ width: "100%" }} size={16}>
         <Space style={{ justifyContent: "space-between", width: "100%" }}>
           <Title level={4} style={{ margin: 0 }}>
             管理场景用例：{scene.name}
           </Title>
-          <Button onClick={onBack}>返回场景列表</Button>
+          <Space>
+            <Button
+              type="primary"
+              className="standard-primary-btn"
+              loading={chainRunning}
+              onClick={handleRunSelectedChain}
+            >
+              串联执行选中用例
+            </Button>
+            <Button onClick={onBack}>返回场景列表</Button>
+          </Space>
         </Space>
 
         {/* 新增步骤区域 */}
@@ -365,9 +453,14 @@ export default function SceneStepPage({ scene, onBack }) {
             />
             <Space>
               <span>启用：</span>
-              <Switch checked={enabled} onChange={setEnabled} />
+              <Switch className="scene-enable-switch" checked={enabled} onChange={setEnabled} />
             </Space>
-            <Button type="primary" loading={adding} onClick={handleAddStep}>
+            <Button
+              type="primary"
+              className="scene-add-step-btn"
+              loading={adding}
+              onClick={handleAddStep}
+            >
               添加到场景
             </Button>
           </Space>
@@ -421,6 +514,10 @@ export default function SceneStepPage({ scene, onBack }) {
           loading={loading}
           dataSource={steps}
           columns={columns}
+          rowSelection={{
+            selectedRowKeys: selectedStepIds,
+            onChange: setSelectedStepIds,
+          }}
           pagination={false}
           scroll={{ x: 1200 }}
           size="small"
@@ -469,7 +566,7 @@ export default function SceneStepPage({ scene, onBack }) {
           </Form.Item>
 
           <Form.Item name="enabled" label="启用" valuePropName="checked">
-            <Switch />
+            <Switch className="scene-enable-switch" />
           </Form.Item>
 
           <Form.Item name="extract_rules_json" label="变量提取规则（extract_rules_json）">
@@ -494,6 +591,53 @@ export default function SceneStepPage({ scene, onBack }) {
           </Form.Item>
         </Form>
       </Modal>
+
+      <Drawer
+        title={chainResult ? `串联执行结果：${chainResult.scene_name}` : "串联执行结果"}
+        placement="right"
+        width="50vw"
+        rootClassName="standard-drawer scene-result-drawer"
+        open={chainResultOpen}
+        onClose={() => {
+          setChainResultOpen(false);
+          setChainResult(null);
+        }}
+        footer={null}
+        destroyOnClose
+      >
+        {chainResult && (
+          <Space direction="vertical" style={{ width: "100%" }} size={16}>
+            <Space wrap>
+              <Tag color={chainResult.status === "passed" ? "success" : "error"}>
+                {chainResult.status}
+              </Tag>
+              <span>Run ID：{chainResult.scene_run_id}</span>
+              <span>总步骤：{chainResult.total_steps}</span>
+              <span>通过：{chainResult.passed_steps}</span>
+              <span>失败：{chainResult.failed_steps}</span>
+              <span>跳过：{chainResult.skipped_steps}</span>
+            </Space>
+
+            {chainResult.context && Object.keys(chainResult.context).length > 0 && (
+              <div>
+                <strong>运行时上下文：</strong>
+                <pre className="scene-result-pre">
+                  {JSON.stringify(chainResult.context, null, 2)}
+                </pre>
+              </div>
+            )}
+
+            <Table
+              rowKey="step_order"
+              dataSource={chainResult.steps || []}
+              columns={chainColumns}
+              pagination={false}
+              size="small"
+              scroll={{ x: 900 }}
+            />
+          </Space>
+        )}
+      </Drawer>
     </Card>
   );
 }

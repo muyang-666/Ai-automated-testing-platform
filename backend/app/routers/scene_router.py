@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.schemas.scene import (
     ReorderSceneStepsRequest,
+    SceneChainExecuteRequest,
     SceneCreate,
     SceneExecuteResponse,
     SceneResponse,
@@ -49,6 +50,7 @@ def create_scene_api(data: SceneCreate, db: Session = Depends(get_db)):
 def list_scenes_api(
     project_id: Optional[int] = Query(default=None, description="按项目筛选"),
     module_id: Optional[int] = Query(default=None, description="按模块筛选"),
+    unbound_module: bool = Query(default=False, description="仅查询未绑定模块的场景"),
     include_children: bool = Query(default=False, description="是否包含子模块"),
     keyword: Optional[str] = Query(default=None, description="按名称或描述模糊搜索"),
     status: Optional[str] = Query(default=None, description="按状态筛选"),
@@ -58,6 +60,7 @@ def list_scenes_api(
         db,
         project_id=project_id,
         module_id=module_id,
+        unbound_module=unbound_module,
         include_children=include_children,
         keyword=keyword,
         status=status,
@@ -165,9 +168,14 @@ def execute_scene_api(scene_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{scene_id}/run-chain", summary="真实串联执行场景")
-def run_chain_api(scene_id: int, db: Session = Depends(get_db)):
+def run_chain_api(
+    scene_id: int,
+    data: SceneChainExecuteRequest | None = None,
+    db: Session = Depends(get_db),
+):
     try:
-        return execute_scene_chain(db, scene_id)
+        selected_step_ids = data.selected_step_ids if data else None
+        return execute_scene_chain(db, scene_id, selected_step_ids=selected_step_ids)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:

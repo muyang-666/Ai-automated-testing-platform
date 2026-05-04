@@ -2,25 +2,35 @@ import { useEffect, useState } from "react";
 import {
   Button,
   Card,
+  Checkbox,
+  Col,
   Drawer,
   Form,
   Input,
+  InputNumber,
   message,
-  Modal,
   Popconfirm,
+  Row,
+  Select,
   Space,
   Table,
   Tag,
   Typography,
 } from "antd";
+import { getProjectList } from "../api/project";
 import {
   createScene,
   deleteScene,
   executeScene,
   getSceneList,
-  runSceneChain,
   updateScene,
 } from "../api/scene";
+import ModuleTree from "../components/ModuleTree";
+import {
+  getStoredProjectId,
+  resolveProjectId,
+  storeProjectId,
+} from "../utils/projectSelection";
 import SceneStepPage from "./SceneStepPage";
 
 const { Title, Text } = Typography;
@@ -28,6 +38,11 @@ const { Title, Text } = Typography;
 export default function ScenePage() {
   const [scenes, setScenes] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [projects, setProjects] = useState([]);
+  const [selectedProjectId, setSelectedProjectId] = useState(getStoredProjectId);
+  const [selectedModuleId, setSelectedModuleId] = useState(null);
+  const [unboundModuleOnly, setUnboundModuleOnly] = useState(false);
+  const [includeChildren, setIncludeChildren] = useState(false);
 
   const [form] = Form.useForm();
   const [modalOpen, setModalOpen] = useState(false);
@@ -38,14 +53,27 @@ export default function ScenePage() {
   const [executeModalOpen, setExecuteModalOpen] = useState(false);
   const [executeResult, setExecuteResult] = useState(null);
 
-  const [chainRunning, setChainRunning] = useState(false);
-  const [chainResultModalOpen, setChainResultModalOpen] = useState(false);
-  const [chainResult, setChainResult] = useState(null);
+  const loadProjects = async () => {
+    try {
+      const res = await getProjectList();
+      setProjects(res.data || []);
+    } catch {
+      message.error("获取项目列表失败");
+    }
+  };
 
   const loadScenes = async () => {
     try {
       setLoading(true);
-      const res = await getSceneList();
+      const params = {};
+      if (selectedProjectId) params.project_id = selectedProjectId;
+      if (unboundModuleOnly) {
+        params.unbound_module = true;
+      } else if (selectedModuleId != null) {
+        params.module_id = selectedModuleId;
+        if (includeChildren) params.include_children = true;
+      }
+      const res = await getSceneList(params);
       setScenes(res.data || []);
     } catch {
       message.error("读取场景列表失败");
@@ -55,12 +83,53 @@ export default function ScenePage() {
   };
 
   useEffect(() => {
-    loadScenes();
+    loadProjects();
   }, []);
+
+  useEffect(() => {
+    if (projects.length > 0) {
+      const nextProjectId = resolveProjectId(projects, selectedProjectId);
+      if (nextProjectId !== selectedProjectId) {
+        setSelectedProjectId(nextProjectId);
+        storeProjectId(nextProjectId);
+      }
+    }
+  }, [projects, selectedProjectId]);
+
+  useEffect(() => {
+    loadScenes();
+  }, [selectedProjectId, selectedModuleId, unboundModuleOnly, includeChildren]);
+
+  const handleProjectChange = (value) => {
+    setSelectedProjectId(value);
+    storeProjectId(value);
+    setSelectedModuleId(null);
+    setUnboundModuleOnly(false);
+  };
+
+  const handleModuleSelect = (moduleId) => {
+    setSelectedModuleId(moduleId);
+    setUnboundModuleOnly(false);
+  };
+
+  const handleModuleChange = () => {
+    loadScenes();
+  };
+
+  const handleUnboundModuleClick = () => {
+    setSelectedModuleId(null);
+    setIncludeChildren(false);
+    setUnboundModuleOnly(true);
+  };
 
   const openCreateModal = () => {
     setEditingScene(null);
     form.resetFields();
+    form.setFieldsValue({
+      project_id: selectedProjectId || undefined,
+      module_id: selectedModuleId || undefined,
+      status: "active",
+    });
     setModalOpen(true);
   };
 
@@ -69,6 +138,9 @@ export default function ScenePage() {
     form.setFieldsValue({
       name: record.name,
       description: record.description,
+      project_id: record.project_id,
+      module_id: record.module_id,
+      status: record.status,
     });
     setModalOpen(true);
   };
@@ -106,25 +178,6 @@ export default function ScenePage() {
     }
   };
 
-  const handleRunChain = async (sceneId) => {
-    setChainRunning(true);
-    try {
-      const res = await runSceneChain(sceneId);
-      setChainResult(res.data);
-      setChainResultModalOpen(true);
-      message.success("串联执行完成");
-    } catch (error) {
-      message.error(
-        error?.response?.data?.detail ||
-        error?.response?.data?.message ||
-        error?.message ||
-        "串联执行失败"
-      );
-    } finally {
-      setChainRunning(false);
-    }
-  };
-
   const handleExecute = async (sceneId) => {
     try {
       const res = await executeScene(sceneId);
@@ -150,7 +203,7 @@ export default function ScenePage() {
       title: "场景ID",
       dataIndex: "id",
       key: "id",
-      width: 90,
+      width: 180,
     },
     {
       title: "场景名称",
@@ -169,10 +222,9 @@ export default function ScenePage() {
           <Button
             size="small"
             className="standard-action-btn"
-            loading={chainRunning}
-            onClick={() => handleRunChain(record.id)}
+            onClick={() => setCurrentScene(record)}
           >
-            串联执行
+            选择用例串联执行
           </Button>
         </Space>
       ),
@@ -253,26 +305,73 @@ export default function ScenePage() {
   ];
 
   return (
-    <div className="standard-page">
-      <Card className="standard-list-card">
-        <Space
-          style={{ width: "100%", justifyContent: "space-between", marginBottom: 16 }}
-        >
-          <Title level={4} style={{ margin: 0 }}>
-            场景管理
-          </Title>
-          <Button type="primary" className="standard-primary-btn" onClick={openCreateModal}>
-            新增场景
-          </Button>
-        </Space>
+    <div className="standard-page scene-page">
+      <Space direction="vertical" size="large" style={{ width: "100%" }}>
+        <Card className="standard-toolbar-card">
+          <Row justify="space-between" align="middle">
+            <Col>
+              <Space>
+                <span className="standard-project-label">项目：</span>
+                <Select
+                  placeholder="请选择项目"
+                  value={selectedProjectId}
+                  onChange={handleProjectChange}
+                  options={projects.map((p) => ({ label: p.name, value: p.id }))}
+                  style={{ width: 220 }}
+                  popupClassName="standard-select-dropdown"
+                />
+              </Space>
+            </Col>
+            <Col>
+              <Button type="primary" className="standard-primary-btn" onClick={openCreateModal}>
+                新增场景
+              </Button>
+            </Col>
+          </Row>
+        </Card>
 
-        <Table
-          rowKey="id"
-          loading={loading}
-          dataSource={scenes}
-          columns={columns}
-        />
-      </Card>
+        <div className="standard-layout">
+          <div className="standard-module-shell">
+            <ModuleTree
+              projectId={selectedProjectId}
+              selectedModuleId={selectedModuleId}
+              onSelect={handleModuleSelect}
+              onChange={handleModuleChange}
+              createButtonLabel="新增模块"
+              createButtonClassName="requirement-module-header-btn"
+              createButtonIcon={null}
+              headerExtra={
+                <Button
+                  className="requirement-module-header-btn"
+                  block
+                  onClick={handleUnboundModuleClick}
+                >
+                  无模块用例
+                </Button>
+              }
+            />
+            <Checkbox
+              checked={includeChildren}
+              onChange={(e) => setIncludeChildren(e.target.checked)}
+              style={{ marginTop: 8 }}
+            >
+              包含子模块
+            </Checkbox>
+          </div>
+
+          <div className="standard-list-panel">
+            <Card title="场景列表" className="standard-list-card">
+              <Table
+                rowKey="id"
+                loading={loading}
+                dataSource={scenes}
+                columns={columns}
+                scroll={{ x: 1000 }}
+              />
+            </Card>
+          </div>
+        </div>
+      </Space>
 
       <Drawer
         title={editingScene ? "编辑场景" : "新增场景"}
@@ -304,6 +403,24 @@ export default function ScenePage() {
         }
       >
         <Form form={form} layout="vertical">
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item label="归属项目" name="project_id">
+                <Select
+                  placeholder="请选择项目"
+                  allowClear
+                  options={projects.map((p) => ({ label: p.name, value: p.id }))}
+                  popupClassName="standard-select-dropdown"
+                />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item label="归属模块" name="module_id">
+                <InputNumber placeholder="模块ID（可选）" style={{ width: "100%" }} />
+              </Form.Item>
+            </Col>
+          </Row>
+
           <Form.Item
             label="场景名称"
             name="name"
@@ -318,25 +435,18 @@ export default function ScenePage() {
         </Form>
       </Drawer>
 
-      <Modal
+      <Drawer
         title={executeResult ? `场景执行结果：${executeResult.scene_name}` : "场景执行结果"}
+        placement="right"
+        width="50vw"
+        rootClassName="standard-drawer scene-result-drawer"
         open={executeModalOpen}
-        onCancel={() => {
+        onClose={() => {
           setExecuteModalOpen(false);
           setExecuteResult(null);
         }}
-        footer={[
-          <Button
-            key="close"
-            onClick={() => {
-              setExecuteModalOpen(false);
-              setExecuteResult(null);
-            }}
-          >
-            关闭
-          </Button>,
-        ]}
-        width={900}
+        footer={null}
+        destroyOnClose
       >
         {executeResult && (
           <Space direction="vertical" style={{ width: "100%" }} size={16}>
@@ -360,115 +470,7 @@ export default function ScenePage() {
             />
           </Space>
         )}
-      </Modal>
-
-      <Modal
-        title={chainResult ? `串联执行结果：${chainResult.scene_name}` : "串联执行结果"}
-        open={chainResultModalOpen}
-        onCancel={() => {
-          setChainResultModalOpen(false);
-          setChainResult(null);
-        }}
-        footer={[
-          <Button
-            key="close"
-            onClick={() => {
-              setChainResultModalOpen(false);
-              setChainResult(null);
-            }}
-          >
-            关闭
-          </Button>,
-        ]}
-        width={900}
-      >
-        {chainResult && (
-          <Space direction="vertical" style={{ width: "100%" }} size={16}>
-            <Space>
-              <Tag
-                color={
-                  chainResult.status === "passed" ? "success" : "error"
-                }
-              >
-                {chainResult.status}
-              </Tag>
-              <Text>Run ID：{chainResult.scene_run_id}</Text>
-              <Text>总步骤：{chainResult.total_steps}</Text>
-              <Text>通过：{chainResult.passed_steps}</Text>
-              <Text>失败：{chainResult.failed_steps}</Text>
-              <Text>跳过：{chainResult.skipped_steps}</Text>
-            </Space>
-
-            {chainResult.context && Object.keys(chainResult.context).length > 0 && (
-              <div>
-                <Text strong>运行时上下文：</Text>
-                <pre
-                  style={{
-                    background: "#f5f5f5",
-                    padding: 12,
-                    borderRadius: 4,
-                    maxHeight: 200,
-                    overflow: "auto",
-                    fontSize: 12,
-                  }}
-                >
-                  {JSON.stringify(chainResult.context, null, 2)}
-                </pre>
-              </div>
-            )}
-
-            <Table
-              rowKey="step_order"
-              dataSource={chainResult.steps || []}
-              columns={[
-                { title: "步骤", dataIndex: "step_order", width: 60 },
-                { title: "名称", dataIndex: "step_name", ellipsis: true },
-                { title: "用例ID", dataIndex: "case_id", width: 80 },
-                {
-                  title: "状态",
-                  dataIndex: "status",
-                  width: 80,
-                  render: (v) => {
-                    const map = { passed: "success", failed: "error", error: "error", skipped: "warning" };
-                    return <Tag color={map[v] || "default"}>{v}</Tag>;
-                  },
-                },
-                {
-                  title: "响应码",
-                  dataIndex: "response_status_code",
-                  width: 80,
-                  render: (v) => v ?? "-",
-                },
-                {
-                  title: "提取变量",
-                  dataIndex: "extracted_variables",
-                  width: 160,
-                  ellipsis: true,
-                  render: (v) =>
-                    v && Object.keys(v).length > 0 ? JSON.stringify(v) : "-",
-                },
-                {
-                  title: "耗时",
-                  dataIndex: "duration_ms",
-                  width: 80,
-                  render: (v) => (v != null ? `${v}ms` : "-"),
-                },
-                {
-                  title: "错误",
-                  dataIndex: "error_message",
-                  width: 160,
-                  ellipsis: true,
-                  render: (v) =>
-                    v ? <span style={{ color: "red" }}>{v}</span> : "-",
-                },
-              ]}
-              pagination={false}
-              size="small"
-              scroll={{ x: 900 }}
-            />
-          </Space>
-        )}
-      </Modal>
+      </Drawer>
     </div>
   );
 }
