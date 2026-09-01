@@ -4,7 +4,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.models.user import User
+from app.routers.dependencies import get_current_user
 from app.schemas.api_case import APICaseCreate, APICaseResponse, APICaseUpdate
+from app.services.permission_service import (
+    allowed_project_ids_for_query,
+    require_project_read,
+    require_project_write,
+)
 from app.services.case_service import (
     create_case,
     delete_case,
@@ -17,7 +24,12 @@ router = APIRouter(prefix="/cases", tags=["Cases"])
 
 
 @router.post("", response_model=APICaseResponse, summary="创建测试用例")
-def create_api_case(case_data: APICaseCreate, db: Session = Depends(get_db)):
+def create_api_case(
+    case_data: APICaseCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    require_project_write(db, current_user, case_data.project_id)
     return create_case(db, case_data)
 
 
@@ -32,7 +44,10 @@ def list_api_cases(
     priority: Optional[str] = Query(default=None, description="按优先级筛选"),
     status: Optional[str] = Query(default=None, description="按状态筛选"),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    if project_id is not None:
+        require_project_read(db, current_user, project_id)
     return get_case_list(
         db,
         project_id=project_id,
@@ -43,19 +58,37 @@ def list_api_cases(
         source=source,
         priority=priority,
         status=status,
+        allowed_project_ids=allowed_project_ids_for_query(db, current_user),
     )
 
 
 @router.get("/{case_id}", response_model=APICaseResponse, summary="查询测试用例详情")
-def get_api_case(case_id: int, db: Session = Depends(get_db)):
+def get_api_case(
+    case_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     case = get_case_by_id(db, case_id)
     if not case:
         raise HTTPException(status_code=404, detail="测试用例不存在")
+    require_project_read(db, current_user, case.project_id)
     return case
 
 
 @router.put("/{case_id}", response_model=APICaseResponse, summary="更新测试用例")
-def update_api_case(case_id: int, case_data: APICaseUpdate, db: Session = Depends(get_db)):
+def update_api_case(
+    case_id: int,
+    case_data: APICaseUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    existing = get_case_by_id(db, case_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="测试用例不存在")
+    require_project_write(db, current_user, existing.project_id)
+    new_project_id = getattr(case_data, "project_id", None)
+    if new_project_id is not None and new_project_id != existing.project_id:
+        require_project_write(db, current_user, new_project_id)
     case = update_case(db, case_id, case_data)
     if not case:
         raise HTTPException(status_code=404, detail="测试用例不存在")
@@ -63,7 +96,15 @@ def update_api_case(case_id: int, case_data: APICaseUpdate, db: Session = Depend
 
 
 @router.delete("/{case_id}", summary="删除测试用例")
-def delete_api_case(case_id: int, db: Session = Depends(get_db)):
+def delete_api_case(
+    case_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    existing = get_case_by_id(db, case_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="测试用例不存在")
+    require_project_write(db, current_user, existing.project_id)
     success = delete_case(db, case_id)
     if not success:
         raise HTTPException(status_code=404, detail="测试用例不存在")

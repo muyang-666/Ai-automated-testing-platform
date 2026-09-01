@@ -11,6 +11,7 @@ class UserCreate(BaseModel):
     email: str | None = Field(default=None, max_length=100)
     status: Literal["active", "disabled"] = "active"
     role_ids: list[int] = Field(default_factory=list)
+    project_ids: list[int] = Field(default_factory=list)
 
 
 class UserUpdate(BaseModel):
@@ -18,10 +19,15 @@ class UserUpdate(BaseModel):
     email: str | None = Field(default=None, max_length=100)
     status: Literal["active", "disabled"] | None = None
     password: str | None = Field(default=None, min_length=1)
+    project_ids: list[int] | None = None
 
 
 class UserRoleUpdate(BaseModel):
     role_ids: list[int] = Field(default_factory=list)
+
+
+class UserProjectPermissionUpdate(BaseModel):
+    project_ids: list[int] = Field(default_factory=list)
 
 
 class UserResponse(BaseModel):
@@ -31,6 +37,7 @@ class UserResponse(BaseModel):
     email: str | None = None
     status: str
     roles: list[str]
+    project_ids: list[int] = Field(default_factory=list)
     last_login_at: datetime | None = None
     created_at: datetime
     updated_at: datetime

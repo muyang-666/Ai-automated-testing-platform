@@ -9,15 +9,21 @@ from sqlalchemy.orm import Session
 from app.models.auth_session import AuthSession
 from app.models.role import Role
 from app.models.user import User
+from app.models.user_project_permission import UserProjectPermission
 from app.models.user_role import UserRole
 from app.schemas.auth import LoginRequest
 
 TOKEN_EXPIRE_DAYS = 7
+SYSTEM_ADMIN_ROLE_CODE = "system_admin"
+ADMIN_ROLE_CODE = "admin"
+TESTER_ROLE_CODE = "tester"
+VIEWER_ROLE_CODE = "viewer"
 
 DEFAULT_ROLES = [
-    {"code": "admin", "name": "管理员", "description": "系统管理员", "is_system": True},
-    {"code": "tester", "name": "测试人员", "description": "测试执行和用例维护人员", "is_system": True},
-    {"code": "viewer", "name": "只读用户", "description": "只读查看人员", "is_system": True},
+    {"code": SYSTEM_ADMIN_ROLE_CODE, "name": "系统管理员", "description": "唯一最高权限账号", "is_system": True},
+    {"code": ADMIN_ROLE_CODE, "name": "管理员", "description": "用户和项目权限管理人员", "is_system": True},
+    {"code": TESTER_ROLE_CODE, "name": "测试人员", "description": "按授权项目执行和维护测试资产", "is_system": True},
+    {"code": VIEWER_ROLE_CODE, "name": "只读用户", "description": "只读查看人员", "is_system": True},
 ]
 
 
@@ -72,6 +78,15 @@ def get_user_role_codes(db: Session, user_id: int) -> list[str]:
 
 
 def build_current_user_response(db: Session, user: User) -> dict:
+    project_rows = (
+        db.query(UserProjectPermission.project_id)
+        .filter(
+            UserProjectPermission.user_id == user.id,
+            UserProjectPermission.can_operate == True,
+        )
+        .order_by(UserProjectPermission.project_id.asc())
+        .all()
+    )
     return {
         "id": user.id,
         "username": user.username,
@@ -79,6 +94,7 @@ def build_current_user_response(db: Session, user: User) -> dict:
         "email": user.email,
         "status": user.status,
         "roles": get_user_role_codes(db, user.id),
+        "project_ids": [row[0] for row in project_rows],
     }
 
 
@@ -114,8 +130,16 @@ def get_current_user_by_token(db: Session, token: str) -> User:
 
 def require_admin(db: Session, token: str) -> User:
     user = get_current_user_by_token(db, token)
-    if "admin" not in get_user_role_codes(db, user.id):
+    roles = get_user_role_codes(db, user.id)
+    if SYSTEM_ADMIN_ROLE_CODE not in roles and ADMIN_ROLE_CODE not in roles:
         raise HTTPException(status_code=403, detail="需要管理员权限")
+    return user
+
+
+def require_system_admin(db: Session, token: str) -> User:
+    user = get_current_user_by_token(db, token)
+    if SYSTEM_ADMIN_ROLE_CODE not in get_user_role_codes(db, user.id):
+        raise HTTPException(status_code=403, detail="需要系统管理员权限")
     return user
 
 
@@ -172,6 +196,19 @@ def logout_by_token(db: Session, token: str) -> dict:
     return {"message": "退出登录成功"}
 
 
+def add_user_role_if_missing(db: Session, user_id: int, role_id: int) -> None:
+    existed = (
+        db.query(UserRole.id)
+        .filter(
+            UserRole.user_id == user_id,
+            UserRole.role_id == role_id,
+        )
+        .first()
+    )
+    if not existed:
+        db.add(UserRole(user_id=user_id, role_id=role_id))
+
+
 def init_default_auth_data(db: Session) -> None:
     role_map = {}
     for role_data in DEFAULT_ROLES:
@@ -182,6 +219,7 @@ def init_default_auth_data(db: Session) -> None:
             db.flush()
         role_map[role.code] = role
 
+    system_admin_exists = False
     if db.query(User).count() == 0:
         salt, password_hash = hash_password("123456")
         admin_user = User(
@@ -194,6 +232,42 @@ def init_default_auth_data(db: Session) -> None:
         )
         db.add(admin_user)
         db.flush()
-        db.add(UserRole(user_id=admin_user.id, role_id=role_map["admin"].id))
+        add_user_role_if_missing(db, admin_user.id, role_map[SYSTEM_ADMIN_ROLE_CODE].id)
+        system_admin_exists = True
+
+    system_admin_role = role_map[SYSTEM_ADMIN_ROLE_CODE]
+    if not system_admin_exists:
+        system_admin_exists = (
+            db.query(User)
+            .join(UserRole, UserRole.user_id == User.id)
+            .filter(
+                UserRole.role_id == system_admin_role.id,
+                User.is_deleted == False,
+                User.status == "active",
+            )
+            .first()
+            is not None
+        )
+
+    if not system_admin_exists:
+        fallback_user = (
+            db.query(User)
+            .join(UserRole, UserRole.user_id == User.id)
+            .join(Role, Role.id == UserRole.role_id)
+            .filter(
+                User.is_deleted == False,
+                User.status == "active",
+                Role.code == ADMIN_ROLE_CODE,
+            )
+            .order_by(User.id.asc())
+            .first()
+        ) or (
+            db.query(User)
+            .filter(User.is_deleted == False, User.status == "active")
+            .order_by(User.id.asc())
+            .first()
+        )
+        if fallback_user:
+            add_user_role_if_missing(db, fallback_user.id, system_admin_role.id)
 
     db.commit()

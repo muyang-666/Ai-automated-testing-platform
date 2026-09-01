@@ -26,6 +26,7 @@ import {
   runSceneChain,
   updateSceneStep,
 } from "../api/scene";
+import { canOperateProject } from "../utils/authPermissions";
 
 const { Title } = Typography;
 
@@ -73,6 +74,7 @@ const JSON_PLACEHOLDERS = {
 };
 
 export default function SceneStepPage({ scene, onBack }) {
+  const canOperateScene = canOperateProject(scene?.project_id);
   const [steps, setSteps] = useState([]);
   const [caseOptions, setCaseOptions] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -371,35 +373,38 @@ export default function SceneStepPage({ scene, onBack }) {
     {
       title: "操作",
       width: 290,
-      render: (_, record, index) => (
-        <Space size="small">
-          <Button size="small" onClick={() => openEditModal(record)}>
-            编辑
-          </Button>
-          <Popconfirm
-            title="确定删除这个步骤吗？"
-            onConfirm={() => handleDeleteStep(record.id)}
-          >
-            <Button danger size="small">
-              删除
+      render: (_, record, index) =>
+        canOperateScene ? (
+          <Space size="small">
+            <Button size="small" onClick={() => openEditModal(record)}>
+              编辑
             </Button>
-          </Popconfirm>
-          <Button
-            size="small"
-            disabled={index === 0}
-            onClick={() => handleMove(record.id, "up")}
-          >
-            上移
-          </Button>
-          <Button
-            size="small"
-            disabled={index === steps.length - 1}
-            onClick={() => handleMove(record.id, "down")}
-          >
-            下移
-          </Button>
-        </Space>
-      ),
+            <Popconfirm
+              title="确定删除这个步骤吗？"
+              onConfirm={() => handleDeleteStep(record.id)}
+            >
+              <Button danger size="small">
+                删除
+              </Button>
+            </Popconfirm>
+            <Button
+              size="small"
+              disabled={index === 0}
+              onClick={() => handleMove(record.id, "up")}
+            >
+              上移
+            </Button>
+            <Button
+              size="small"
+              disabled={index === steps.length - 1}
+              onClick={() => handleMove(record.id, "down")}
+            >
+              下移
+            </Button>
+          </Space>
+        ) : (
+          <Tag>只读</Tag>
+        ),
     },
   ];
 
@@ -411,19 +416,22 @@ export default function SceneStepPage({ scene, onBack }) {
             管理场景用例：{scene.name}
           </Title>
           <Space>
-            <Button
-              type="primary"
-              className="standard-primary-btn"
-              loading={chainRunning}
-              onClick={handleRunSelectedChain}
-            >
-              串联执行选中用例
-            </Button>
+            {canOperateScene && (
+              <Button
+                type="primary"
+                className="standard-primary-btn"
+                loading={chainRunning}
+                onClick={handleRunSelectedChain}
+              >
+                串联执行选中用例
+              </Button>
+            )}
             <Button onClick={onBack}>返回场景列表</Button>
           </Space>
         </Space>
 
         {/* 新增步骤区域 */}
+        {canOperateScene && (
         <Card size="small" title="新增步骤">
           <Space wrap style={{ marginBottom: 8 }}>
             <InputNumber
@@ -507,6 +515,7 @@ export default function SceneStepPage({ scene, onBack }) {
             ]}
           />
         </Card>
+        )}
 
         {/* 步骤列表 */}
         <Table

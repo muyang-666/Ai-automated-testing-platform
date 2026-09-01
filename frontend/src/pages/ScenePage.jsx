@@ -31,6 +31,7 @@ import {
   resolveProjectId,
   storeProjectId,
 } from "../utils/projectSelection";
+import { canOperateProject } from "../utils/authPermissions";
 import SceneStepPage from "./SceneStepPage";
 
 const { Title, Text } = Typography;
@@ -52,6 +53,7 @@ export default function ScenePage() {
 
   const [executeModalOpen, setExecuteModalOpen] = useState(false);
   const [executeResult, setExecuteResult] = useState(null);
+  const canOperateSelectedProject = canOperateProject(selectedProjectId);
 
   const loadProjects = async () => {
     try {
@@ -214,20 +216,23 @@ export default function ScenePage() {
       title: "执行",
       key: "result",
       width: 260,
-      render: (_, record) => (
-        <Space>
-          <Button size="small" className="standard-action-btn" onClick={() => handleExecute(record.id)}>
-            一键执行
-          </Button>
-          <Button
-            size="small"
-            className="standard-action-btn"
-            onClick={() => setCurrentScene(record)}
-          >
-            选择用例串联执行
-          </Button>
-        </Space>
-      ),
+      render: (_, record) =>
+        canOperateProject(record.project_id) ? (
+          <Space>
+            <Button size="small" className="standard-action-btn" onClick={() => handleExecute(record.id)}>
+              一键执行
+            </Button>
+            <Button
+              size="small"
+              className="standard-action-btn"
+              onClick={() => setCurrentScene(record)}
+            >
+              选择用例串联执行
+            </Button>
+          </Space>
+        ) : (
+          <Tag>只读</Tag>
+        ),
     },
     {
       title: "管理用例",
@@ -243,27 +248,30 @@ export default function ScenePage() {
       title: "操作",
       key: "action",
       width: 180,
-      render: (_, record) => (
-        <Space>
-          <Button size="small" className="standard-action-btn" onClick={() => openEditModal(record)}>
-            编辑
-          </Button>
-          <Popconfirm
-            title="确定删除这个场景吗？"
-            description="删除后不可恢复，请确认。"
-            okText="确认"
-            cancelText="取消"
-            overlayClassName="standard-popconfirm"
-            okButtonProps={{ className: "standard-popconfirm-ok" }}
-            cancelButtonProps={{ className: "standard-popconfirm-cancel" }}
-            onConfirm={() => handleDelete(record.id)}
-          >
-            <Button className="standard-delete-btn" size="small">
-              删除
+      render: (_, record) =>
+        canOperateProject(record.project_id) ? (
+          <Space>
+            <Button size="small" className="standard-action-btn" onClick={() => openEditModal(record)}>
+              编辑
             </Button>
-          </Popconfirm>
-        </Space>
-      ),
+            <Popconfirm
+              title="确定删除这个场景吗？"
+              description="删除后不可恢复，请确认。"
+              okText="确认"
+              cancelText="取消"
+              overlayClassName="standard-popconfirm"
+              okButtonProps={{ className: "standard-popconfirm-ok" }}
+              cancelButtonProps={{ className: "standard-popconfirm-cancel" }}
+              onConfirm={() => handleDelete(record.id)}
+            >
+              <Button className="standard-delete-btn" size="small">
+                删除
+              </Button>
+            </Popconfirm>
+          </Space>
+        ) : (
+          <Tag>只读</Tag>
+        ),
     },
   ];
 
@@ -323,9 +331,11 @@ export default function ScenePage() {
               </Space>
             </Col>
             <Col>
-              <Button type="primary" className="standard-primary-btn" onClick={openCreateModal}>
-                新增场景
-              </Button>
+              {canOperateSelectedProject && (
+                <Button type="primary" className="standard-primary-btn" onClick={openCreateModal}>
+                  新增场景
+                </Button>
+              )}
             </Col>
           </Row>
         </Card>

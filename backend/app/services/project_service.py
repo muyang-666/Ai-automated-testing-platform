@@ -21,8 +21,17 @@ def create_project(db: Session, project_data: ProjectCreate) -> Project:
     return db_project
 
 
-def get_project_list(db: Session, keyword: str = None, status: str = None):
+def get_project_list(
+    db: Session,
+    keyword: str = None,
+    status: str = None,
+    allowed_project_ids: list[int] | None = None,
+):
     query = db.query(Project).filter(Project.is_deleted == False)
+    if allowed_project_ids is not None:
+        if not allowed_project_ids:
+            return []
+        query = query.filter(Project.id.in_(allowed_project_ids))
     if keyword:
         query = query.filter(Project.name.contains(keyword))
     if status:
@@ -30,7 +39,12 @@ def get_project_list(db: Session, keyword: str = None, status: str = None):
     return query.order_by(Project.id.desc()).all()
 
 
-def get_project_summary_list(db: Session, keyword: str = None, status: str = None):
+def get_project_summary_list(
+    db: Session,
+    keyword: str = None,
+    status: str = None,
+    allowed_project_ids: list[int] | None = None,
+):
     api_counts = (
         db.query(
             APICase.project_id.label("project_id"),
@@ -87,6 +101,10 @@ def get_project_summary_list(db: Session, keyword: str = None, status: str = Non
         .outerjoin(scene_counts, scene_counts.c.project_id == Project.id)
         .filter(Project.is_deleted == False)
     )
+    if allowed_project_ids is not None:
+        if not allowed_project_ids:
+            return []
+        query = query.filter(Project.id.in_(allowed_project_ids))
     if keyword:
         query = query.filter(Project.name.contains(keyword))
     if status:

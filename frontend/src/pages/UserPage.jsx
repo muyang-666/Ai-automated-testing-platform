@@ -21,9 +21,11 @@ import {
   deleteUser,
   getRoleList,
   getUserList,
+  updateUserProjects,
   updateUser,
   updateUserRoles,
 } from "../api/user";
+import { getProjectList } from "../api/project";
 
 const { Text, Title } = Typography;
 
@@ -47,6 +49,7 @@ const getErrorMessage = (error, fallback) =>
 export default function UserPage() {
   const [users, setUsers] = useState([]);
   const [roles, setRoles] = useState([]);
+  const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
@@ -55,9 +58,22 @@ export default function UserPage() {
   const [statusFilter, setStatusFilter] = useState("");
   const [form] = Form.useForm();
 
+  const currentUser = useMemo(() => {
+    try {
+      return JSON.parse(localStorage.getItem("auth_user") || "null");
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const currentIsSystemAdmin = currentUser?.roles?.includes("system_admin");
+
   const roleOptions = useMemo(
-    () => roles.map((role) => ({ label: role.name, value: role.id })),
-    [roles]
+    () =>
+      roles
+        .filter((role) => currentIsSystemAdmin || !["system_admin", "admin"].includes(role.code))
+        .map((role) => ({ label: role.name, value: role.id })),
+    [roles, currentIsSystemAdmin]
   );
 
   const roleCodeToId = useMemo(() => {
@@ -67,6 +83,19 @@ export default function UserPage() {
     });
     return map;
   }, [roles]);
+
+  const roleNameMap = useMemo(() => {
+    const map = {};
+    roles.forEach((role) => {
+      map[role.code] = role.name;
+    });
+    return map;
+  }, [roles]);
+
+  const projectOptions = useMemo(
+    () => projects.map((project) => ({ label: project.name, value: project.id })),
+    [projects]
+  );
 
   const fetchUsers = useCallback(async (searchKeyword = "", searchStatus = "") => {
     setLoading(true);
@@ -94,15 +123,25 @@ export default function UserPage() {
     }
   }, []);
 
+  const fetchProjects = useCallback(async () => {
+    try {
+      const res = await getProjectList();
+      setProjects(res.data || []);
+    } catch (error) {
+      message.error(getErrorMessage(error, "获取项目列表失败"));
+    }
+  }, []);
+
   useEffect(() => {
     fetchRoles();
+    fetchProjects();
     fetchUsers();
-  }, [fetchRoles, fetchUsers]);
+  }, [fetchRoles, fetchProjects, fetchUsers]);
 
   const openCreateModal = () => {
     setEditingUser(null);
     form.resetFields();
-    form.setFieldsValue({ status: "active", role_ids: [] });
+    form.setFieldsValue({ status: "active", role_ids: [], project_ids: [] });
     setModalOpen(true);
   };
 
@@ -115,6 +154,7 @@ export default function UserPage() {
       email: record.email,
       status: record.status,
       role_ids: (record.roles || []).map((code) => roleCodeToId[code]).filter(Boolean),
+      project_ids: record.project_ids || [],
     });
     setModalOpen(true);
   };
@@ -130,6 +170,7 @@ export default function UserPage() {
       const values = await form.validateFields();
       setSubmitting(true);
       const roleIds = values.role_ids || [];
+      const projectIds = values.project_ids || [];
 
       if (editingUser) {
         const payload = {
@@ -141,7 +182,10 @@ export default function UserPage() {
           payload.password = values.password;
         }
         await updateUser(editingUser.id, payload);
-        await updateUserRoles(editingUser.id, { role_ids: roleIds });
+        if (!editingCurrentUser) {
+          await updateUserRoles(editingUser.id, { role_ids: roleIds });
+          await updateUserProjects(editingUser.id, { project_ids: projectIds });
+        }
         message.success("用户更新成功");
       } else {
         await createUser({
@@ -151,6 +195,7 @@ export default function UserPage() {
           email: values.email,
           status: values.status,
           role_ids: roleIds,
+          project_ids: projectIds,
         });
         message.success("用户创建成功");
       }
@@ -211,9 +256,27 @@ export default function UserPage() {
       width: 240,
       render: (value = []) => (
         <Space size={[4, 4]} wrap>
-          {value.length ? value.map((role) => <Tag key={role}>{role}</Tag>) : "-"}
+          {value.length
+            ? value.map((role) => <Tag key={role}>{roleNameMap[role] || role}</Tag>)
+            : "-"}
         </Space>
       ),
+    },
+    {
+      title: "项目操作权限",
+      dataIndex: "project_ids",
+      width: 220,
+      render: (value = []) => {
+        if (!value.length) return "-";
+        const projectNameMap = Object.fromEntries(projects.map((project) => [project.id, project.name]));
+        return (
+          <Space size={[4, 4]} wrap>
+            {value.map((projectId) => (
+              <Tag key={projectId}>{projectNameMap[projectId] || `项目${projectId}`}</Tag>
+            ))}
+          </Space>
+        );
+      },
     },
     {
       title: "最后登录",
@@ -224,31 +287,50 @@ export default function UserPage() {
     {
       title: "操作",
       width: 180,
-      render: (_, record) => (
-        <Space>
-          <Button size="small" className="standard-action-btn" onClick={() => openEditModal(record)}>
-            编辑
-          </Button>
-          <Popconfirm
-            title="确认删除该用户吗？"
-            okText="确认"
-            cancelText="取消"
-            overlayClassName="standard-popconfirm"
-            okButtonProps={{ className: "standard-popconfirm-ok" }}
-            cancelButtonProps={{ className: "standard-popconfirm-cancel" }}
-            onConfirm={() => handleDelete(record.id)}
-          >
-            <Button className="standard-delete-btn" size="small">
-              删除
-            </Button>
-          </Popconfirm>
-        </Space>
-      ),
+      render: (_, record) => {
+        const isCurrentUser = currentUser?.id === record.id;
+        const isAdminLevel = (record.roles || []).some(
+          (role) => role === "system_admin" || role === "admin"
+        );
+        const canOperateRecord = currentIsSystemAdmin || isCurrentUser || !isAdminLevel;
+        const canDeleteRecord = !isCurrentUser && (currentIsSystemAdmin || !isAdminLevel);
+        return (
+          <Space>
+            {canOperateRecord ? (
+              <Button size="small" className="standard-action-btn" onClick={() => openEditModal(record)}>
+                编辑
+              </Button>
+            ) : (
+              <Tag>无权操作</Tag>
+            )}
+            {isCurrentUser ? (
+              <Tag color="processing">当前用户</Tag>
+            ) : canDeleteRecord ? (
+              <Popconfirm
+                title="确认删除该用户吗？"
+                okText="确认"
+                cancelText="取消"
+                overlayClassName="standard-popconfirm"
+                okButtonProps={{ className: "standard-popconfirm-ok" }}
+                cancelButtonProps={{ className: "standard-popconfirm-cancel" }}
+                onConfirm={() => handleDelete(record.id)}
+              >
+                <Button className="standard-delete-btn" size="small">
+                  删除
+                </Button>
+              </Popconfirm>
+            ) : (
+              <Tag>不可删除</Tag>
+            )}
+          </Space>
+        );
+      },
     },
   ];
 
   const activeCount = users.filter((user) => user.status === "active").length;
   const disabledCount = users.filter((user) => user.status === "disabled").length;
+  const editingCurrentUser = editingUser?.id === currentUser?.id;
 
   return (
     <div className="standard-page user-page">
@@ -323,7 +405,7 @@ export default function UserPage() {
             dataSource={users}
             loading={loading}
             pagination={{ pageSize: 10 }}
-            scroll={{ x: 1040 }}
+            scroll={{ x: 1260 }}
           />
         </Card>
       </Space>
@@ -395,6 +477,7 @@ export default function UserPage() {
             <Col span={12}>
               <Form.Item name="status" label="状态">
                 <Select
+                  disabled={editingCurrentUser}
                   popupClassName="standard-select-dropdown"
                   options={[
                     { label: "启用", value: "active" },
@@ -404,10 +487,15 @@ export default function UserPage() {
               </Form.Item>
             </Col>
             <Col span={12}>
-              <Form.Item name="role_ids" label="角色">
+              <Form.Item
+                name="role_ids"
+                label="角色"
+                rules={[{ type: "array", min: 1, required: true, message: "请至少选择一个角色" }]}
+              >
                 <Select
                   mode="multiple"
                   allowClear
+                  disabled={editingCurrentUser}
                   placeholder="请选择角色"
                   options={roleOptions}
                   popupClassName="standard-select-dropdown"
@@ -415,6 +503,21 @@ export default function UserPage() {
               </Form.Item>
             </Col>
           </Row>
+
+          <Form.Item
+            name="project_ids"
+            label="项目操作权限"
+            tooltip="测试人员仅能新增、编辑、删除和执行已授权项目下的数据；管理员不受此限制。"
+          >
+            <Select
+              mode="multiple"
+              allowClear
+              disabled={editingCurrentUser}
+              placeholder="请选择可操作项目"
+              options={projectOptions}
+              popupClassName="standard-select-dropdown"
+            />
+          </Form.Item>
         </Form>
       </Drawer>
     </div>

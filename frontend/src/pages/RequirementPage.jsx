@@ -34,6 +34,7 @@ import {
   resolveProjectId,
   storeProjectId,
 } from "../utils/projectSelection";
+import { canOperateProject } from "../utils/authPermissions";
 
 function getErrorMessage(error) {
   return (
@@ -98,6 +99,7 @@ export default function RequirementPage() {
   const [selectedModuleId, setSelectedModuleId] = useState(null);
   const [unboundModuleOnly, setUnboundModuleOnly] = useState(false);
   const [includeChildren, setIncludeChildren] = useState(false);
+  const canOperateSelectedProject = canOperateProject(selectedProjectId);
   const [keyword, setKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
@@ -385,31 +387,37 @@ export default function RequirementPage() {
           <Button size="small" className="requirement-action-btn" onClick={() => openDetailModal(record)}>
             查看详情
           </Button>
-          <Button
-            size="small"
-            className="requirement-action-btn"
-            loading={generatingId === record.id}
-            onClick={() => handleGenerate(record)}
-          >
-            生成用例
-          </Button>
-          <Button size="small" className="requirement-action-btn" onClick={() => openEditModal(record)}>
-            编辑
-          </Button>
-          <Popconfirm
-            title="确认删除该需求文本吗？"
-            description="删除后不可恢复，请确认。"
-            okText="确认"
-            cancelText="取消"
-            overlayClassName="requirement-popconfirm"
-            okButtonProps={{ className: "requirement-popconfirm-ok" }}
-            cancelButtonProps={{ className: "requirement-popconfirm-cancel" }}
-            onConfirm={() => handleDelete(record.id)}
-          >
-            <Button size="small" className="requirement-delete-btn">
-              删除
-            </Button>
-          </Popconfirm>
+          {canOperateProject(record.project_id) ? (
+            <>
+              <Button
+                size="small"
+                className="requirement-action-btn"
+                loading={generatingId === record.id}
+                onClick={() => handleGenerate(record)}
+              >
+                生成用例
+              </Button>
+              <Button size="small" className="requirement-action-btn" onClick={() => openEditModal(record)}>
+                编辑
+              </Button>
+              <Popconfirm
+                title="确认删除该需求文本吗？"
+                description="删除后不可恢复，请确认。"
+                okText="确认"
+                cancelText="取消"
+                overlayClassName="requirement-popconfirm"
+                okButtonProps={{ className: "requirement-popconfirm-ok" }}
+                cancelButtonProps={{ className: "requirement-popconfirm-cancel" }}
+                onConfirm={() => handleDelete(record.id)}
+              >
+                <Button size="small" className="requirement-delete-btn">
+                  删除
+                </Button>
+              </Popconfirm>
+            </>
+          ) : (
+            <Tag>只读</Tag>
+          )}
         </Space>
       ),
     },
@@ -456,9 +464,11 @@ export default function RequirementPage() {
             </Space>
           </Col>
           <Col>
-            <Button type="primary" className="requirement-primary-btn" onClick={openCreateModal}>
-              新增需求
-            </Button>
+            {canOperateSelectedProject && (
+              <Button type="primary" className="requirement-primary-btn" onClick={openCreateModal}>
+                新增需求
+              </Button>
+            )}
           </Col>
         </Row>
       </Card>

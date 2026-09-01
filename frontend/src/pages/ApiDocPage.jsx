@@ -31,6 +31,7 @@ import {
   resolveProjectId,
   storeProjectId,
 } from "../utils/projectSelection";
+import { canOperateProject } from "../utils/authPermissions";
 
 function getErrorMessage(error) {
   return (
@@ -104,6 +105,7 @@ function ApiDocPage() {
   const [genPreview, setGenPreview] = useState(null);
   const [selectedCaseKeys, setSelectedCaseKeys] = useState([]);
   const [saving, setSaving] = useState(false);
+  const canOperateSelectedProject = canOperateProject(selectedProjectId);
 
   const fetchProjects = async () => {
     try {
@@ -342,29 +344,35 @@ function ApiDocPage() {
           <Button size="small" className="standard-action-btn" onClick={() => openDetail(record)}>
             详情
           </Button>
-          <Button size="small" className="standard-action-btn" onClick={() => openEdit(record)}>
-            编辑
-          </Button>
-          <Popconfirm
-            title="确认删除此接口文档？"
-            description="删除后不可恢复，请确认。"
-            okText="确认"
-            cancelText="取消"
-            overlayClassName="standard-popconfirm"
-            okButtonProps={{ className: "standard-popconfirm-ok" }}
-            cancelButtonProps={{ className: "standard-popconfirm-cancel" }}
-            onConfirm={() => handleDelete(record.id)}
-          >
-            <Button size="small" className="standard-delete-btn">删除</Button>
-          </Popconfirm>
-          <Button
-            size="small"
-            className="standard-action-btn"
-            loading={generating === record.id}
-            onClick={() => handleGenerateCases(record)}
-          >
-            生成用例
-          </Button>
+          {canOperateProject(record.project_id) ? (
+            <>
+              <Button size="small" className="standard-action-btn" onClick={() => openEdit(record)}>
+                编辑
+              </Button>
+              <Popconfirm
+                title="确认删除此接口文档？"
+                description="删除后不可恢复，请确认。"
+                okText="确认"
+                cancelText="取消"
+                overlayClassName="standard-popconfirm"
+                okButtonProps={{ className: "standard-popconfirm-ok" }}
+                cancelButtonProps={{ className: "standard-popconfirm-cancel" }}
+                onConfirm={() => handleDelete(record.id)}
+              >
+                <Button size="small" className="standard-delete-btn">删除</Button>
+              </Popconfirm>
+              <Button
+                size="small"
+                className="standard-action-btn"
+                loading={generating === record.id}
+                onClick={() => handleGenerateCases(record)}
+              >
+                生成用例
+              </Button>
+            </>
+          ) : (
+            <Tag>只读</Tag>
+          )}
         </Space>
       ),
     },
@@ -475,9 +483,11 @@ function ApiDocPage() {
             </Space>
           </Col>
           <Col>
-            <Button type="primary" className="standard-primary-btn" onClick={openCreate}>
-              新增接口文档
-            </Button>
+            {canOperateSelectedProject && (
+              <Button type="primary" className="standard-primary-btn" onClick={openCreate}>
+                新增接口文档
+              </Button>
+            )}
           </Col>
         </Row>
       </Card>

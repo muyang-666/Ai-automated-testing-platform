@@ -3,11 +3,11 @@ from app.utils.parameter import *
 import httpx
 
 
-def test_case_1():
+def test_case_5():
     # 请求地址
-    url = "https://httpbin.org/anything?token=abc123&user_id=1001"
+    url = "http://121.43.169.97:8081/member/account/messageCount"
     # 请求方法
-    method = "GET"
+    method = "POST"
     # 请求头（已做基础规范化）
     headers = {}
     # 当前没有明确有效的请求体

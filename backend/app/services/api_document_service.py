@@ -37,8 +37,14 @@ def get_api_document_list(
     keyword: Optional[str] = None,
     method: Optional[str] = None,
     status: Optional[str] = None,
+    allowed_project_ids: list[int] | None = None,
 ) -> list[ApiDocument]:
     query = db.query(ApiDocument).filter(ApiDocument.is_deleted == False)
+
+    if allowed_project_ids is not None:
+        if not allowed_project_ids:
+            return []
+        query = query.filter(ApiDocument.project_id.in_(allowed_project_ids))
 
     if project_id is not None:
         query = query.filter(ApiDocument.project_id == project_id)

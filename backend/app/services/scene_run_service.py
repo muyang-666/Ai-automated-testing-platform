@@ -9,8 +9,14 @@ def get_scene_run_list(
     scene_id: int = None,
     project_id: int = None,
     status: str = None,
+    allowed_project_ids: list[int] | None = None,
 ):
     query = db.query(SceneRun)
+
+    if allowed_project_ids is not None:
+        if not allowed_project_ids:
+            return []
+        query = query.filter(SceneRun.project_id.in_(allowed_project_ids))
 
     if scene_id is not None:
         query = query.filter(SceneRun.scene_id == scene_id)

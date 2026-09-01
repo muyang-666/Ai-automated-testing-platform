@@ -30,6 +30,7 @@ import {
   resolveProjectId,
   storeProjectId,
 } from "../utils/projectSelection";
+import { canOperateProject } from "../utils/authPermissions";
 
 function getErrorMessage(error) {
   return (
@@ -130,6 +131,7 @@ export default function FunctionCasePage() {
   const [sourceFilter, setSourceFilter] = useState(FILTER_ALL);
   const [priorityFilter, setPriorityFilter] = useState(FILTER_ALL);
   const [statusFilter, setStatusFilter] = useState(FILTER_ALL);
+  const canOperateSelectedProject = canOperateProject(selectedProjectId);
 
   const fetchProjects = async () => {
     try {
@@ -367,23 +369,29 @@ export default function FunctionCasePage() {
           <Button size="small" className="standard-action-btn" onClick={() => openDetailModal(record)}>
             查看详情
           </Button>
-          <Button size="small" className="standard-action-btn" onClick={() => openEditModal(record)}>
-            编辑
-          </Button>
-          <Popconfirm
-            title="确认删除该功能测试用例吗？"
-            description="删除后不可恢复，请确认。"
-            okText="确认"
-            cancelText="取消"
-            overlayClassName="standard-popconfirm"
-            okButtonProps={{ className: "standard-popconfirm-ok" }}
-            cancelButtonProps={{ className: "standard-popconfirm-cancel" }}
-            onConfirm={() => handleDelete(record.id)}
-          >
-            <Button size="small" className="standard-delete-btn">
-              删除
-            </Button>
-          </Popconfirm>
+          {canOperateProject(record.project_id) ? (
+            <>
+              <Button size="small" className="standard-action-btn" onClick={() => openEditModal(record)}>
+                编辑
+              </Button>
+              <Popconfirm
+                title="确认删除该功能测试用例吗？"
+                description="删除后不可恢复，请确认。"
+                okText="确认"
+                cancelText="取消"
+                overlayClassName="standard-popconfirm"
+                okButtonProps={{ className: "standard-popconfirm-ok" }}
+                cancelButtonProps={{ className: "standard-popconfirm-cancel" }}
+                onConfirm={() => handleDelete(record.id)}
+              >
+                <Button size="small" className="standard-delete-btn">
+                  删除
+                </Button>
+              </Popconfirm>
+            </>
+          ) : (
+            <Tag>只读</Tag>
+          )}
         </Space>
       ),
     },
@@ -459,9 +467,11 @@ export default function FunctionCasePage() {
             </Space>
           </Col>
           <Col>
-            <Button type="primary" className="standard-primary-btn" onClick={openCreateModal}>
-              新增功能用例
-            </Button>
+            {canOperateSelectedProject && (
+              <Button type="primary" className="standard-primary-btn" onClick={openCreateModal}>
+                新增功能用例
+              </Button>
+            )}
           </Col>
         </Row>
       </Card>

@@ -2,15 +2,45 @@
 # engine、会话工厂 SessionLocal、模型基类 Base，以及通过 get_db 给接口注入数据库会话。
 # database.py 的作用是：统一管理数据库连接和会话。
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from app.core.config import settings
 
-#数据库位置 数据库是一个本地文件
+
+def is_sqlite_database(database_url: str) -> bool:
+    return database_url.startswith("sqlite")
+
+
+def ensure_mysql_database_exists(database_url: str) -> None:
+    url = make_url(database_url)
+    if url.get_backend_name() != "mysql" or not url.database:
+        return
+
+    database_name = url.database.replace("`", "``")
+    server_url = url.set(database="")
+    server_engine = create_engine(server_url, pool_pre_ping=True)
+    try:
+        with server_engine.connect() as connection:
+            connection.execute(
+                text(
+                    f"CREATE DATABASE IF NOT EXISTS `{database_name}` "
+                    "DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+                )
+            )
+    finally:
+        server_engine.dispose()
+
+
+ensure_mysql_database_exists(settings.DATABASE_URL)
+
+# 数据库连接。MySQL 会先确保库存在；SQLite 测试环境仍可通过 DATABASE_URL 覆盖。
 engine = create_engine( # engine:Python程序和数据库之间的连接发动机
     settings.DATABASE_URL, #数据库地址
-    connect_args={"check_same_thread": False} if settings.DATABASE_URL.startswith("sqlite") else {},
+    connect_args={"check_same_thread": False} if is_sqlite_database(settings.DATABASE_URL) else {},
+    pool_pre_ping=True,
+    pool_recycle=3600,
 )
 
 # 真正操作数据库，不是直接用 engine，而是用 session   SessionLocal 不是一次具体连接，而是一个“生产数据库会话的工厂”。

@@ -1,8 +1,13 @@
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
 
+from app.core.database import get_db
+from app.models.user import User
+from app.routers.dependencies import get_current_user
 from app.schemas.parameter_file import ParameterFileResponse, ParameterFileUpdate
+from app.services.permission_service import require_admin_role
 
 router = APIRouter(prefix="/parameter-file", tags=["ParameterFile"])
 
@@ -11,7 +16,7 @@ PARAMETER_FILE_PATH = Path(__file__).resolve().parent.parent / "utils" / "parame
 
 
 @router.get("", response_model=ParameterFileResponse, summary="读取参数文件")
-def get_parameter_file():
+def get_parameter_file(current_user: User = Depends(get_current_user)):
     if not PARAMETER_FILE_PATH.exists():
         # 文件不存在时，先返回空内容，方便前端直接编辑
         return {"content": ""}
@@ -21,7 +26,12 @@ def get_parameter_file():
 
 
 @router.put("", response_model=ParameterFileResponse, summary="保存参数文件")
-def update_parameter_file(data: ParameterFileUpdate):
+def update_parameter_file(
+    data: ParameterFileUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    require_admin_role(db, current_user)
     content = data.content or ""
 
     # 保存前做一次 Python 语法校验，避免把 parameter.py 写坏

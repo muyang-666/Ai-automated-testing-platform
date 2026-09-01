@@ -3,16 +3,23 @@ from urllib.parse import parse_qsl, urlsplit
 import json
 import re
 
-import httpx  # 给当前后端服务自己调用 LLM 接口用的
 from sqlalchemy.orm import Session  # 说明 service 会操作数据库
 
-from app.core.config import settings  # 表示大模型配置不是写死在代码里的，而是从配置对象里拿
-from app.models.api_case import APICase  # AI 生成代码的原材料，就是数据库里的测试用例对象
+from app.models.api_case import APICase  # 规则生成代码的原材料，就是数据库里的测试用例对象
 from app.utils.file_writer import save_test_code_to_file  # 把最终生成代码写入 tests_generated 目录
 
 
 # 参数变量引用格式：<<变量名>>
 PARAM_REF_PATTERN = re.compile(r"<<([A-Za-z_][A-Za-z0-9_]*)>>")
+SUPPORTED_HTTP_METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
+DEFAULT_EXPECTED_STATUS_CODE = 200
+EXPECTED_HTTP_STATUS_KEYS = (
+    "status_code",
+    "http_status",
+    "httpStatus",
+    "http_status_code",
+    "response_status_code",
+)
 
 
 # 处理 JSON 字符串数据
@@ -75,6 +82,35 @@ def parse_url_query(raw_url: str | None) -> dict:
         return dict(parse_qsl(urlsplit(normalized_url).query, keep_blank_values=True))
     except Exception:
         return {}
+
+
+def infer_expected_status_code(expected_dict: dict) -> int:
+    if not isinstance(expected_dict, dict):
+        return DEFAULT_EXPECTED_STATUS_CODE
+
+    for key in EXPECTED_HTTP_STATUS_KEYS:
+        raw_value = expected_dict.get(key)
+        if raw_value is None or isinstance(raw_value, bool):
+            continue
+        try:
+            status_code = int(raw_value)
+        except (TypeError, ValueError):
+            continue
+        if 100 <= status_code <= 599:
+            return status_code
+
+    return DEFAULT_EXPECTED_STATUS_CODE
+
+
+def validate_rule_generation_input(api_case: APICase, ctx: dict) -> None:
+    method = (api_case.method or "").upper().strip()
+    if not method:
+        raise ValueError("请求方法不能为空，无法规则生成")
+    if method not in SUPPORTED_HTTP_METHODS:
+        raise ValueError(f"规则生成暂不支持请求方法：{api_case.method}")
+
+    if not ctx.get("normalized_url"):
+        raise ValueError("请求地址不能为空，无法规则生成")
 
 
 # 对请求头做基础规范化
@@ -237,6 +273,8 @@ def build_assertion_plan(expected_dict: dict) -> dict:
         and not plan["list_checks"]
     ):
         for key, value in expected_dict.items():
+            if key in EXPECTED_HTTP_STATUS_KEYS:
+                continue
             if not isinstance(value, (dict, list)):
                 plan["exact_fields"][key] = value
 
@@ -288,6 +326,7 @@ def build_case_context(api_case: APICase) -> dict:
     query_dict = parse_url_query(normalized_url)
     body_type = infer_body_type(api_case, headers_dict, body_dict, query_dict)
     assertion_plan = build_assertion_plan(expected_dict)
+    expected_status_code = infer_expected_status_code(expected_dict)
     input_issues = validate_case_input_quality(api_case, raw_headers_dict, body_dict, query_dict)
     parameter_refs = extract_request_parameter_refs(api_case)
 
@@ -299,6 +338,7 @@ def build_case_context(api_case: APICase) -> dict:
         "expected_dict": expected_dict,
         "body_type": body_type,
         "assertion_plan": assertion_plan,
+        "expected_status_code": expected_status_code,
         "input_issues": input_issues,
         "parameter_refs": parameter_refs,
     }
@@ -315,7 +355,12 @@ def build_assertion_code_from_plan(assertion_plan: dict) -> str:
     if not has_json_assertion:
         return "    # 当前没有可稳定断言的 JSON 字段，这里只断言状态码"
 
-    lines = ["    response_json = response.json()"]
+    lines = [
+        "    try:",
+        "        response_json = response.json()",
+        "    except ValueError:",
+        '        assert False, f"响应不是合法 JSON，无法执行字段断言: {response.text[:500]}"',
+    ]
 
     # 1）顶层精确断言
     for key, value in exact_fields.items():
@@ -381,19 +426,7 @@ def should_disable_env_proxy(url: str | None) -> bool:
     )
 
 
-# 日志里常见误导字符做清理
-def clean_generated_code(text: str) -> str:
-    if not text:
-        return ""
-
-    text = text.strip()
-    text = re.sub(r"^```python\s*", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"^```\s*", "", text)
-    text = re.sub(r"\s*```$", "", text)
-    return text.strip()
-
-
-# 对 AI 生成后的代码做参数引用后处理
+# 对生成后的代码做参数引用后处理
 def postprocess_parameter_references(code: str) -> str:
     """
     目标：
@@ -437,101 +470,26 @@ def postprocess_parameter_references(code: str) -> str:
     return result
 
 
-# 构造 LLM Prompt
-def build_case_prompt(api_case: APICase) -> str:
-    ctx = build_case_context(api_case)
-
-    body_type = ctx["body_type"]
-    body_instruction = {
-        "json": "本用例更像 JSON 请求，请优先使用 httpx.request(..., json=...) 传参。",
-        "form": "本用例更像表单请求，请优先使用 httpx.request(..., data=...) 传参，不要使用 json=...。",
-        "none": "当前没有明确有效的请求体，请不要虚构 body 参数。",
-    }.get(body_type, "请根据接口信息选择最合理的请求参数形式。")
-
-    input_issues_text = "\n".join([f"- {item}" for item in ctx["input_issues"]]) if ctx["input_issues"] else "- 无明显输入风险"
-    parameter_refs_text = ", ".join(ctx["parameter_refs"]) if ctx["parameter_refs"] else "无"
-
-    return f"""
-你是一名资深测试开发工程师。请严格根据下面的接口测试信息，生成一段可直接运行的 pytest 测试代码。
-
-【硬性要求，必须全部满足】
-1. 只输出 Python 代码，不要输出任何解释、说明、Markdown 代码块。
-2. 只生成一个测试函数，函数名必须为 test_case_{api_case.id}。
-3. 不要定义 class。
-4. 不要使用 fixture。
-5. 必须使用 httpx.request(...) 发起请求。
-6. 必须直接使用下面提供的 method、url、headers、body、expected_result，但允许你根据 Content-Type、query 参数和 body 结构，选择更合理的参数传递方式（json=... 或 data=...）。
-7. 不要虚构 base_url，不要替换、改写或猜测 URL，不要使用示例网站。
-8. 不要凭空虚构 Cookie、鉴权 token、业务字段值；如果接口信息里没有提供，就不要自己编造。
-9. 代码必须与当前项目执行器兼容。
-10. 生成的测试代码开头必须包含：
-from app.utils.parameter import *
-不允许省略，不允许替换成其他导入方式。
-11. 如果原始接口信息中的任意字段值是 <<变量名>> 格式，表示这是参数变量引用，不是普通字符串。
-12. 生成 Python 代码时，必须去掉外层 << >>，直接使用里面的变量名，不能加引号。
-13. 对于 <<变量名>> 这种参数变量引用，必须严格遵守以下规则：
-- 不要保留 << >>
-- 不要写成 "<<变量名>>"
-- 不要写成 "变量名"
-- 必须直接写成变量名本身
-14. 参数变量引用示例：
-- 原始值：<<Cookieb>>
-- 生成值：Cookieb
-- 原始值：<<user_token>>
-- 生成值：user_token
-15. 如果某个请求头字段的值是 <<变量名>>，则生成代码时，该字段值必须直接使用这个变量名。
-16. 如果某个请求体字段的值是 <<变量名>>，则生成代码时，该字段值必须直接使用这个变量名。
-17. 只有 <<变量名>> 才表示变量引用；普通文本仍然按普通字符串处理。
-18. 普通字符串不要误处理成变量；只有带 << >> 的内容才按变量处理。
-19. 最终生成的代码中，绝对不允许出现 << 或 >>。
-20. 最终生成的代码中，绝对不允许把变量引用写成字符串。
-21. 必须先打印响应结果，再做断言。
-22. 如果响应内容不是 JSON，不要调用 response.json()。
-23. 不要对 data.items 这样的长列表做全量相等断言，优先只断言稳定字段。
-24. 可以添加简短中文注释，但不要添加解释性段落。
-25. 断言应优先依据“轻量断言计划”生成，而不是机械遍历整个 expected_result。
-26. 如果 url 明显是网页首页或非接口地址，优先只断言状态码，不要虚构 message 等字段断言。
-27. 在发起请求并拿到 response 后、任何断言前，必须打印响应状态码，格式必须严格为：
-print(f"===RESPONSE_STATUS_CODE==={{response.status_code}}")
-28. 在发起请求并拿到 response 后、任何断言前，必须打印响应内容开始/结束标记，格式必须严格为：
-print("===RESPONSE_CONTENT_START===")
-print(response.text)
-print("===RESPONSE_CONTENT_END===")
-29. httpx.request(...) 中必须显式加上 timeout=10.0。
-30. 如果请求地址是 127.0.0.1 或 localhost，本地接口场景下优先加 trust_env=False，避免系统代理干扰。
-
-【规范化后的测试上下文】
-- 规范化后的 URL: {ctx["normalized_url"]}
-- URL query 参数: {ctx["query_dict"]}
-- 规范化后的 headers: {ctx["headers_dict"]}
-- 规范化后的 body: {ctx["body_dict"]}
-- 识别出的 body_type: {body_type}
-- body_type 指导: {body_instruction}
-- 轻量断言计划: {ctx["assertion_plan"]}
-- 识别出的参数变量引用: {parameter_refs_text}
-- 输入风险提示:
-{input_issues_text}
-
-【原始接口测试信息】
-- 用例名称: {api_case.name}
-- 用例描述: {api_case.description}
-- 请求方法: {api_case.method}
-- 请求地址: {api_case.url}
-- 请求头: {api_case.headers}
-- 请求体: {api_case.body}
-- 预期结果: {api_case.expected_result}
-""".strip()
-
-
 # 即使没有真正调用大模型，这个项目也能生成一份“更稳的规则式测试代码”
 def generate_mock_test_code(api_case: APICase) -> str:
     ctx = build_case_context(api_case)
+    validate_rule_generation_input(api_case, ctx)
 
     headers_dict = ctx["headers_dict"]
     body_dict = ctx["body_dict"]
     normalized_url = ctx["normalized_url"]
+    method = (api_case.method or "").upper().strip()
     body_type = ctx["body_type"]
     assertion_plan = ctx["assertion_plan"]
+    expected_status_code = ctx["expected_status_code"]
+
+    if looks_like_webpage_url(api_case.url):
+        assertion_plan = {
+            "exact_fields": {},
+            "nested_exact_fields": {},
+            "range_fields": {},
+            "list_checks": [],
+        }
 
     if body_type == "form":
         payload_declaration = f"    # 请求体（表单）\n    form_data = {repr(body_dict)}"
@@ -554,15 +512,16 @@ def generate_mock_test_code(api_case: APICase) -> str:
 
 def test_case_{api_case.id}():
     # 请求地址
-    url = "{normalized_url}"
+    url = {normalized_url!r}
     # 请求方法
-    method = "{api_case.method.upper()}"
+    method = {method!r}
     # 请求头（已做基础规范化）
     headers = {repr(headers_dict)}
 {payload_declaration}
 
     # 轻量断言计划（只保留更稳定的预期字段）
     expected_plan = {repr(assertion_plan)}
+    expected_status_code = {expected_status_code}
 
     response = httpx.request(
         method=method,
@@ -577,54 +536,11 @@ def test_case_{api_case.id}():
     print("===RESPONSE_CONTENT_END===")
 
     # 断言状态码
-    assert response.status_code == 200
+    assert response.status_code == expected_status_code
 
 {assertion_code}
 '''
     return postprocess_parameter_references(mock_code)
-
-
-# 真正调用 LLM
-def call_llm_generate_code(prompt: str) -> str:
-    print("LLM_PROVIDER =", settings.LLM_PROVIDER)
-    print("LLM_MODEL =", settings.LLM_MODEL)
-    print("LLM_BASE_URL =", settings.LLM_BASE_URL)
-    print("HAS_API_KEY =", bool(settings.LLM_API_KEY))
-
-    provider = settings.LLM_PROVIDER.lower()
-    if provider == "mock" or not settings.LLM_API_KEY:
-        raise ValueError("当前未配置可用的 LLM，无法进行 AI 代码生成")
-
-    headers = {
-        "Authorization": f"Bearer {settings.LLM_API_KEY}",
-        "Content-Type": "application/json",
-    }
-
-    payload = {
-        "model": settings.LLM_MODEL or "deepseek-chat",
-        "messages": [
-            {
-                "role": "system",
-                "content": "你是资深测试开发工程师，擅长生成 pytest 接口测试代码。只输出可运行的 Python 代码，不要解释。",
-            },
-            {"role": "user", "content": prompt},
-        ],
-        "temperature": 0.0,
-        "stream": False,
-    }
-
-    response = httpx.post(
-        url=settings.LLM_BASE_URL,
-        headers=headers,
-        json=payload,
-        timeout=60.0,
-    )
-    response.raise_for_status()
-
-    data = response.json()
-    content = data["choices"][0]["message"]["content"]
-    print("LLM raw result preview:", content[:300] if content else "EMPTY")
-    return content
 
 
 # 生成代码后做语法校验
@@ -638,7 +554,7 @@ def validate_python_code(code: str) -> bool:
         return False
 
 
-# 规则校验：返回失败原因，方便前端区分“LLM生成失败”还是“规则生成”
+# 规则校验：返回失败原因，方便前端展示规则生成失败细节
 def validate_generated_code_rules_with_reason(code: str, api_case: APICase) -> tuple[bool, str]:
     if not code:
         return False, "代码为空"
@@ -683,6 +599,9 @@ def validate_generated_code_rules_with_reason(code: str, api_case: APICase) -> t
     if "timeout=" not in code:
         return False, "缺少 timeout 参数"
 
+    if "expected_status_code =" not in code or "response.status_code == expected_status_code" not in code:
+        return False, "缺少规则生成状态码断言"
+
     if should_disable_env_proxy(normalized_url) and "trust_env=False" not in code:
         return False, "本地/内网地址缺少 trust_env=False"
 
@@ -715,7 +634,7 @@ def validate_generated_code_rules(code: str, api_case: APICase) -> bool:
     return is_valid
 
 
-# 公共保存逻辑：不管是 LLM 生成还是规则生成，最后都统一走这里
+# 公共保存逻辑：规则生成后统一写回数据库和文件系统
 def save_generated_code_result(db: Session, api_case: APICase, generated_code: str, generated_by: str):
     generated_code = postprocess_parameter_references(generated_code)
 
@@ -741,34 +660,6 @@ def save_generated_code_result(db: Session, api_case: APICase, generated_code: s
     }
 
 
-# 只走 LLM 生成：失败直接报错，不再 fallback 到规则生成
-def generate_case_test_code_by_llm(db: Session, case_id: int):
-    api_case = db.query(APICase).filter(APICase.id == case_id).first()
-    if not api_case:
-        raise ValueError("测试用例不存在")
-
-    prompt = build_case_prompt(api_case)
-
-    try:
-        llm_result = call_llm_generate_code(prompt)
-        llm_result = clean_generated_code(llm_result)
-        llm_result = postprocess_parameter_references(llm_result)
-    except Exception as e:
-        raise ValueError(f"LLM 代码生成失败：{str(e)}")
-
-    if not llm_result:
-        raise ValueError("LLM 未返回有效代码")
-
-    if not validate_python_code(llm_result):
-        raise ValueError("LLM 生成代码语法不合法")
-
-    is_valid, reason = validate_generated_code_rules_with_reason(llm_result, api_case)
-    if not is_valid:
-        raise ValueError(f"LLM 生成代码未通过项目规则校验：{reason}")
-
-    return save_generated_code_result(db, api_case, llm_result, generated_by="llm")
-
-
 # 只走规则生成
 def generate_case_test_code_by_rule(db: Session, case_id: int):
     api_case = db.query(APICase).filter(APICase.id == case_id).first()
@@ -776,9 +667,13 @@ def generate_case_test_code_by_rule(db: Session, case_id: int):
         raise ValueError("测试用例不存在")
 
     generated_code = generate_mock_test_code(api_case)
+    is_valid, reason = validate_generated_code_rules_with_reason(generated_code, api_case)
+    if not is_valid:
+        raise ValueError(f"规则生成代码未通过项目规则校验：{reason}")
+
     return save_generated_code_result(db, api_case, generated_code, generated_by="rule")
 
 
-# 兼容旧接口：默认仍走 LLM 生成
+# 兼容旧内部调用：接口用例执行代码统一走规则生成
 def generate_case_test_code(db: Session, case_id: int):
-    return generate_case_test_code_by_llm(db, case_id)
+    return generate_case_test_code_by_rule(db, case_id)

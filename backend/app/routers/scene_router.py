@@ -4,6 +4,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.models.scene import Scene
+from app.models.scene_step import SceneStep
+from app.models.user import User
+from app.routers.dependencies import get_current_user
 from app.schemas.scene import (
     ReorderSceneStepsRequest,
     SceneChainExecuteRequest,
@@ -14,6 +18,11 @@ from app.schemas.scene import (
     SceneStepResponse,
     SceneStepUpdate,
     SceneUpdate,
+)
+from app.services.permission_service import (
+    allowed_project_ids_for_query,
+    require_project_read,
+    require_project_write,
 )
 from app.schemas.scene_run import (
     SceneRunDetailResponse,
@@ -42,7 +51,12 @@ router = APIRouter(prefix="/scenes", tags=["Scenes"])
 
 
 @router.post("", response_model=SceneResponse, summary="创建场景")
-def create_scene_api(data: SceneCreate, db: Session = Depends(get_db)):
+def create_scene_api(
+    data: SceneCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    require_project_write(db, current_user, data.project_id)
     return create_scene(db, data)
 
 
@@ -55,7 +69,10 @@ def list_scenes_api(
     keyword: Optional[str] = Query(default=None, description="按名称或描述模糊搜索"),
     status: Optional[str] = Query(default=None, description="按状态筛选"),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    if project_id is not None:
+        require_project_read(db, current_user, project_id)
     return get_scene_list(
         db,
         project_id=project_id,
@@ -64,6 +81,7 @@ def list_scenes_api(
         include_children=include_children,
         keyword=keyword,
         status=status,
+        allowed_project_ids=allowed_project_ids_for_query(db, current_user),
     )
 
 
@@ -73,33 +91,69 @@ def list_scene_runs_api(
     project_id: Optional[int] = Query(default=None, description="按项目筛选"),
     status: Optional[str] = Query(default=None, description="按执行状态筛选"),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    return get_scene_run_list(db, scene_id=scene_id, project_id=project_id, status=status)
+    if project_id is not None:
+        require_project_read(db, current_user, project_id)
+    return get_scene_run_list(
+        db,
+        scene_id=scene_id,
+        project_id=project_id,
+        status=status,
+        allowed_project_ids=allowed_project_ids_for_query(db, current_user),
+    )
 
 
 @router.get("/runs/{run_id}", response_model=SceneRunDetailResponse, summary="查询场景执行详情")
-def get_scene_run_api(run_id: int, db: Session = Depends(get_db)):
+def get_scene_run_api(
+    run_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     detail = get_scene_run_detail(db, run_id)
     if not detail:
         raise HTTPException(status_code=404, detail="执行记录不存在")
+    require_project_read(db, current_user, detail.project_id)
     return detail
 
 
 @router.get("/{scene_id}/runs", response_model=list[SceneRunResponse], summary="查询某个场景的执行历史")
-def list_scene_runs_by_scene_api(scene_id: int, db: Session = Depends(get_db)):
+def list_scene_runs_by_scene_api(
+    scene_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    scene = get_scene_by_id(db, scene_id)
+    if not scene:
+        raise HTTPException(status_code=404, detail="场景不存在")
+    require_project_read(db, current_user, scene.get("project_id"))
     return get_scene_run_list(db, scene_id=scene_id)
 
 
 @router.get("/{scene_id}", response_model=SceneResponse, summary="查询场景详情")
-def get_scene_api(scene_id: int, db: Session = Depends(get_db)):
+def get_scene_api(
+    scene_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     scene = get_scene_by_id(db, scene_id)
     if not scene:
         raise HTTPException(status_code=404, detail="场景不存在")
+    require_project_read(db, current_user, scene.get("project_id"))
     return scene
 
 
 @router.put("/{scene_id}", response_model=SceneResponse, summary="更新场景")
-def update_scene_api(scene_id: int, data: SceneUpdate, db: Session = Depends(get_db)):
+def update_scene_api(
+    scene_id: int,
+    data: SceneUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    existing = get_scene_by_id(db, scene_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="场景不存在")
+    require_project_write(db, current_user, existing.get("project_id"))
     scene = update_scene(db, scene_id, data)
     if not scene:
         raise HTTPException(status_code=404, detail="场景不存在")
@@ -107,7 +161,15 @@ def update_scene_api(scene_id: int, data: SceneUpdate, db: Session = Depends(get
 
 
 @router.delete("/{scene_id}", summary="删除场景")
-def delete_scene_api(scene_id: int, db: Session = Depends(get_db)):
+def delete_scene_api(
+    scene_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    existing = get_scene_by_id(db, scene_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="场景不存在")
+    require_project_write(db, current_user, existing.get("project_id"))
     success = delete_scene(db, scene_id)
     if not success:
         raise HTTPException(status_code=404, detail="场景不存在")
@@ -115,7 +177,15 @@ def delete_scene_api(scene_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/{scene_id}/steps", response_model=list[SceneStepResponse], summary="查询场景步骤列表")
-def list_scene_steps_api(scene_id: int, db: Session = Depends(get_db)):
+def list_scene_steps_api(
+    scene_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    scene = get_scene_by_id(db, scene_id)
+    if not scene:
+        raise HTTPException(status_code=404, detail="场景不存在")
+    require_project_read(db, current_user, scene.get("project_id"))
     steps = get_scene_steps(db, scene_id)
     if steps is None:
         raise HTTPException(status_code=404, detail="场景不存在")
@@ -123,7 +193,16 @@ def list_scene_steps_api(scene_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{scene_id}/steps", response_model=SceneStepResponse, summary="新增场景步骤")
-def create_scene_step_api(scene_id: int, data: SceneStepCreate, db: Session = Depends(get_db)):
+def create_scene_step_api(
+    scene_id: int,
+    data: SceneStepCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    scene = get_scene_by_id(db, scene_id)
+    if not scene:
+        raise HTTPException(status_code=404, detail="场景不存在")
+    require_project_write(db, current_user, scene.get("project_id"))
     try:
         return create_scene_step(db, scene_id, data)
     except ValueError as e:
@@ -131,7 +210,17 @@ def create_scene_step_api(scene_id: int, data: SceneStepCreate, db: Session = De
 
 
 @router.put("/steps/{step_id}", response_model=SceneStepResponse, summary="编辑场景步骤")
-def update_scene_step_api(step_id: int, data: SceneStepUpdate, db: Session = Depends(get_db)):
+def update_scene_step_api(
+    step_id: int,
+    data: SceneStepUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    step = db.query(SceneStep).filter(SceneStep.id == step_id, SceneStep.is_deleted == False).first()
+    if not step:
+        raise HTTPException(status_code=404, detail="场景步骤不存在")
+    scene = db.query(Scene).filter(Scene.id == step.scene_id, Scene.is_deleted == False).first()
+    require_project_write(db, current_user, scene.project_id if scene else None)
     try:
         return update_scene_step(db, step_id, data)
     except ValueError as e:
@@ -141,7 +230,16 @@ def update_scene_step_api(step_id: int, data: SceneStepUpdate, db: Session = Dep
 
 
 @router.delete("/steps/{step_id}", summary="删除场景步骤")
-def delete_scene_step_api(step_id: int, db: Session = Depends(get_db)):
+def delete_scene_step_api(
+    step_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    step = db.query(SceneStep).filter(SceneStep.id == step_id, SceneStep.is_deleted == False).first()
+    if not step:
+        raise HTTPException(status_code=404, detail="场景步骤不存在")
+    scene = db.query(Scene).filter(Scene.id == step.scene_id, Scene.is_deleted == False).first()
+    require_project_write(db, current_user, scene.project_id if scene else None)
     success = delete_scene_step(db, step_id)
     if not success:
         raise HTTPException(status_code=404, detail="场景步骤不存在")
@@ -150,8 +248,15 @@ def delete_scene_step_api(step_id: int, db: Session = Depends(get_db)):
 
 @router.put("/{scene_id}/steps/reorder", summary="调整场景步骤顺序")
 def reorder_scene_steps_api(
-    scene_id: int, data: ReorderSceneStepsRequest, db: Session = Depends(get_db)
+    scene_id: int,
+    data: ReorderSceneStepsRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    scene = get_scene_by_id(db, scene_id)
+    if not scene:
+        raise HTTPException(status_code=404, detail="场景不存在")
+    require_project_write(db, current_user, scene.get("project_id"))
     try:
         reorder_scene_steps(db, scene_id, data)
         return {"message": "步骤排序调整成功"}
@@ -160,7 +265,15 @@ def reorder_scene_steps_api(
 
 
 @router.post("/{scene_id}/execute", response_model=SceneExecuteResponse, summary="执行场景（pytest 方式）")
-def execute_scene_api(scene_id: int, db: Session = Depends(get_db)):
+def execute_scene_api(
+    scene_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    scene = get_scene_by_id(db, scene_id)
+    if not scene:
+        raise HTTPException(status_code=404, detail="场景不存在")
+    require_project_write(db, current_user, scene.get("project_id"))
     try:
         return execute_scene(db, scene_id)
     except ValueError as e:
@@ -172,7 +285,12 @@ def run_chain_api(
     scene_id: int,
     data: SceneChainExecuteRequest | None = None,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    scene = get_scene_by_id(db, scene_id)
+    if not scene:
+        raise HTTPException(status_code=404, detail="场景不存在")
+    require_project_write(db, current_user, scene.get("project_id"))
     try:
         selected_step_ids = data.selected_step_ids if data else None
         return execute_scene_chain(db, scene_id, selected_step_ids=selected_step_ids)

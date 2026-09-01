@@ -37,8 +37,14 @@ def get_case_list(
     source: str = None,
     priority: str = None,
     status: str = None,
+    allowed_project_ids: list[int] | None = None,
 ):
     query = db.query(APICase).filter(APICase.is_deleted == False)
+
+    if allowed_project_ids is not None:
+        if not allowed_project_ids:
+            return []
+        query = query.filter(APICase.project_id.in_(allowed_project_ids))
 
     if project_id is not None:
         query = query.filter(APICase.project_id == project_id)

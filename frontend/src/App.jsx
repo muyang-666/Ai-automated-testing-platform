@@ -39,7 +39,7 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState(null);
   const [authChecking, setAuthChecking] = useState(true);
 
-  const isAdmin = currentUser?.roles?.includes("admin");
+  const isAdmin = currentUser?.roles?.includes("admin") || currentUser?.roles?.includes("system_admin");
 
   const handleAuthLost = useCallback(() => {
     clearStoredAuth();
@@ -74,7 +74,6 @@ export default function App() {
   const menuItems = useMemo(() => {
     const items = [
       { key: "projects", label: "项目管理" },
-      { key: "modelConfig", label: "模型管理" },
       {
         key: "function-cases-group",
         label: "功能用例管理",
@@ -93,9 +92,10 @@ export default function App() {
         ],
       },
       { key: "reports", label: "报告管理" },
-      { key: "params", label: "参数管理" },
     ];
     if (isAdmin) {
+      items.splice(1, 0, { key: "modelConfig", label: "模型管理" });
+      items.push({ key: "params", label: "参数管理" });
       items.push({ key: "users", label: "用户管理" });
     }
     return items;

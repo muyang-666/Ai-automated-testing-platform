@@ -26,8 +26,8 @@ class APICase(Base): # 一定要继承 Base 只有继承了 Base，SQLAlchemy �
     body = Column(Text, nullable=True, comment="请求体JSON字符串")
     # 这个字段非常关键，它表示：你预期接口应该返回什么结果。为什么允许为空？因为有些初版平台可能先只存基础信息，期望结果后续补充。
     expected_result = Column(Text, nullable=True, comment="预期结果JSON字符串")
-    # 它用来存：AI 生成的 pytest 测试代码。它是连接 测试用例描述 AI生成代码 pytest执行 之间的桥梁。
-    generated_test_code = Column(Text, nullable=True, comment="AI生成的pytest代码")
+    # 它用来存：规则生成的 pytest 测试代码。它是连接测试用例描述、pytest 执行之间的桥梁。
+    generated_test_code = Column(Text, nullable=True, comment="规则生成的pytest代码")
     # 补充用例创建时间
     project_id = Column(Integer, nullable=True, comment="归属项目ID")
     module_id = Column(Integer, nullable=True, comment="归属模块ID")

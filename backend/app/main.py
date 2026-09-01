@@ -17,6 +17,7 @@ from app.models.scene_step_run import SceneStepRun
 from app.models.test_module import TestModule
 from app.models.test_run import TestRun
 from app.models.user import User
+from app.models.user_project_permission import UserProjectPermission
 from app.models.user_role import UserRole
 from app.models.ai_analysis import AIAnalysis
 from app.models.report import Report
@@ -58,7 +59,12 @@ app = FastAPI(
 # 配置中间件CORS  前端和后端端口不同，浏览器默认会拦请求，需要允许跨域。
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
+    allow_origins=[
+        "http://127.0.0.1:5173",
+        "http://localhost:5173",
+        "http://127.0.0.1:5174",
+        "http://localhost:5174",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

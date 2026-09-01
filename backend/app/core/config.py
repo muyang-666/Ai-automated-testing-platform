@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     APP_NAME: str = "AI Test Assistant"
     APP_VERSION: str = "0.2.0"
-    DATABASE_URL: str = "sqlite:///./ai_test_assistant.db"
+    DATABASE_URL: str = "mysql+pymysql://root:123456@127.0.0.1:3306/ai_test_assistant?charset=utf8mb4"
 
     LLM_PROVIDER: str = "mock"
     LLM_API_KEY: str = ""

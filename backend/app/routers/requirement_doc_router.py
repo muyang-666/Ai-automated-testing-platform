@@ -4,10 +4,17 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.models.user import User
+from app.routers.dependencies import get_current_user
 from app.schemas.requirement_doc import (
     RequirementDocCreate,
     RequirementDocResponse,
     RequirementDocUpdate,
+)
+from app.services.permission_service import (
+    allowed_project_ids_for_query,
+    require_project_read,
+    require_project_write,
 )
 from app.services.requirement_doc_service import (
     create_requirement_doc,
@@ -21,7 +28,12 @@ router = APIRouter(prefix="/requirements", tags=["Requirements"])
 
 
 @router.post("", response_model=RequirementDocResponse, summary="创建需求文本")
-def create_requirement(doc_data: RequirementDocCreate, db: Session = Depends(get_db)):
+def create_requirement(
+    doc_data: RequirementDocCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    require_project_write(db, current_user, doc_data.project_id)
     return create_requirement_doc(db, doc_data)
 
 
@@ -35,7 +47,10 @@ def list_requirements(
     status: Optional[str] = Query(default=None, description="按状态筛选"),
     requirement_type: Optional[str] = Query(default=None, description="按需求类型筛选"),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    if project_id is not None:
+        require_project_read(db, current_user, project_id)
     return get_requirement_doc_list(
         db,
         project_id=project_id,
@@ -45,21 +60,34 @@ def list_requirements(
         keyword=keyword,
         status=status,
         requirement_type=requirement_type,
+        allowed_project_ids=allowed_project_ids_for_query(db, current_user),
     )
 
 
 @router.get("/{requirement_id}", response_model=RequirementDocResponse, summary="查询需求文本详情")
-def get_requirement(requirement_id: int, db: Session = Depends(get_db)):
+def get_requirement(
+    requirement_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     doc = get_requirement_doc_by_id(db, requirement_id)
     if not doc:
         raise HTTPException(status_code=404, detail="需求文本不存在")
+    require_project_read(db, current_user, doc.project_id)
     return doc
 
 
 @router.put("/{requirement_id}", response_model=RequirementDocResponse, summary="修改需求文本")
 def update_requirement(
-    requirement_id: int, doc_data: RequirementDocUpdate, db: Session = Depends(get_db)
+    requirement_id: int,
+    doc_data: RequirementDocUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    existing = get_requirement_doc_by_id(db, requirement_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="需求文本不存在")
+    require_project_write(db, current_user, existing.project_id)
     doc = update_requirement_doc(db, requirement_id, doc_data)
     if not doc:
         raise HTTPException(status_code=404, detail="需求文本不存在")
@@ -67,7 +95,15 @@ def update_requirement(
 
 
 @router.delete("/{requirement_id}", summary="删除需求文本")
-def delete_requirement(requirement_id: int, db: Session = Depends(get_db)):
+def delete_requirement(
+    requirement_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    existing = get_requirement_doc_by_id(db, requirement_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="需求文本不存在")
+    require_project_write(db, current_user, existing.project_id)
     success = delete_requirement_doc(db, requirement_id)
     if not success:
         raise HTTPException(status_code=404, detail="需求文本不存在")

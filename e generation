@@ -1,0 +1,17 @@
+warning: in the working copy of 'backend/app/models/requirement_doc.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/app/schemas/function_case_generation.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/app/schemas/requirement_doc.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/app/services/function_case_generation_service.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/app/services/llm_client_service.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'backend/app/services/requirement_doc_service.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'frontend/src/pages/RequirementPage.jsx', LF will be replaced by CRLF the next time Git touches it
+ backend/app/models/requirement_doc.py              |   1 [32m+[m
+ backend/app/schemas/function_case_generation.py    |   6 [32m+[m[31m-[m
+ backend/app/schemas/requirement_doc.py             |   3 [32m+[m
+ .../services/function_case_generation_service.py   | 124 [32m+++++++++++++++[m[31m------[m
+ backend/app/services/llm_client_service.py         |   6 [32m+[m[31m-[m
+ backend/app/services/requirement_doc_service.py    |   1 [32m+[m
+ backend/app/tests_generated/test_case_1.py         |  75 [32m+++++[m[31m--------[m
+ backend/app/tests_generated/test_case_2.py         |  62 [32m+++++[m[31m------[m
+ frontend/src/pages/RequirementPage.jsx             |  29 [32m++++[m[31m-[m
+ 9 files changed, 181 insertions(+), 126 deletions(-)

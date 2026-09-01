@@ -4,12 +4,19 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.models.user import User
+from app.routers.dependencies import get_current_user
 from app.schemas.api_document import ApiDocumentCreate, ApiDocumentResponse, ApiDocumentUpdate
 from app.schemas.api_document_generation import (
     GenerateApiCasesRequest,
     GenerateApiCasesResponse,
     SaveGeneratedApiCasesRequest,
     SaveGeneratedApiCasesResponse,
+)
+from app.services.permission_service import (
+    allowed_project_ids_for_query,
+    require_project_read,
+    require_project_write,
 )
 from app.services.api_document_generation_service import (
     generate_api_cases_from_document,
@@ -29,12 +36,28 @@ router = APIRouter(prefix="/api-documents", tags=["API Documents"])
 # ── 生成接口必须在 {document_id} 之前定义 ──
 
 @router.post("/generate-cases", response_model=GenerateApiCasesResponse, summary="根据接口文档生成接口测试用例预览")
-def generate_cases_api(request: GenerateApiCasesRequest, db: Session = Depends(get_db)):
+def generate_cases_api(
+    request: GenerateApiCasesRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    doc = get_api_document_by_id(db, request.document_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="接口文档不存在")
+    require_project_write(db, current_user, doc.project_id)
     return generate_api_cases_from_document(db, request)
 
 
 @router.post("/save-generated-cases", response_model=SaveGeneratedApiCasesResponse, summary="保存生成的接口测试用例")
-def save_generated_cases_api(request: SaveGeneratedApiCasesRequest, db: Session = Depends(get_db)):
+def save_generated_cases_api(
+    request: SaveGeneratedApiCasesRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    doc = get_api_document_by_id(db, request.document_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="接口文档不存在")
+    require_project_write(db, current_user, doc.project_id)
     try:
         return save_generated_api_cases(db, request)
     except ValueError as e:
@@ -44,7 +67,12 @@ def save_generated_cases_api(request: SaveGeneratedApiCasesRequest, db: Session 
 # ── CRUD 接口 ──
 
 @router.post("", response_model=ApiDocumentResponse, summary="创建接口文档")
-def create_document_api(data: ApiDocumentCreate, db: Session = Depends(get_db)):
+def create_document_api(
+    data: ApiDocumentCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    require_project_write(db, current_user, data.project_id)
     return create_api_document(db, data)
 
 
@@ -57,7 +85,10 @@ def list_documents(
     method: Optional[str] = Query(default=None, description="按请求方法筛选"),
     status: Optional[str] = Query(default=None, description="按状态筛选"),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    if project_id is not None:
+        require_project_read(db, current_user, project_id)
     return get_api_document_list(
         db,
         project_id=project_id,
@@ -66,19 +97,34 @@ def list_documents(
         keyword=keyword,
         method=method,
         status=status,
+        allowed_project_ids=allowed_project_ids_for_query(db, current_user),
     )
 
 
 @router.get("/{document_id}", response_model=ApiDocumentResponse, summary="查询接口文档详情")
-def get_document(document_id: int, db: Session = Depends(get_db)):
+def get_document(
+    document_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     doc = get_api_document_by_id(db, document_id)
     if not doc:
         raise HTTPException(status_code=404, detail="接口文档不存在")
+    require_project_read(db, current_user, doc.project_id)
     return doc
 
 
 @router.put("/{document_id}", response_model=ApiDocumentResponse, summary="修改接口文档")
-def update_document(document_id: int, data: ApiDocumentUpdate, db: Session = Depends(get_db)):
+def update_document(
+    document_id: int,
+    data: ApiDocumentUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    existing = get_api_document_by_id(db, document_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="接口文档不存在")
+    require_project_write(db, current_user, existing.project_id)
     doc = update_api_document(db, document_id, data)
     if not doc:
         raise HTTPException(status_code=404, detail="接口文档不存在")
@@ -86,7 +132,15 @@ def update_document(document_id: int, data: ApiDocumentUpdate, db: Session = Dep
 
 
 @router.delete("/{document_id}", summary="删除接口文档")
-def delete_document(document_id: int, db: Session = Depends(get_db)):
+def delete_document(
+    document_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    existing = get_api_document_by_id(db, document_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="接口文档不存在")
+    require_project_write(db, current_user, existing.project_id)
     success = delete_api_document(db, document_id)
     if not success:
         raise HTTPException(status_code=404, detail="接口文档不存在")

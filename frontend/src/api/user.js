@@ -20,6 +20,10 @@ export function updateUserRoles(id, data) {
   return request.put(`/users/${id}/roles`, data);
 }
 
+export function updateUserProjects(id, data) {
+  return request.put(`/users/${id}/projects`, data);
+}
+
 export function getRoleList() {
   return request.get("/users/roles");
 }

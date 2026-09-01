@@ -15,6 +15,7 @@ class CurrentUserResponse(BaseModel):
     email: str | None = None
     status: str
     roles: list[str]
+    project_ids: list[int] = Field(default_factory=list)
 
 
 class LoginResponse(BaseModel):

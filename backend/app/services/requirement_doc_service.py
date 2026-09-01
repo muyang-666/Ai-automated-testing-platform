@@ -31,8 +31,14 @@ def get_requirement_doc_list(
     keyword: str = None,
     status: str = None,
     requirement_type: str = None,
+    allowed_project_ids: list[int] | None = None,
 ):
     query = db.query(RequirementDoc).filter(RequirementDoc.is_deleted == False)
+
+    if allowed_project_ids is not None:
+        if not allowed_project_ids:
+            return []
+        query = query.filter(RequirementDoc.project_id.in_(allowed_project_ids))
 
     if project_id is not None:
         query = query.filter(RequirementDoc.project_id == project_id)

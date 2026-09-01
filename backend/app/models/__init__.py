@@ -17,6 +17,7 @@ from app.models.llm_provider import LLMProvider
 from app.models.llm_model import LLMModel
 from app.models.llm_scene_config import LLMSceneConfig
 from app.models.user import User
+from app.models.user_project_permission import UserProjectPermission
 from app.models.user_role import UserRole
 
 __all__ = [
@@ -39,5 +40,6 @@ __all__ = [
     "LLMModel",
     "LLMSceneConfig",
     "User",
+    "UserProjectPermission",
     "UserRole",
 ]

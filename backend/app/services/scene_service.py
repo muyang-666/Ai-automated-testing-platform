@@ -67,8 +67,14 @@ def get_scene_list(
     include_children: bool = False,
     keyword: str = None,
     status: str = None,
+    allowed_project_ids: list[int] | None = None,
 ):
     query = db.query(Scene).filter(Scene.is_deleted == False)
+
+    if allowed_project_ids is not None:
+        if not allowed_project_ids:
+            return []
+        query = query.filter(Scene.project_id.in_(allowed_project_ids))
 
     if project_id is not None:
         query = query.filter(Scene.project_id == project_id)

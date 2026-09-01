@@ -25,6 +25,7 @@ import {
   resolveProjectId,
   storeProjectId,
 } from "../utils/projectSelection";
+import { canOperateProject } from "../utils/authPermissions";
 
 const CASE_TYPE_OPTIONS = [
   { label: "正常场景", value: "正常场景" },
@@ -112,6 +113,7 @@ function CasePage() {
   const [executeResultModalOpen, setExecuteResultModalOpen] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [currentAnalysis, setCurrentAnalysis] = useState(null);
+  const canOperateSelectedProject = canOperateProject(selectedProjectId);
 
   const fetchProjects = async () => {
     try {
@@ -395,38 +397,41 @@ function CasePage() {
     {
       title: "操作",
       width: 420,
-      render: (_, record) => (
-        <Space size="small" wrap>
-          <Button size="small" className="standard-action-btn" onClick={() => openEditModal(record)}>
-            编辑
-          </Button>
-          <Popconfirm
-            title="确认删除这条测试用例吗？"
-            description="删除后不可恢复，请确认。"
-            okText="确认"
-            cancelText="取消"
-            overlayClassName="standard-popconfirm"
-            okButtonProps={{ className: "standard-popconfirm-ok" }}
-            cancelButtonProps={{ className: "standard-popconfirm-cancel" }}
-            onConfirm={() => handleDeleteCase(record.id)}
-          >
-            <Button size="small" className="standard-delete-btn">
-              删除
+      render: (_, record) =>
+        canOperateProject(record.project_id) ? (
+          <Space size="small" wrap>
+            <Button size="small" className="standard-action-btn" onClick={() => openEditModal(record)}>
+              编辑
             </Button>
-          </Popconfirm>
-          <Button size="small" className="standard-action-btn" onClick={() => handleGenerateByRule(record.id)}>
-            规则生成
-          </Button>
-          <Button
-            size="small"
-            className="standard-action-btn"
-            loading={executing === record.id}
-            onClick={() => handleExecute(record.id)}
-          >
-            执行测试
-          </Button>
-        </Space>
-      ),
+            <Popconfirm
+              title="确认删除这条测试用例吗？"
+              description="删除后不可恢复，请确认。"
+              okText="确认"
+              cancelText="取消"
+              overlayClassName="standard-popconfirm"
+              okButtonProps={{ className: "standard-popconfirm-ok" }}
+              cancelButtonProps={{ className: "standard-popconfirm-cancel" }}
+              onConfirm={() => handleDeleteCase(record.id)}
+            >
+              <Button size="small" className="standard-delete-btn">
+                删除
+              </Button>
+            </Popconfirm>
+            <Button size="small" className="standard-action-btn" onClick={() => handleGenerateByRule(record.id)}>
+              规则生成
+            </Button>
+            <Button
+              size="small"
+              className="standard-action-btn"
+              loading={executing === record.id}
+              onClick={() => handleExecute(record.id)}
+            >
+              执行测试
+            </Button>
+          </Space>
+        ) : (
+          <Tag>只读</Tag>
+        ),
     },
   ];
 
@@ -450,9 +455,11 @@ function CasePage() {
             </Space>
           </Col>
           <Col>
-            <Button type="primary" className="standard-primary-btn" onClick={openCreateModal}>
-              新建测试用例
-            </Button>
+            {canOperateSelectedProject && (
+              <Button type="primary" className="standard-primary-btn" onClick={openCreateModal}>
+                新建测试用例
+              </Button>
+            )}
           </Col>
         </Row>
       </Card>

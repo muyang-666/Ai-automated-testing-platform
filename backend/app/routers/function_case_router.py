@@ -4,11 +4,19 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.models.user import User
+from app.routers.dependencies import get_current_user
 from app.schemas.function_case import (
     FunctionCaseCreate,
     FunctionCaseResponse,
     FunctionCaseUpdate,
 )
+from app.services.permission_service import (
+    allowed_project_ids_for_query,
+    require_project_read,
+    require_project_write,
+)
+from app.services.requirement_doc_service import get_requirement_doc_by_id
 from app.schemas.function_case_generation import (
     GenerateFunctionCasesRequest,
     GenerateFunctionCasesResponse,
@@ -31,7 +39,12 @@ router = APIRouter(prefix="/function-cases", tags=["FunctionCases"])
 
 
 @router.post("", response_model=FunctionCaseResponse, summary="创建功能测试用例")
-def create_func_case(case_data: FunctionCaseCreate, db: Session = Depends(get_db)):
+def create_func_case(
+    case_data: FunctionCaseCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    require_project_write(db, current_user, case_data.project_id)
     return create_function_case(db, case_data)
 
 
@@ -47,7 +60,10 @@ def list_func_cases(
     priority: Optional[str] = Query(default=None, description="按优先级筛选"),
     status: Optional[str] = Query(default=None, description="按状态筛选"),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    if project_id is not None:
+        require_project_read(db, current_user, project_id)
     return get_function_case_list(
         db,
         project_id=project_id,
@@ -59,6 +75,7 @@ def list_func_cases(
         source=source,
         priority=priority,
         status=status,
+        allowed_project_ids=allowed_project_ids_for_query(db, current_user),
     )
 
 
@@ -68,8 +85,14 @@ def list_func_cases(
     summary="根据需求文本生成功能测试用例",
 )
 def generate_func_cases_from_requirement(
-    request: GenerateFunctionCasesRequest, db: Session = Depends(get_db)
+    request: GenerateFunctionCasesRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    requirement = get_requirement_doc_by_id(db, request.requirement_id)
+    if not requirement:
+        raise HTTPException(status_code=404, detail="需求文本不存在")
+    require_project_write(db, current_user, requirement.project_id)
     return generate_function_cases_from_requirement(db, request)
 
 
@@ -79,8 +102,14 @@ def generate_func_cases_from_requirement(
     summary="保存勾选的功能测试用例",
 )
 def save_generated_func_cases(
-    request: SaveGeneratedFunctionCasesRequest, db: Session = Depends(get_db)
+    request: SaveGeneratedFunctionCasesRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    requirement = get_requirement_doc_by_id(db, request.requirement_id)
+    if not requirement:
+        raise HTTPException(status_code=404, detail="需求文本不存在")
+    require_project_write(db, current_user, requirement.project_id)
     try:
         return save_generated_function_cases(db, request)
     except ValueError as e:
@@ -88,17 +117,29 @@ def save_generated_func_cases(
 
 
 @router.get("/{case_id}", response_model=FunctionCaseResponse, summary="查询功能测试用例详情")
-def get_func_case(case_id: int, db: Session = Depends(get_db)):
+def get_func_case(
+    case_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     case = get_function_case_by_id(db, case_id)
     if not case:
         raise HTTPException(status_code=404, detail="功能测试用例不存在")
+    require_project_read(db, current_user, case.project_id)
     return case
 
 
 @router.put("/{case_id}", response_model=FunctionCaseResponse, summary="修改功能测试用例")
 def update_func_case(
-    case_id: int, case_data: FunctionCaseUpdate, db: Session = Depends(get_db)
+    case_id: int,
+    case_data: FunctionCaseUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    existing = get_function_case_by_id(db, case_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="功能测试用例不存在")
+    require_project_write(db, current_user, existing.project_id)
     case = update_function_case(db, case_id, case_data)
     if not case:
         raise HTTPException(status_code=404, detail="功能测试用例不存在")
@@ -106,7 +147,15 @@ def update_func_case(
 
 
 @router.delete("/{case_id}", summary="删除功能测试用例")
-def delete_func_case(case_id: int, db: Session = Depends(get_db)):
+def delete_func_case(
+    case_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    existing = get_function_case_by_id(db, case_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="功能测试用例不存在")
+    require_project_write(db, current_user, existing.project_id)
     success = delete_function_case(db, case_id)
     if not success:
         raise HTTPException(status_code=404, detail="功能测试用例不存在")

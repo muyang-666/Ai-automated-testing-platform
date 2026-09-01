@@ -24,18 +24,18 @@ def _ensure_test_file_exists(api_case: APICase, case_id: int) -> Path:
     """
     确保测试文件存在
     优先规则：
-    1. 如果 tests_generated 目录下已有文件，直接用
-    2. 如果没有文件，但数据库 generated_test_code 有内容，则写入文件
+    1. 如果数据库 generated_test_code 有内容，先写入文件，确保文件与当前数据库一致
+    2. 如果没有数据库代码，但 tests_generated 目录下已有文件，则直接用
     3. 否则报错
     """
     test_file_path = _get_test_file_path(case_id)
 
-    if test_file_path.exists():
-        return test_file_path
-
     generated_code = getattr(api_case, "generated_test_code", None)
     if generated_code and str(generated_code).strip():
         save_test_code_to_file(case_id=case_id, code=generated_code)
+        return test_file_path
+
+    if test_file_path.exists():
         return test_file_path
 
     raise FileNotFoundError(f"测试文件不存在: {test_file_path}")
@@ -147,8 +147,13 @@ def serialize_test_run(test_run: TestRun):
 
 
 # 查询执行记录列表
-def get_run_list(db: Session):
-    runs = db.query(TestRun).order_by(TestRun.id.desc()).all()
+def get_run_list(db: Session, allowed_project_ids: list[int] | None = None):
+    query = db.query(TestRun).join(APICase, TestRun.case_id == APICase.id)
+    if allowed_project_ids is not None:
+        if not allowed_project_ids:
+            return []
+        query = query.filter(APICase.project_id.in_(allowed_project_ids))
+    runs = query.order_by(TestRun.id.desc()).all()
     return [serialize_test_run(run) for run in runs]
 
 

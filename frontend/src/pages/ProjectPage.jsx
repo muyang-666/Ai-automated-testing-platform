@@ -20,6 +20,7 @@ import {
   getProjectSummary,
   updateProject,
 } from "../api/project";
+import { getStoredCurrentUser, isAdminUser } from "../utils/authPermissions";
 
 const STATUS_OPTIONS = [
   { label: "全部", value: "" },
@@ -54,6 +55,7 @@ export default function ProjectPage() {
   const [keyword, setKeyword] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [form] = Form.useForm();
+  const canManageProjects = isAdminUser(getStoredCurrentUser());
 
   const fetchProjects = async (searchKeyword, searchStatus) => {
     setLoading(true);
@@ -208,22 +210,24 @@ export default function ProjectPage() {
           </div>
         </div>
 
-        <div className="project-card-actions">
-          <Button icon={<EditOutlined />} onClick={() => openEditDrawer(project)}>
-            编辑
-          </Button>
-          <Popconfirm
-            title="确认删除该项目吗？"
-            okText="确认"
-            cancelText="取消"
-            okButtonProps={{ className: "project-popconfirm-ok-button" }}
-            onConfirm={() => handleDelete(project.id)}
-          >
-            <Button className="project-delete-button" icon={<DeleteOutlined />}>
-              删除
+        {canManageProjects && (
+          <div className="project-card-actions">
+            <Button icon={<EditOutlined />} onClick={() => openEditDrawer(project)}>
+              编辑
             </Button>
-          </Popconfirm>
-        </div>
+            <Popconfirm
+              title="确认删除该项目吗？"
+              okText="确认"
+              cancelText="取消"
+              okButtonProps={{ className: "project-popconfirm-ok-button" }}
+              onConfirm={() => handleDelete(project.id)}
+            >
+              <Button className="project-delete-button" icon={<DeleteOutlined />}>
+                删除
+              </Button>
+            </Popconfirm>
+          </div>
+        )}
       </Card>
     );
   };
@@ -256,9 +260,11 @@ export default function ProjectPage() {
             popupClassName="project-select-dropdown"
           />
         </div>
-        <Button type="primary" icon={<PlusOutlined />} onClick={openCreateDrawer}>
-          新增项目
-        </Button>
+        {canManageProjects && (
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreateDrawer}>
+            新增项目
+          </Button>
+        )}
       </div>
 
       <Spin spinning={loading}>
