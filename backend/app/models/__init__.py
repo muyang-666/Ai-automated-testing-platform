@@ -19,6 +19,13 @@ from app.models.llm_scene_config import LLMSceneConfig
 from app.models.user import User
 from app.models.user_project_permission import UserProjectPermission
 from app.models.user_role import UserRole
+from app.models.agent_session import AgentSession
+from app.models.agent_message import AgentMessage
+from app.models.agent_event import AgentEvent
+from app.models.agent_run import AgentRun
+from app.models.agent_step import AgentStep
+from app.models.agent_artifact import AgentArtifact
+from app.models.agent_approval import AgentApproval
 
 __all__ = [
     "APICase",
@@ -42,4 +49,11 @@ __all__ = [
     "User",
     "UserProjectPermission",
     "UserRole",
+    "AgentSession",
+    "AgentMessage",
+    "AgentEvent",
+    "AgentRun",
+    "AgentStep",
+    "AgentArtifact",
+    "AgentApproval",
 ]

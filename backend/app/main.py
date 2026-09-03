@@ -43,6 +43,7 @@ from app.routers.function_case_router import router as function_case_router
 from app.routers.user_router import router as user_router
 from app.routers.llm_config_router import router as llm_config_router
 from app.routers.api_document_router import router as api_document_router
+from app.routers.agent_router import router as agent_router
 from app.services.auth_service import init_default_auth_data
 
 
@@ -104,3 +105,4 @@ app.include_router(user_router)
 app.include_router(scene_router)
 app.include_router(llm_config_router)
 app.include_router(api_document_router)
+app.include_router(agent_router)

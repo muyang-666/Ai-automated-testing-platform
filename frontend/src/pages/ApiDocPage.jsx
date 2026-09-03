@@ -338,7 +338,7 @@ function ApiDocPage() {
     },
     {
       title: "操作",
-      width: 280,
+      width: 360,
       render: (_, record) => (
         <Space size="small" wrap>
           <Button size="small" className="standard-action-btn" onClick={() => openDetail(record)}>
@@ -368,6 +368,22 @@ function ApiDocPage() {
                 onClick={() => handleGenerateCases(record)}
               >
                 生成用例
+              </Button>
+              <Button
+                size="small"
+                type="primary"
+                className="standard-action-btn"
+                onClick={() => window.dispatchEvent(new CustomEvent("test-agent:open", {
+                  detail: {
+                    projectId: record.project_id,
+                    sourceType: "api_document",
+                    sourceId: record.id,
+                    sourceLabel: record.name,
+                    prompt: `请根据接口文档“${record.name}”生成接口测试用例，先确认范围和覆盖计划。`,
+                  },
+                }))}
+              >
+                交给 Agent
               </Button>
             </>
           ) : (

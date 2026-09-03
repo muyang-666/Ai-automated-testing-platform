@@ -1,0 +1,14 @@
+[
+  {
+    "name": "登录接口-正常登录",
+    "description": "使用合法的用户名和密码登录",
+    "method": "post",
+    "url": "https://api.example.com/v1/login",
+    "headers": {"Content-Type": "application/json"},
+    "body": {"username": "testuser01", "password": "Test@123456"},
+    "expected_result": {"status": 200, "body": {"code": 0, "token": "fake-token"}},
+    "case_type": "正常场景",
+    "priority": "p0",
+    "remark": "正常场景基线"
+  }
+]

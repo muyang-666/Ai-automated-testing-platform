@@ -381,7 +381,7 @@ export default function RequirementPage() {
     },
     {
       title: "操作",
-      width: 340,
+      width: 420,
       render: (_, record) => (
         <Space size="small">
           <Button size="small" className="requirement-action-btn" onClick={() => openDetailModal(record)}>
@@ -396,6 +396,22 @@ export default function RequirementPage() {
                 onClick={() => handleGenerate(record)}
               >
                 生成用例
+              </Button>
+              <Button
+                size="small"
+                type="primary"
+                className="requirement-action-btn"
+                onClick={() => window.dispatchEvent(new CustomEvent("test-agent:open", {
+                  detail: {
+                    projectId: record.project_id,
+                    sourceType: "requirement",
+                    sourceId: record.id,
+                    sourceLabel: record.title,
+                    prompt: `请根据需求“${record.title}”生成测试用例，先确认范围和覆盖计划。`,
+                  },
+                }))}
+              >
+                交给 Agent
               </Button>
               <Button size="small" className="requirement-action-btn" onClick={() => openEditModal(record)}>
                 编辑

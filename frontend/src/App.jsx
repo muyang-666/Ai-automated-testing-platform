@@ -12,6 +12,7 @@ import ReportPage from "./pages/ReportPage";
 import ParameterPage from "./pages/ParameterPage";
 import ScenePage from "./pages/ScenePage";
 import UserPage from "./pages/UserPage";
+import TestAgentWidget from "./components/test-agent/TestAgentWidget";
 
 const { Header, Sider, Content } = Layout;
 const { Text } = Typography;
@@ -156,8 +157,9 @@ export default function App() {
   }
 
   return (
-    <Layout style={{ minHeight: "100vh" }}>
-      <Sider width={220} style={{ background: "#001529" }}>
+    <>
+      <Layout style={{ minHeight: "100vh" }}>
+        <Sider width={220} style={{ background: "#001529" }}>
         <div
           style={{
             height: 64,
@@ -185,8 +187,8 @@ export default function App() {
           onClick={handleMenuClick}
           items={menuItems}
         />
-      </Sider>
-      <Layout>
+        </Sider>
+        <Layout>
         <Header
           style={{
             background: "#fff",
@@ -206,7 +208,9 @@ export default function App() {
           </Space>
         </Header>
         <Content style={{ padding: 24 }}>{renderPage()}</Content>
+        </Layout>
       </Layout>
-    </Layout>
+      <TestAgentWidget key={currentUser.id} currentUser={currentUser} />
+    </>
   );
 }
