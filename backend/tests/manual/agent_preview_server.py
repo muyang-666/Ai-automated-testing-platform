@@ -23,12 +23,12 @@ def main():
         from fastapi.middleware.cors import CORSMiddleware
         from app.core.database import Base, SessionLocal, engine
         from app.models import Project, User, Role, UserRole, UserProjectPermission, RequirementDoc, ApiDocument, LLMProvider, LLMModel, LLMSceneConfig, FunctionCase, APICase
-        from app.routers.agent_router import router
+        from app.routers.agent.agent_router import router
         from app.routers.dependencies import get_current_user
         from app.agents.bootstrap import build_default_skill_registry, build_default_tool_registry
         from app.agents.runtime.runner import AgentRunner
         from app.agents.skills.case_generation.schemas import AnalyzeAndPlanOutput, GenerateFunctionCandidatesOutput, GenerateApiCandidatesOutput
-        from app.schemas.llm_gateway import LLMResult
+        from app.schemas.llm.llm_gateway import LLMResult
         from app.workers.agent_worker import AgentWorker
 
         class FixtureGateway:

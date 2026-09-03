@@ -5,7 +5,7 @@ from app.agents.runtime.contracts import StepOutcome
 from app.agents.runtime.runner import AgentRunner
 from app.models.project import Project
 from app.models.user import User
-from app.services import agent_run_service, agent_session_service
+from app.services.agent import agent_run_service, agent_session_service
 
 
 class HookProbeWorkflow:

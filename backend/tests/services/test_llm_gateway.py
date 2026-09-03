@@ -20,12 +20,12 @@ from app.exceptions.llm_errors import (
     LLMTimeoutError,
     LLMUnsupportedFeatureError,
 )
-from app.models.llm_model import LLMModel
-from app.models.llm_provider import LLMProvider
-from app.models.llm_scene_config import LLMSceneConfig
-from app.schemas.llm_gateway import LLMMessage, LLMRequest, LLMResult, LLMToolCall, LLMToolSpec
-from app.services import llm_client_service
-from app.services.llm_gateway import LLMGateway
+from app.models.llm.llm_model import LLMModel
+from app.models.llm.llm_provider import LLMProvider
+from app.models.llm.llm_scene_config import LLMSceneConfig
+from app.schemas.llm.llm_gateway import LLMMessage, LLMRequest, LLMResult, LLMToolCall, LLMToolSpec
+from app.services.llm import llm_client_service
+from app.services.llm.llm_gateway import LLMGateway
 
 PROVIDER = SimpleNamespace(provider_type="openai_compatible", name="FakeProvider")
 MODEL = SimpleNamespace(model_name="fake-model", timeout_seconds=60)
@@ -458,3 +458,74 @@ def test_test_llm_model_missing_model(db_session):
     result = llm_client_service.test_llm_model(db_session, 404404)
 
     assert result == {"success": False, "output": "", "error": "模型不存在或已删除"}
+
+
+# ── 空内容响应（T08.2：模型 200 无内容不再永久失败） ──
+
+
+def _empty_result(finish_reason="stop", request_id="req-empty-1"):
+    return LLMResult(
+        content="",
+        tool_calls=[],
+        provider_name="FakeProvider",
+        model_name="fake-model",
+        finish_reason=finish_reason,
+        request_id=request_id,
+        duration_ms=1,
+    )
+
+
+def test_empty_content_retried_then_success():
+    adapter = FakeAdapter(
+        "openai_compatible",
+        results=[_empty_result(), _result("最终返回 JSON")],
+    )
+    sleeps = []
+    gateway = _gateway(adapter, max_retries=2, retry_delay_seconds=1.0, sleeper=sleeps.append)
+
+    result = gateway.complete(PROVIDER, MODEL, _request())
+
+    assert result.content == "最终返回 JSON"
+    assert len(adapter.calls) == 2
+    assert sleeps == [1.0]
+
+
+def test_empty_content_exhausted_fails_with_diagnostics():
+    adapter = FakeAdapter(
+        "openai_compatible",
+        results=[_empty_result(), _empty_result("stop", "req-empty-2"), _empty_result("stop", "req-empty-3")],
+    )
+    sleeps = []
+    gateway = _gateway(adapter, max_retries=2, retry_delay_seconds=1.0, sleeper=sleeps.append)
+
+    with pytest.raises(LLMProviderError) as exc:
+        gateway.complete(PROVIDER, MODEL, _request())
+
+    assert exc.value.error_code == "llm_empty_content"
+    assert exc.value.retryable is True
+    assert exc.value.provider_name == "FakeProvider"
+    assert exc.value.model_name == "fake-model"
+    assert exc.value.finish_reason == "stop"
+    assert exc.value.request_id == "req-empty-3"
+    assert "空内容" in str(exc.value)
+    assert len(adapter.calls) == 3
+    assert sleeps == [1.0, 2.0]
+
+
+def test_empty_content_with_tool_calls_not_treated_empty():
+    # 有 tool_calls 而 content 为空是合法返回，不应被当作“空内容”重试
+    result = LLMResult(
+        content="",
+        tool_calls=[LLMToolCall(id="t1", name="fake_tool", arguments_json="{}")],
+        provider_name="FakeProvider",
+        model_name="fake-model",
+        finish_reason="tool_calls",
+        duration_ms=1,
+    )
+    adapter = FakeAdapter("openai_compatible", results=[result])
+    gateway = _gateway(adapter, max_retries=2)
+
+    out = gateway.complete(PROVIDER, MODEL, _request())
+
+    assert out.tool_calls[0].name == "fake_tool"
+    assert len(adapter.calls) == 1

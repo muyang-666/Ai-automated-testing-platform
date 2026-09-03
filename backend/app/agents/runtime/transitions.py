@@ -11,7 +11,7 @@
 """
 
 from app.agents.runtime.errors import InvalidStateTransitionError
-from app.schemas.agent_platform import RUN_STATUSES
+from app.schemas.agent.platform import RUN_STATUSES
 
 LEGAL_TRANSITIONS: dict[str, set[str]] = {
     "queued": {"running", "cancelled"},

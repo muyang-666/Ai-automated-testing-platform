@@ -26,7 +26,7 @@ from app.schemas.scene_run import (
     SceneRunResponse,
     SceneStepRunResponse,
 )
-from app.schemas.llm_config import (
+from app.schemas.llm.llm_config import (
     LLMModelCreate,
     LLMModelResponse,
     LLMModelUpdate,

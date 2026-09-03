@@ -9,7 +9,7 @@
 from enum import Enum
 from typing import Protocol, runtime_checkable
 
-from app.schemas.llm_gateway import LLMRequest, LLMResult
+from app.schemas.llm.llm_gateway import LLMRequest, LLMResult
 
 PROVIDER_TYPE_OPENAI_COMPATIBLE = "openai_compatible"
 PROVIDER_TYPE_ANTHROPIC = "anthropic"

@@ -1,130 +1,89 @@
 # TestMind 总项目记录
 
-> 最后更新：2026-09-03
->
-> 本文件位于版本子目录之外，记录项目总定位、版本路线、当前状态和文档入口。
+> 更新：2026-09-03。当前生效路线：V2 参考 Pi 用 Python 实现基础 Agent；测试能力统一归 V3。
+> 用户与 Codex 负责设计和审查；Claude Code 按明确任务实施。此次修改仅为文档规划和克隆参考仓库。
 
-## 1. 项目定位
+## 1. 版本定义
 
-TestMind 是一个面向测试人员的 AI 测试工作平台。
-
-项目以接口自动化测试闭环为基础，逐步增加需求与接口文档管理、功能用例管理、场景串联执行、模型配置、权限管理，并在 V2 阶段把“一次 LLM 调用”升级为可追踪、可评测、有人机审批边界的受控 Agent 工作流。
-
-核心原则：
-
-- 确定性规则负责可稳定判断的工作。
-- LLM 负责需求理解、候选生成和复杂归纳。
-- Agent 通过白名单工具获取证据并验证结果。
-- 保存用例、重新执行等有副作用的动作保留人工确认。
-- V2 改造不得破坏 V1 已有业务闭环。
-
-## 2. 当前事实基线
-
-### V1 已具备
-
-- 项目、模块、用户、角色和项目权限管理
-- 需求文本、接口文档、接口用例和功能用例管理
-- LLM 生成功能用例和接口用例
-- 生成结果预览、勾选和保存
-- 规则生成 pytest 测试代码
-- pytest 动态执行、日志和响应采集
-- 场景步骤、变量提取、断言和真实串联执行
-- AI 失败日志分析
-- 测试报告与模型配置管理
-
-### V2 当前状态
-
-V2.1 的 Agent 数据表、Gateway、Runtime、Worker、用例生成 Skill 与 API 已实现；悬浮前端工作台已完成 SQLite + Fake LLM 的真实 HTTP/Worker 主闭环联调。真实供应商/MySQL 联调、影子评测和版本发布验收尚未完成。根因分析 Agent（V2.2）尚未实现，不得把规划写成已完成功能。详见 V2/02 开发记录和 V2/09 联调说明。
-
-## 3. 版本路线
-
-| 版本 | 目标 | 状态 |
+| 版本 | 范围 | 当前事实 |
 |---|---|---|
-| V1.0–V1.5 | 单接口自动化测试基础闭环 | 已完成，历史版本 |
-| V1.6 | 项目、模块目录和用例归类 | 已完成 |
-| V1.7 | 需求、功能用例和需求生成功能用例 | 已完成 |
-| V1.8 | 场景增强与真实接口串联执行 | 已完成 |
-| V2.1 | 改造用例生成 Agent | 主闭环已实现，T08 隔离联调通过；待真实环境与 T09 验收 |
-| V2.2 | 改造测试失败根因分析 Agent | 待开发 |
-| V2.3 | 测试 Skill 扩展与安全、可观测性、评测、交互优化 | 待开发 |
-| V2.4 | 根据 V2.1–V2.3 的数据与反馈确定 | 待定 |
+| V1 | 已有测试平台：项目、需求、用例、执行、报告、模型和权限 | 已有代码，保留兼容 |
+| V2 | Pi 风格 Python Agent 基础：对话、模型流、工具循环、Skill、上下文、持久化、取消、权限 | 新 V2-P01～P10 已规划，未实施验收 |
+| V3.1 | 用例生成 Skill 接入与改进 | 旧版 Workflow/工具/产物可复用，未完成新内核接入 |
+| V3.2 | 测试失败根因分析 Skill | 原规划后移，未实现 |
+| V3.3 | 测试数据准备 Skill | 原规划后移，未实现 |
+| V3.4 | 缺陷描述 Skill 与测试体验优化 | 原规划后移，未实现 |
 
-## 4. 文档结构
+V2 不是 Pi 全量功能复制，也不是新增 Node 服务；参考 TypeScript 源码的行为设计，在 TestMind 用 Python 实现。前端仍为 React。参考仓库 D:\pi 与 D:\Ai-test-assistant 分开，前者不作为运行依赖。
 
-```text
+## 2. 既有成果如何处理
+
+旧 V2.1-T01～T08 形成了 Gateway、Agent 表、Workflow Runner、Worker、工具/用例 Workflow、API、悬浮工作台及测试。这些代码保留，属于可复用历史基线，不重复标记为新 V2 已完成。
+
+本地提交 29414c7（V2.1 用例生成 Agent 与悬浮工作台）是可追踪基线，但重规划时仍有模型空响应等未提交代码/测试/文档修改；本轮原样保留，没有替它们做新提交或重跑测试。
+
+2026-09-03 V2-R01（结构整理）在基线上把 Agent/LLM 模块按 models/services/schemas/routers 内子包归类，纯移动 + 导入更新 + 文档；结构测试 6 条、受影响/代表回归 338 条通过，详见 [V2 开发记录](V2/02_DEVELOPMENT_RECORD.md#21--2026-09-03--v2-r01-agent--llm-模块目录整理)。该项不是 V2-Pxx 对话内核成果，也未 commit/push。
+
+旧开发记录、旧验收清单、旧 PRD/设计、提示词及根 README 均完整快照到 [旧路线归档](archive/PRE_PI_V2_2026-09-03/ARCHIVE_NOTICE.md)。其中“已完成”只描述当时的局部工作，不代表新的基础对话 Agent 通过验收。
+
+## 3. 当前事实与缺口
+
+- 旧前端发送路径仍主要启动 case_generation；不能把状态气泡当作真实多轮助手回复。
+- 新通用会话尚需独立入口、可空项目、模型预检、工具结果反馈、流式传输和恢复机制。
+- 模型未绑定、无 Worker、外键孤立引用、空模型响应等历史问题都保留证据，不因版本更名消失。
+- V2 验收不能要求先有需求/接口文档，也不能用用例生成成功替代普通聊天验证。
+- 通用安全、身份隔离、预算和取消仍属于 V2，不能随测试任务一起延期。
+- 真实 MySQL/模型配置不是迁移 Pi 自动解决的问题；任何真实写入和计费请求仍需授权。
+
+## 4. 文档入口
+
+~~~text
 docs/
-  PROJECT_RECORD.md                 总项目记录与版本入口
-  V1/
-    README.md                       V1 文档索引
-    00_PROJECT_CONTEXT.md           V1 项目上下文
-    01_REQUIREMENTS.md              V1 需求规格
-    06_CURRENT_STATUS.md            V1 最终状态快照
-    07_CHANGELOG.md                 V1 变更日志
-    08_AI_CODING_RULES.md           V1 历史开发规则
-    09_ACCEPTANCE_CHECKLIST.md      V1 回归验收清单
+  PROJECT_RECORD.md
+  V1/                      历史平台文档（不改业务定义）
   V2/
-    README.md                       V2 文档索引与当前状态
-    01_AGENT_DEVELOPMENT_PLAN.md    Claude Code 主执行计划
-    02_DEVELOPMENT_RECORD.md        V2 实际开发记录与证据
-    03_ACCEPTANCE_CHECKLIST.md      V2 分版本验收门禁
-    04_CASE_GENERATION_AGENT_PRD.md V2.1 产品需求与前端交互
-    05_CASE_GENERATION_AGENT_TECHNICAL_DESIGN.md
-                                    V2.1 技术设计与学习笔记
+    README.md
+    01_AGENT_DEVELOPMENT_PLAN.md        V2-P01～P10 执行计划
+    02_DEVELOPMENT_RECORD.md            新路线事实记录
+    03_ACCEPTANCE_CHECKLIST.md          基础 Agent 门禁
+    04_AGENT_SHELL_PRD.md               通用对话产品定义
     06_TEST_AGENT_PLATFORM_ARCHITECTURE.md
-                                    对话式测试 Agent 平台总架构
     07_AGENT_CORE_OBJECTS_TUTORIAL.md
-                                    Session、Skill、Tool、Artifact 学习笔记
-    08_LEARNING_BACKLOG.md          Agent 项目待学习知识点
-    09_FRONTEND_BACKEND_INTEGRATION.md
-                                    T08 联调证据、启动说明与边界
-    prompts/                        可复制给 Claude Code 的单任务提示词
-```
+    08_LEARNING_BACKLOG.md
+    09_FRONTEND_BACKEND_INTEGRATION.md  新路线联调计划（未执行）
+    10_PI_SOURCE_AUDIT.md               固定源码、符号、测试及差异
+    prompts/README.md                  新任务提示词规则
+  V3/
+    README.md
+    01_TEST_CAPABILITY_PLAN.md          测试能力任务与旧成果复用
+    02_DEVELOPMENT_RECORD.md
+    03_ACCEPTANCE_CHECKLIST.md
+    04_CASE_GENERATION_AGENT_PRD.md
+    05_CASE_GENERATION_AGENT_TECHNICAL_DESIGN.md
+  archive/PRE_PI_V2_2026-09-03/         旧路线完整快照
+~~~
 
-## 5. 人与 AI 的协作方式
+V2 内旧 04_CASE_GENERATION... / 05_CASE_GENERATION... 文件仅保留跳转说明，不能再作为当前 V2 任务书。
 
-### 用户与 Codex
+## 5. 执行与协作规则
 
-- 确定产品范围、优先级、业务边界和技术决策。
-- 把当前版本拆成 Claude Code 可执行的小任务。
-- 审查实现结果、风险和验收证据。
+1. 当前任务编号使用 V2-Pxx，测试能力使用 V3.x-Txx；不重用旧 V2.1-Txx 造成歧义。
+2. 指定任务后先读源码、列边界、再实施，不重复确认已授权范围；未指定任务不自动开工。
+3. 一次一个可验证增量；默认新增/直接相关测试，发布节点才全量回归。
+4. 不把规划、目录存在、Fake 结果或旧测试数当成新能力已完成。
+5. 迁移必须显式 Alembic、真实外键/并发测试与回滚边界；禁止关闭外键、重建库、造占位项目掩盖错误。
+6. 真实模型、生产数据、外部系统写入与新增依赖按实际风险单独授权。
+7. 保留用户改动；代码导入可能有建库副作用，诊断优先纯配置/只读 SQL，不输出 Secret。
+8. 业务任务延后不等于删掉已实现业务；V2 新 catalog 不默认加载测试 Skill。
 
-### Claude Code
+## 6. 决策记录
 
-- 只执行用户明确指定的当前版本和任务编号。
-- 开始前阅读本文件、V2 主计划、V2 开发记录和 V2 验收清单。
-- 用户发送 Codex 生成的单任务提示词即代表授权该任务范围；Claude Code 先检查真实源码并输出简短实施摘要，然后直接编码。
-- 实现后运行测试，并把真实结果写入 V2 开发记录。
-- 不自行跨版本开发，不把未运行的检查标记为通过。
-- 只有新增依赖、真实环境操作、数据库范围变化、破坏性操作或任务越界时暂停询问。
+| 日期 | 决策 | 依据 |
+|---|---|---|
+| 2026-09-01～03 | 旧路线完成部分 Agent 测试 Workflow 与联调 | 归档开发记录，原任务编号保留 |
+| 2026-09-03 | 用户明确要求先正常聊天，用例生成只是 Skill | 不再把固定工作流包装为完整对话 Agent |
+| 2026-09-03 | 参考 Pi 架构，服务端坚持 Python，不接 Pi npm/Node 服务 | 用户明确技术偏好 |
+| 2026-09-03 | V2 只交付基础架构，测试能力移到 V3 | 本计划替代旧版本范围 |
+| 2026-09-03 | Pi 克隆到 D:\pi，锁定 f41f80466e30f21cdcd4d52aba4a2c2cb6ee3cc6 | 源码对照文档，不安装/运行上游 |
 
-## 6. 全项目变更规则
-
-1. V1 文档属于历史快照，原则上只修正断链或明显事实错误。
-2. V2 的产品与技术规划写入 `V2/01_AGENT_DEVELOPMENT_PLAN.md`。
-3. 实际完成情况只写入 `V2/02_DEVELOPMENT_RECORD.md`，不得用计划代替完成记录。
-4. 验收状态只在有命令输出、接口结果、页面验证或人工确认时更新。
-5. 数据库结构变化必须使用可回滚迁移，不依赖 `create_all` 修改已有表。
-6. 保留旧接口或 feature flag，直到新 Agent 链路完成影子评测和回归验收。
-7. 不记录或提交 API Key、Authorization、Cookie、Token、真实密码和敏感响应。
-8. 遇到范围冲突时停止实现，由用户与 Codex 重新确认设计。
-
-## 7. 总项目记录
-
-| 日期 | 版本 | 记录 | 证据位置 |
-|---|---|---|---|
-| 2026-09-01 | V1 | 整理 V1 历史文档，作为现有能力和回归基线 | `docs/V1/` |
-| 2026-09-01 | V2 | 确定 V2.1 对话 Shell + 用例生成、V2.2 根因分析、V2.3 Skill 扩展与优化、V2.4 待定 | `docs/V2/01_AGENT_DEVELOPMENT_PLAN.md` |
-| 2026-09-01 | V2.1 | 将交互调整为对话式测试 Agent + 结构化 Artifact，并建立用例生成 PRD 与技术设计 | `docs/V2/04_CASE_GENERATION_AGENT_PRD.md`、`05_CASE_GENERATION_AGENT_TECHNICAL_DESIGN.md` |
-| 2026-09-01 | V2 | 基于 Claude Code + Skills 模式，确定 TestMind 自建测试专用 Agent，不直接内嵌 Claude Code CLI | `docs/V2/06_TEST_AGENT_PLATFORM_ARCHITECTURE.md` |
-| 2026-09-01 | V2.1 | 完成 Session、Skill、Tool、Artifact 四个核心对象的第一轮学习沉淀 | `docs/V2/07_AGENT_CORE_OBJECTS_TUTORIAL.md` |
-| 2026-09-01 | V2.1 | 建立待学习知识点清单，后续学习不阻塞编码 | `docs/V2/08_LEARNING_BACKLOG.md` |
-| 2026-09-01 | V2.1 | 生成 V2.1-T01 Baseline 测试的 Claude Code 单任务提示词 | `docs/V2/prompts/V2.1-T01_BASELINE_TESTS_CLAUDE_PROMPT.md` |
-| 2026-09-01 | V2.1 | T01 经 Codex 独立复核 33 passed，生成 T02 Agent 平台数据模型与迁移提示词 | `docs/V2/prompts/V2.1-T02_AGENT_PLATFORM_MODELS_CLAUDE_PROMPT.md` |
-| 2026-09-01 | V2.1 | T02 报告验收 50 passed，生成 T03 LLM Gateway 与 Provider Adapter 提示词 | `docs/V2/prompts/V2.1-T03_LLM_GATEWAY_PROVIDERS_CLAUDE_PROMPT.md` |
-| 2026-09-02 | V2.1 | T03 报告验收 102 passed，将 T04 拆分并生成 T04A Runtime 核心提示词 | `docs/V2/prompts/V2.1-T04A_RUNTIME_CORE_REGISTRIES_CLAUDE_PROMPT.md` |
-| 2026-09-02 | V2 | 单任务提示词范围内改为直接编码，仅高风险、越界或新增依赖时暂停确认 | `docs/V2/01_AGENT_DEVELOPMENT_PLAN.md` |
-| 2026-09-02 | V2.1 | T04A 报告验收 165 passed，生成 T04B Worker 抢占与恢复提示词 | `docs/V2/prompts/V2.1-T04B_WORKER_RECOVERY_CLAUDE_PROMPT.md` |
-| 2026-09-02 | V2.1 | T04B 报告验收 191 passed；T05 审查发现去重阻断问题，生成 T05.1 修复提示词 | `docs/V2/prompts/V2.1-T05.1_DEDUP_FINGERPRINT_FIX_CLAUDE_PROMPT.md` |
-| 2026-09-02 | V2.1 | T05.1 报告验收 248 passed，生成 T06 用例生成 Skill 与 Workflow 提示词 | `docs/V2/prompts/V2.1-T06_CASE_GENERATION_SKILL_WORKFLOW_CLAUDE_PROMPT.md` |
-| 2026-09-02 | V2.1 | T06 报告验收 288 passed，生成 T07 Agent API、审批续跑与候选保存提示词 | `docs/V2/prompts/V2.1-T07_AGENT_API_APPROVAL_SAVE_CLAUDE_PROMPT.md` |
-| 2026-09-02 | V2.1 | T04B 报告验收 191 passed，生成 T05 用例生成领域工具提示词 | `docs/V2/prompts/V2.1-T05_CASE_GENERATION_TOOLS_CLAUDE_PROMPT.md` |
+历史逐任务记录见 [旧开发记录](archive/PRE_PI_V2_2026-09-03/02_DEVELOPMENT_RECORD.md)，不要将历史记录改名为新的完成记录。

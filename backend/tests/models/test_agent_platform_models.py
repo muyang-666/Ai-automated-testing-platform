@@ -10,16 +10,16 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
 from app.core.database import Base
-from app.models.agent_approval import AgentApproval
-from app.models.agent_artifact import AgentArtifact
-from app.models.agent_event import AgentEvent
-from app.models.agent_message import AgentMessage
-from app.models.agent_run import AgentRun
-from app.models.agent_session import AgentSession
-from app.models.agent_step import AgentStep
+from app.models.agent.agent_approval import AgentApproval
+from app.models.agent.agent_artifact import AgentArtifact
+from app.models.agent.agent_event import AgentEvent
+from app.models.agent.agent_message import AgentMessage
+from app.models.agent.agent_run import AgentRun
+from app.models.agent.agent_session import AgentSession
+from app.models.agent.agent_step import AgentStep
 from app.models.project import Project
 from app.models.user import User
-from app.schemas.agent_platform import (
+from app.schemas.agent.platform import (
     APPROVAL_STATUSES,
     ARTIFACT_STATUSES,
     RUN_STATUSES,

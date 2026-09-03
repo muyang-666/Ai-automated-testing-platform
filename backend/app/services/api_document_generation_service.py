@@ -12,7 +12,7 @@ from app.schemas.api_document_generation import (
     SaveGeneratedApiCasesRequest,
     SaveGeneratedApiCasesResponse,
 )
-from app.services.llm_client_service import call_llm_by_scene
+from app.services.llm.llm_client_service import call_llm_by_scene
 
 ALLOWED_CASE_TYPES = {"正常场景", "异常场景", "边界场景", "业务规则场景", "其他"}
 ALLOWED_PRIORITIES = {"P0", "P1", "P2"}

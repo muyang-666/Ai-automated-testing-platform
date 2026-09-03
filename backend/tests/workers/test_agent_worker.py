@@ -13,12 +13,12 @@ from app.agents.registry import SkillDefinition, SkillRegistry, ToolRegistry
 from app.agents.runtime.contracts import StepOutcome
 from app.agents.runtime.runner import AgentRunner
 from app.core.database import SessionLocal
-from app.models.agent_approval import AgentApproval
-from app.models.agent_run import AgentRun
-from app.models.agent_step import AgentStep
+from app.models.agent.agent_approval import AgentApproval
+from app.models.agent.agent_run import AgentRun
+from app.models.agent.agent_step import AgentStep
 from app.models.project import Project
 from app.models.user import User
-from app.services import agent_run_service, agent_session_service
+from app.services.agent import agent_run_service, agent_session_service
 from app.workers.agent_worker import AgentWorker
 
 WORKER_A = "worker-a"

@@ -12,7 +12,7 @@ from app.schemas.function_case_generation import (
     SaveGeneratedFunctionCasesRequest,
     SaveGeneratedFunctionCasesResponse,
 )
-from app.services.llm_client_service import call_llm_with_model, get_model_config_by_scene
+from app.services.llm.llm_client_service import call_llm_with_model, get_model_config_by_scene
 from app.services.api_document_generation_service import parse_llm_api_cases as robust_parse_json
 
 ALLOWED_CASE_TYPES = {"正常场景", "异常场景", "边界场景", "业务规则场景", "其他"}

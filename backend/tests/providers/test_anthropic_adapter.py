@@ -16,7 +16,7 @@ from app.exceptions.llm_errors import (
     LLMRateLimitError,
     LLMTimeoutError,
 )
-from app.schemas.llm_gateway import LLMMessage, LLMRequest, LLMToolCall, LLMToolSpec
+from app.schemas.llm.llm_gateway import LLMMessage, LLMRequest, LLMToolCall, LLMToolSpec
 
 FAKE_KEY = "sk-ant-test-secret"
 

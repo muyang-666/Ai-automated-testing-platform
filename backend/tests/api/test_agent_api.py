@@ -18,27 +18,27 @@ from app.agents.skills.case_generation.schemas import (
     GenerateFunctionCandidatesOutput,
 )
 from app.core.database import SessionLocal
-from app.models.agent_approval import AgentApproval
-from app.models.agent_artifact import AgentArtifact
-from app.models.agent_event import AgentEvent
-from app.models.agent_message import AgentMessage
-from app.models.agent_run import AgentRun
-from app.models.agent_session import AgentSession
-from app.models.agent_step import AgentStep
+from app.models.agent.agent_approval import AgentApproval
+from app.models.agent.agent_artifact import AgentArtifact
+from app.models.agent.agent_event import AgentEvent
+from app.models.agent.agent_message import AgentMessage
+from app.models.agent.agent_run import AgentRun
+from app.models.agent.agent_session import AgentSession
+from app.models.agent.agent_step import AgentStep
 from app.models.api_case import APICase
 from app.models.api_document import ApiDocument
 from app.models.function_case import FunctionCase
-from app.models.llm_model import LLMModel
-from app.models.llm_provider import LLMProvider
-from app.models.llm_scene_config import LLMSceneConfig
+from app.models.llm.llm_model import LLMModel
+from app.models.llm.llm_provider import LLMProvider
+from app.models.llm.llm_scene_config import LLMSceneConfig
 from app.models.project import Project
 from app.models.requirement_doc import RequirementDoc
 from app.models.role import Role
 from app.models.user import User
 from app.models.user_project_permission import UserProjectPermission
 from app.models.user_role import UserRole
-from app.schemas.llm_gateway import LLMResult
-from app.services import agent_approval_service, agent_artifact_service, agent_run_service
+from app.schemas.llm.llm_gateway import LLMResult
+from app.services.agent import agent_approval_service, agent_artifact_service, agent_run_service
 from app.workers.agent_worker import AgentWorker
 
 PROJECT_A = 101

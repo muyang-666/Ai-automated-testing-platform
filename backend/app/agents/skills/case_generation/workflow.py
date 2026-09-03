@@ -71,9 +71,9 @@ from app.agents.tools.case_validation_tools import (
     ValidateCaseSchemaTool,
 )
 from app.exceptions.llm_errors import LLMError
-from app.schemas.llm_gateway import LLMMessage, LLMRequest
-from app.services import agent_approval_service, agent_artifact_service
-from app.services.llm_client_service import _apply_prompt_template, get_model_config_by_scene
+from app.schemas.llm.llm_gateway import LLMMessage, LLMRequest
+from app.services.agent import agent_approval_service, agent_artifact_service
+from app.services.llm.llm_client_service import _apply_prompt_template, get_model_config_by_scene
 
 SKILL_CODE = "case_generation"
 SKILL_VERSION = "v1"

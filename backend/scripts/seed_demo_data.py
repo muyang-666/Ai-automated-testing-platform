@@ -29,7 +29,7 @@ from app.models import (
 )
 from app.services.ai_service import generate_mock_test_code
 from app.services.auth_service import hash_password, init_default_auth_data
-from app.services.llm_config_service import init_default_scene_configs
+from app.services.llm.llm_config_service import init_default_scene_configs
 from app.services.user_service import replace_user_project_permissions, replace_user_roles
 
 

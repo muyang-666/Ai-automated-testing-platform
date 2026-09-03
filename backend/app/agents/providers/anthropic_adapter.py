@@ -18,7 +18,7 @@ from app.exceptions.llm_errors import (
     LLMRateLimitError,
     LLMTimeoutError,
 )
-from app.schemas.llm_gateway import LLMRequest, LLMResult, LLMToolCall
+from app.schemas.llm.llm_gateway import LLMRequest, LLMResult, LLMToolCall
 
 
 class AnthropicAdapter(LLMProviderAdapter):

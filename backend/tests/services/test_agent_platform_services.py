@@ -8,14 +8,14 @@ from app.agents.runtime.errors import (
     AgentPermissionError,
     InvalidStateTransitionError,
 )
-from app.models.agent_approval import AgentApproval
-from app.models.agent_artifact import AgentArtifact
-from app.models.agent_message import AgentMessage
-from app.models.agent_session import AgentSession
+from app.models.agent.agent_approval import AgentApproval
+from app.models.agent.agent_artifact import AgentArtifact
+from app.models.agent.agent_message import AgentMessage
+from app.models.agent.agent_session import AgentSession
 from app.models.project import Project
 from app.models.requirement_doc import RequirementDoc
 from app.models.user import User
-from app.services import (
+from app.services.agent import (
     agent_approval_service,
     agent_artifact_service,
     agent_run_service,

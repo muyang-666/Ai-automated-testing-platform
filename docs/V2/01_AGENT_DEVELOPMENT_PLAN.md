@@ -1,792 +1,299 @@
-# TestMind V2 Agent 开发主计划
+# V2 开发主计划：Pi 架构的 Python 实现
 
-> 文档用途：供 Claude Code 直接读取并按任务编号实施代码。
->
-> 当前状态：仅完成规划，尚未开始 V2 代码实现。
->
-> 版本路线：V2.1 对话 Agent Shell + 用例生成 Skill → V2.2 根因分析 Skill → V2.3 测试 Skill 扩展与细节优化 → V2.4 待定。
+> 生效：2026-09-03。用户已确认：V2 只做 Agent 基本架构，测试能力扩展全部归入 V3。
+> 状态：规划完成，V2-P01～P10 尚未实施；已有旧版代码只作为复用基线。
+> 路线：V1 既有平台 → V2 Python 对话 Agent 基础 → V3 测试领域 Skills。
+> 本文件替代旧 V2.1/V2.2/V2.3 任务路线，不代表 Pi 全功能复刻或官方 Python 移植。
 
 ## 0. Claude Code 执行协议
 
-### 0.1 角色分工
-
-- 用户与 Codex 负责产品范围、技术方案、任务拆分和最终验收。
-- Claude Code 负责用户明确指定任务的源码检查、编码、测试和开发记录。
-- Claude Code 不负责自行改变产品方向或提前实现后续版本。
-
-### 0.2 每次任务开始前必须执行
-
-1. 阅读 `docs/PROJECT_RECORD.md`。
-2. 阅读本文件。
-3. 阅读 `docs/V2/06_TEST_AGENT_PLATFORM_ARCHITECTURE.md`。
-4. 当前任务属于 V2.1 时，阅读 `docs/V2/04_CASE_GENERATION_AGENT_PRD.md`。
-5. 当前任务属于 V2.1 时，阅读 `docs/V2/05_CASE_GENERATION_AGENT_TECHNICAL_DESIGN.md`。
-6. 阅读 `docs/V2/02_DEVELOPMENT_RECORD.md`，确认真实进度和遗留问题。
-7. 阅读 `docs/V2/03_ACCEPTANCE_CHECKLIST.md` 中与当前版本相关的门禁。
-8. 检查 `git status --short`，保留用户已有修改。
-9. 只读检查当前任务涉及的源码，不做全仓库无目的扫描。
-10. 在修改前输出简短实施摘要：
-   - 当前任务编号和目标；
-   - 对现有代码的事实判断；
-   - 准备新增/修改的完整文件列表；
-   - 验证命令；
-   - 风险和回滚方式。
-11. 如果任务范围、文件边界、依赖和外部操作都符合用户已发送的单任务提示词，输出摘要后直接编码，不等待二次确认。
-
-### 0.3 实施规则
-
-- 一次只执行一个任务编号，例如 `V2.1-T03`。
-- 用户将 Codex 生成的单任务提示词交给 Claude Code，即视为已经授权该提示词范围内的实现和非破坏性验证。
-- Claude Code 完成只读核验和简短实施摘要后直接编码，不需要再次等待确认。
-- 不得把多个任务合并为一次大改造。
-- 不得修改当前任务文件范围之外的文件；确有必要时先停止并说明原因。
-- 新实现必须保留 V1 旧接口或 feature flag，直到当前版本完成影子评测。
-- 数据库变化必须提供 Alembic 迁移和回滚，不依赖 `Base.metadata.create_all()` 修改已有表。
-- 所有工具输入和 LLM 结构化输出使用 Pydantic 校验。
-- 不允许 Agent 获得任意 SQL、Shell、文件系统或任意 URL 工具。
-- 不允许自动保存生成用例，不允许自动重跑有副作用的请求。
-- 不记录隐藏思维链；只记录可观察步骤、工具、脱敏摘要和验证结果。
-- 不把未执行的测试写成通过，不编造数量、覆盖率或性能提升。
-- 只有新增依赖、真实环境或网络操作、数据库范围变化、破坏性操作、任务越界或无法安全合并用户修改时才暂停询问。
-
-### 0.4 每次任务结束必须执行
-
-1. 运行当前任务约定的单元测试、集成测试或前端构建。
-2. 运行受影响的 V1 回归测试。
-3. 检查数据库迁移的 upgrade/downgrade（如涉及）。
-4. 输出实际修改文件、实际命令、真实结果和未解决问题。
-5. 更新 `docs/V2/02_DEVELOPMENT_RECORD.md` 对应任务记录。
-6. 只有在证据完整时，才能把任务状态改为“已完成”。
-
-## 1. 产品目标
-
-### 1.1 V2 总目标
-
-在不破坏 V1 自动化测试闭环的前提下，把以下两条 one-shot LLM 链路改造成受控 Agent：
-
-1. 需求文本/接口文档 → 测试用例。
-2. 测试失败记录 → 结构化根因结论。
-
-Agent 的价值必须来自：
-
-- 主动读取授权范围内的业务上下文；
-- 调用白名单领域工具；
-- 使用确定性规则校验模型结果；
-- 根据缺口进行有限修正；
-- 输出可追踪证据；
-- 遵守人工审批和资源上限。
-
-只增加 Prompt 次数，不算完成 Agent 改造。
-
-### 1.2 非目标
-
-V2.1–V2.3 不做：
-
-- 多 Agent 协作或 Agent swarm；
-- 长期跨项目记忆；
-- 向量数据库和完整 RAG 平台；
-- 任意 SQL、Shell、网页或文件工具；
-- Kubernetes 或微服务拆分；
-- 自动保存全部候选用例；
-- 未审批的自动重跑；
-- 无限反思和无限修复循环。
-
-## 2. 当前代码事实
-
-Claude Code 实施前必须用源码重新确认，以下是规划时的事实基线：
-
-### 2.1 用例生成
-
-- 功能用例生成入口：`backend/app/services/function_case_generation_service.py`。
-- 接口用例生成入口：`backend/app/services/api_document_generation_service.py`。
-- 两条链路当前都是：读取单个来源 → 拼 Prompt → 调用一次 LLM → JSON 修复/基础校验 → 前端预览 → 人工保存。
-- `generate_count` Schema 已存在，但当前实际生成数量主要由模型自行决定。
-- 接口文档的结构化 headers/params/body/response 字段没有被完整用于生成上下文。
-- 当前没有历史用例检索、覆盖矩阵、去重、缺口修正、Agent 状态和运行轨迹。
-- `backend/app/services/ai_service.py` 当前主要是确定性 pytest 规则生成，不是 LLM 用例生成入口；其中的上下文规范化和代码校验可作为只读工具复用。
-
-### 2.2 失败分析
-
-- 入口：`backend/app/services/analysis_service.py`。
-- 当前把 APICase、TestRun、日志、响应和当前生成代码拼入一个 Prompt，调用一次 LLM。
-- 输出是自由文本，风险等级依赖正则提取。
-- 分析旧运行时读取当前用例和当前代码，不是运行时冻结快照。
-- `TestRun` 缺少实际请求快照、code hash、exit code、duration、runner/parser version 等证据。
-- `SceneStepRun` 已有实际请求、响应、断言和变量提取，但当前失败分析没有使用。
-- 配置中心有 `failure_analysis` 场景，现有分析服务仍绕过统一 LLM Client。
-
-### 2.3 基础设施
-
-- 后端：FastAPI、同步 SQLAlchemy、MySQL、Pydantic、httpx、pytest。
-- 前端：React、Vite、Axios、Ant Design。
-- 模型配置：LLM Provider、Model、Scene Config 已存在。
-- 当前依赖 `Base.metadata.create_all()`，没有正式迁移链路。
-- 当前没有独立的 Agent/平台测试目录，`tests_generated` 是测试产物，不是回归测试。
-
-## 3. 已确定的技术决策
-
-| 决策项 | 选择 |
-|---|---|
-| Agent 类型 | 单 Agent、有限状态工作流 |
-| 编排方式 | 代码定义状态图，不要求首期引入 Agent 框架 |
-| 产品形态 | 对话式测试 Agent + 结构化 Artifact 工作区 |
-| LLM 接入 | Anthropic Adapter + OpenAI-compatible Adapter，保留旧包装器 |
-| 工具 | 白名单领域工具，Pydantic 输入/输出 |
-| 输出 | JSON Schema/Pydantic；不再依赖自由文本正则 |
-| 任务执行 | MySQL 持久化任务 + 单 Worker；前端轮询 |
-| 数据库变更 | Alembic migration |
-| 人工边界 | 保存用例、主动探测、重新执行必须审批 |
-| 评测 | 结果、工具、轨迹、安全、稳定性、延迟和成本 |
-| 发布 | legacy/agent 双链路影子对比，支持快速回滚 |
-
-## 4. 目标架构
-
-```text
-React Agent Workspace
-  → 对话 / GATE / Artifact / 审批
-  → Session API：消息 / 事件 / Skill / Run / Artifact
-  → MySQL：sessions / messages / events / runs / steps / artifacts
-  → Agent Worker
-      → Skill Router / Skill Registry
-      → Workflow Registry
-      → Bounded Agent Runner
-      → LLM Gateway
-      → Tool Registry
-      → Deterministic Validators
-      → 现有业务 Service 和数据表
-```
-
-### 4.1 公共组件职责
-
-#### LLM Gateway
-
-- 根据 scene_code 获取 Provider 和 Model。
-- 支持 system/user 多消息。
-- 支持结构化输出能力标记和兼容降级。
-- 统一超时、429/5xx 有界重试、错误分类和 usage 采集。
-- 返回内容、模型、Provider、token、耗时、request_id 和 finish_reason。
-- 保留现有调用函数作为兼容入口。
-
-#### Agent Runner
-
-- 管理状态、步骤、预算、取消、heartbeat 和终止条件。
-- 每个步骤使用独立短事务，不跨 LLM 调用持有数据库事务。
-- 状态至少包含：queued/running/waiting_approval/succeeded/failed/cancelled/interrupted。
-
-#### Tool Registry
-
-每个工具必须声明：
-
-- 名称和用途；
-- Pydantic 输入/输出；
-- read/write；
-- 所需权限；
-- 是否幂等；
-- 是否需要审批；
-- 最大返回大小和超时。
-
-#### Guardrails
-
-- 项目权限；
-- Prompt Injection 隔离；
-- Authorization、Cookie、Token、password、secret、API Key 脱敏；
-- 上下文长度治理；
-- 结构化输出校验；
-- 工具和模型调用预算；
-- 写操作审批。
-
-## 5. V2.1：用例生成 Agent
-
-### 5.1 版本目标
-
-先建立最小对话式测试 Agent Shell，再把“需求生成功能用例”和“接口文档生成接口用例”实现为第一个 `case_generation` Skill，同时保留两个 V1 生成接口作为 baseline 和回滚路径。
-
-### 5.2 用户流程
-
-```text
-用户在 Agent 工作台描述目标，或从需求/接口文档点击“交给 Agent”
-  → 创建或恢复 Session，并选择 case_generation Skill
-  → 确认来源和范围 [GATE]
-  → Agent 读取来源、项目、模块和已有用例
-  → 拆解原子条款
-  → 规划覆盖维度
-  → 用户确认覆盖计划 [GATE]
-  → 生成候选用例
-  → 本地校验、去重、计算覆盖矩阵
-  → 发现缺口后定向修正，最多 2 轮
-  → waiting_approval
-  → 对话区展示进度，Artifact 区展示覆盖证据
-  → 用户勾选并批准保存 [GATE]
-```
-
-### 5.3 状态与资源上限
-
-```text
-INIT
-→ LOAD_CONTEXT
-→ DECOMPOSE_SOURCE
-→ PLAN_COVERAGE
-→ GENERATE_CANDIDATES
-→ LOCAL_VALIDATE
-→ REVIEW_COVERAGE
-→ REPAIR_GAPS（最多 2 轮）
-→ WAITING_APPROVAL
-→ SAVE_SELECTED / CANCELLED
-```
-
-- 模型调用最多 4 次。
-- 修正最多 2 轮。
-- 达到覆盖停止条件后立即结束生成。
-- 未经审批保存数量必须为 0。
-
-### 5.4 工具白名单
-
-- `load_source_context`
-- `load_project_module_context`
-- `list_existing_cases`
-- `list_related_api_documents`
-- `validate_case_schema`
-- `validate_case_business_rules`
-- `deduplicate_cases`
-- `compute_coverage_matrix`
-- `dry_run_api_case_codegen`
-
-`dry_run_api_case_codegen` 只能在内存中调用现有规则方法检查候选是否可生成合法 pytest；禁止落库、写文件和发送真实请求。
-
-### 5.5 中间产物合同
-
-```json
-{
-  "source": {"type": "requirement", "id": 1},
-  "atomic_clauses": [
-    {"clause_id": "REQ-001", "text": "...", "priority": "P1"}
-  ],
-  "assumptions": [],
-  "coverage_plan": [],
-  "candidates": [
-    {
-      "candidate_id": "CASE-001",
-      "payload": {},
-      "covered_clause_ids": ["REQ-001"],
-      "validation_errors": [],
-      "revision": 1
-    }
-  ],
-  "coverage_matrix": {},
-  "warnings": []
-}
-```
-
-未知的接口、字段、参数和业务规则必须进入 `assumptions`，不得静默当作事实。
-
-### 5.6 API 合同
-
-- `POST /agent-runs/case-generation`
-- `GET /agent-runs/{run_id}`
-- `GET /agent-runs/{run_id}/steps`
-- `POST /agent-runs/{run_id}/cancel`
-- `POST /agent-runs/{run_id}/refine`
-- `POST /agent-runs/{run_id}/save-candidates`
-
-保存接口只接收 `candidate_id[]`。后端从 Agent 输出中重新读取候选，校验来源、权限、candidate hash 和运行状态，不信任前端提交的完整 payload。
-
-### 5.7 任务拆分
-
-#### V2.1-T01：冻结 V1 Baseline
-
-目标：为两条现有生成链路建立可重复测试，后续能够做 legacy/agent 对比。
-
-主要文件：
-
-- 新增 `backend/tests/services/test_function_case_generation_service.py`
-- 新增 `backend/tests/services/test_api_document_generation_service.py`
-- 新增 `backend/tests/fixtures/`
-- 必要时小范围重构现有生成服务以注入 fake LLM
-
-验收：
-
-- 不调用真实模型即可覆盖成功、非法 JSON、字段缺失、权限和保存流程。
-- V1 接口响应 Schema 不变化。
-- 记录 baseline 样本，不预设虚假的质量提升数字。
-
-#### V2.1-T02：引入迁移与 Agent 平台数据模型
-
-目标：建立可回滚的数据库变更基础。
-
-主要文件：
-
-- 新增 `alembic.ini`
-- 新增 `backend/alembic/`
-- 新增 AgentSession、AgentMessage、AgentEvent、AgentRun、AgentStep、AgentArtifact、AgentApproval 模型
-- 修改 `backend/app/models/__init__.py`
-
-首期字段以 `docs/V2/03_ACCEPTANCE_CHECKLIST.md` 和真实查询需求为准，不增加没有消费者的字段。
-
-验收：
-
-- 空数据库可 upgrade 到最新版本。
-- 现有数据库可 stamp/upgrade，不丢失 V1 数据。
-- downgrade 能删除本任务新增结构，不影响 V1 表。
-
-#### V2.1-T03：统一 LLM Gateway 与 Provider Adapter
-
-目标：在保持旧函数兼容的前提下增加结构化调用和可观测元数据。
-
-主要文件：
-
-- 修改 `backend/app/services/llm_client_service.py`
-- 必要时新增 `backend/app/services/llm_gateway.py`
-- 新增 `backend/app/agents/providers/anthropic_adapter.py`
-- 新增 `backend/app/agents/providers/openai_compatible_adapter.py`
-- 修改 `backend/app/models/llm_model.py` 和对应 Schema/迁移
-- 新增 `backend/tests/services/test_llm_gateway.py`
-
-验收：
-
-- 旧生成链路仍可调用。
-- 配置错误、超时、Provider HTTP 错误和输出校验错误类型可区分。
-- 429/5xx 只做有界重试，非重试错误不回退或重复调用。
-- 测试不输出真实 API Key。
-
-#### V2.1-T04：实现对话 Agent Runtime、Skill Registry 与 Worker
-
-目标：实现 Session、Message、Event、Skill Router、Skill/Tool Registry、Artifact、Approval 和固定工作流所需的最小运行时，不实现具体业务 Skill。
-
-为控制单次改动规模，分成两个连续子任务：
-
-- `V2.1-T04A`：Runtime 合同、状态转换、Skill/Tool Registry、平台 Service 和 Fake Workflow 测试。
-- `V2.1-T04B`：Worker 原子抢占、heartbeat、取消检查和中断恢复。
-
-主要文件：
-
-- 新增 `backend/app/agents/runtime.py`
-- 新增 `backend/app/agents/state.py`
-- 新增 `backend/app/agents/registry.py`
-- 新增 `backend/app/agents/platform/`
-- 新增 `backend/app/agents/tools/base.py`
-- 新增 `backend/app/workers/agent_worker.py`
-- 新增 `backend/app/services/agent_run_service.py`
-- 新增运行时测试
-
-验收：
-
-- fake Skill 可以通过一条用户消息启动，并产生 Session、Event 和 Artifact。
-- fake workflow 可以 queued → running → succeeded。
-- 支持 failed、cancelled、interrupted 和 heartbeat 超时恢复。
-- 同一任务不会被两个 Worker 重复执行。
-- 最大步骤和总超时生效。
-
-#### V2.1-T05：实现用例生成工具
-
-目标：把数据库读取和确定性校验封装为带权限的纯领域工具。
-
-主要文件：
-
-- 新增 `backend/app/agents/tools/case_context_tools.py`
-- 新增 `backend/app/agents/tools/case_validation_tools.py`
-- 新增 `backend/app/agents/validators/case_validators.py`
-- 复用现有 Service，不把 SQL 写进 Agent Prompt
-- 新增权限、去重、覆盖和 dry-run 测试
-
-验收：
-
-- 每个工具都有 Pydantic 输入/输出。
-- 跨项目读取被拒绝。
-- dry-run 不写数据库、不写测试文件、不发请求。
-- 覆盖矩阵由确定性代码计算。
-
-#### V2.1-T06：实现用例生成 Skill 与 Workflow
-
-前置门禁：`V2.1-T05.1` 必须修复 API `method+url` 过度去重和已有功能用例字段别名不一致问题，并完成回归后才能开始本任务。
-
-目标：实现 5.3 的状态图和有限修正循环。
-
-主要文件：
-
-- 新增 `backend/app/agents/workflows/case_generation.py`
-- 新增 `backend/app/agents/skills/case_generation/skill.yaml`
-- 新增 `backend/app/agents/skills/case_generation/instructions.md`
-- 新增 `backend/app/agents/prompts/case_generation/`
-- 新增 Workflow 单元测试和集成测试
-
-验收：
-
-- requirement 和 api_document 两种来源均支持。
-- Skill 可由显式 skill_code 或对话路由启动。
-- 范围确认和覆盖计划确认形成可恢复 GATE。
-- 非法模型输出进入一次结构化修正，不无限重试。
-- 只修正缺口和非法候选，不全量重生成。
-- 候选具有 clause trace、assumptions、validation_errors 和 revision。
-
-#### V2.1-T07：实现会话、消息、Artifact API 和保存审批
-
-目标：暴露 Session、Message、Event、Skill Run、Artifact、取消、修正和保存审批接口。
-
-主要文件：
-
-- 新增 `backend/app/schemas/agent.py`
-- 新增 `backend/app/routers/agent_router.py`
-- 修改 `backend/app/main.py`
-- 新增 API 集成测试
-
-验收：
-
-- 创建接口立即返回 202 和 run_id。
-- Session 消息可以启动或继续一个 Skill Run。
-- GATE 可以批准、修改或暂停。
-- Artifact 与 Session/Run 关联并可恢复查看。
-- 查询和步骤接口执行项目权限校验。
-- 重复保存幂等。
-- 未处于 waiting_approval 的任务不能保存。
-- V1 生成和保存接口仍可使用。
-
-#### V2.1-T08：接入 Agent 对话工作台与结构化 Artifact
-
-目标：新增统一 Agent 工作台，在需求页和接口文档页增加“交给 Agent”，实现对话、GATE、进度、Artifact、覆盖矩阵和人工保存。
-
-主要文件：
-
-- 新增 `frontend/src/api/agent.js`
-- 新增 `frontend/src/pages/AgentWorkspacePage.jsx`
-- 新增 `frontend/src/components/AgentConversation.jsx`
-- 新增 `frontend/src/components/AgentGateCard.jsx`
-- 新增 `frontend/src/components/AgentArtifactPanel.jsx`
-- 新增 `frontend/src/components/AgentRunTimeline.jsx`
-- 新增 `frontend/src/components/CoverageMatrix.jsx`
-- 修改 `frontend/src/pages/RequirementPage.jsx`
-- 修改 `frontend/src/pages/ApiDocPage.jsx`
-
-验收：
-
-- 任务进行中可轮询并取消。
-- 用户可在当前会话通过自然语言启动和局部修正。
-- 范围与覆盖计划需要明确确认。
-- 页面展示步骤、候选、覆盖、假设和警告。
-- 用户可勾选候选保存。
-- 旧生成入口可通过 feature flag 保留。
-- `npm run build` 通过。
-
-#### V2.1-T09：影子评测与版本验收
-
-目标：用固定样本对比 legacy 和 Agent，确认是否可以切换默认入口。
-
-主要文件：
-
-- 新增 `backend/tests/evals/case_generation/`
-- 更新 `docs/V2/02_DEVELOPMENT_RECORD.md`
-- 更新 `docs/V2/03_ACCEPTANCE_CHECKLIST.md`
-
-验收：
-
-- Schema、权限、脱敏、审批和资源上限硬门禁全部通过。
-- 输出覆盖率、重复率、幻觉率、专家接受率、延迟和 token 的真实 baseline/agent 对比。
-- 未达到门禁时保持 legacy 默认，不通过改文案掩盖问题。
-
-### 5.8 V2.1 完成定义
-
-V2.1 只有同时满足以下条件才完成：
-
-- V2.1-T01 至 T09 全部有真实验证证据。
-- 用户可以通过对话或“交给 Agent”启动 case_generation Skill。
-- 需求和接口文档均可通过 Agent 生成候选。
-- Agent 会读取上下文、调用确定性工具并针对缺口有限修正。
-- 所有候选在用户审批前不会写入业务用例表。
-- legacy 接口仍可回滚。
-- V1 核心回归通过。
-
-## 6. V2.2：测试失败根因分析 Agent
-
-### 6.1 版本目标
-
-把自由文本失败分析升级为基于冻结执行证据、确定性预诊断、历史对比和证据验证的根因分析 Agent。
-
-### 6.2 硬前置
-
-V2.2 不得直接从 Prompt 改造开始，必须先让执行记录能够复现当时的证据：
-
-- 用例定义快照和 hash；
-- 实际执行代码快照和 code hash；
-- 参数替换后的实际请求摘要；
-- Python、pytest、runner/parser version；
-- subprocess exit code、timeout 和 duration；
-- 场景失败步骤与上游步骤关系。
-
-### 6.3 状态与资源上限
-
-```text
-INIT
-→ AUTHORIZE_AND_FREEZE_CONTEXT
-→ REDACT_ARTIFACTS
-→ DETERMINISTIC_PRE_DIAGNOSIS
-→ BUILD_HYPOTHESES
-→ SELECT_READ_ONLY_TOOLS
-→ VERIFY_EVIDENCE
-→ FETCH_ONE_MORE_EVIDENCE_ROUND（最多 1 轮）
-→ SYNTHESIZE_RESULT
-→ CONFIDENCE_GATE
-→ DONE / INCONCLUSIVE
-```
-
-- 模型调用最多 2 次。
-- 工具调用最多 6 次。
-- 额外取证最多 1 轮。
-- 默认无主动重跑工具。
-
-### 6.4 只读工具白名单
-
-- `load_run_snapshot`
-- `load_case_definition`
-- `parse_pytest_failure`
-- `audit_generated_code`
-- `compare_case_history`
-- `load_scene_trace`
-- `lookup_api_contract`
-- `check_environment_evidence`
-- `redact_artifact`
-
-### 6.5 输出合同
-
-```json
-{
-  "target": {"type": "test_run", "id": 123},
-  "diagnosis_status": "confirmed | likely | inconclusive",
-  "primary_cause": {
-    "category": "assertion",
-    "subtype": "brittle_exact_match",
-    "summary": "...",
-    "confidence": 0.88
-  },
-  "hypotheses": [],
-  "evidence": [
-    {
-      "evidence_id": "EV-001",
-      "source_type": "test_run",
-      "source_id": 123,
-      "path": "parsed_failure.actual",
-      "excerpt": "...",
-      "supports": true
-    }
-  ],
-  "recommendations": [],
-  "missing_evidence": [],
-  "risk_level": "low | medium | high"
-}
-```
-
-`confidence` 表示诊断可信度，`risk_level` 表示影响严重度。证据不足时必须允许 `inconclusive`。
-
-### 6.6 任务拆分
-
-#### V2.2-T01：冻结单用例执行证据
-
-主要文件：
-
-- 修改 `backend/app/models/test_run.py`
-- 修改 `backend/app/services/run_service.py`
-- 修改 `backend/app/utils/pytest_runner.py`
-- 新增迁移和执行快照测试
-
-验收：旧运行分析不再依赖修改后的当前用例和代码；pytest subprocess 有 timeout；快照敏感字段有脱敏策略。
-
-#### V2.2-T02：实现确定性证据解析工具
-
-主要文件：
-
-- 新增 `backend/app/agents/tools/rca_context_tools.py`
-- 新增 `backend/app/agents/tools/rca_diagnostic_tools.py`
-- 新增 `backend/app/agents/validators/evidence_validators.py`
-- 新增典型失败 fixture 和测试
-
-验收：SyntaxError、ImportError、NameError、断言差异、401/403、参数错误、5xx、DNS/timeout 可被结构化提取；工具不执行代码、不访问任意 URL。
-
-#### V2.2-T03：实现根因分析 Workflow
-
-主要文件：
-
-- 新增 `backend/app/agents/workflows/failure_rca.py`
-- 新增 `backend/app/agents/prompts/failure_rca/`
-- 新增 Workflow 测试
-
-验收：每个事实性结论必须绑定可解析 evidence_id；缺证据样本输出 inconclusive；无证据高置信结论被 Validator 拒绝。
-
-#### V2.2-T04：实现根因分析 API 与兼容层
-
-主要文件：
-
-- 扩展 `backend/app/routers/agent_router.py`
-- 修改 `backend/app/services/analysis_service.py` 为兼容 façade 或保留 legacy feature flag
-- 扩展 `backend/app/models/ai_analysis.py` 和迁移
-- 新增 API 测试
-
-验收：查看已有分析与重新分析分离；同一 context hash 不重复创建活跃任务；旧 GET/POST 行为有明确兼容策略。
-
-#### V2.2-T05：接入单用例失败分析前端
-
-主要文件：
-
-- 新增 `frontend/src/components/RootCauseEvidence.jsx`
-- 修改 `frontend/src/pages/RunPage.jsx`
-- 修改 `frontend/src/pages/CasePage.jsx`
-
-验收：展示状态、根因、置信度、风险、证据、备选假设、缺失证据和建议；不再用正则解析自由文本；`npm run build` 通过。
-
-#### V2.2-T06：扩展场景失败分析
-
-主要文件：
-
-- 扩展 RCA context tools
-- 修改 `frontend/src/pages/ScenePage.jsx` 或 `SceneStepPage.jsx`
-- 新增 SceneRun/SceneStepRun 集成测试
-
-验收：失败步骤可以引用上游变量、提取结果和断言证据；上游失败与当前步骤失败可区分。
-
-#### V2.2-T07：根因评测与灰度切换
-
-主要文件：
-
-- 新增 `backend/tests/evals/failure_rca/`
-- 更新 V2 开发记录和验收清单
-
-验收：输出主分类、细分类、证据正确率、inconclusive 识别、稳定性、延迟和 token 的真实结果；安全硬门禁通过后才允许切换默认入口。
-
-### 6.7 V2.2 完成定义
-
-- V2.2-T01 至 T07 全部有真实证据。
-- TestRun 和 SceneStepRun 均可分析。
-- 旧运行使用冻结证据，不读取变化后的当前代码冒充运行代码。
-- 每个根因都有证据引用，证据不足可返回 inconclusive。
-- 默认没有自动重跑和任意网络探测。
-- legacy 失败分析可回滚。
-
-## 7. V2.3：测试 Skill 扩展与细节优化
-
-V2.3 在优化 V2.1/V2.2 的质量、可靠性和使用体验基础上，增加测试数据准备和缺陷描述两个 Skill。写环境数据的高风险工具必须单独验收。
-
-### V2.3-T01：安全加固
-
-- Prompt Injection 测试集
-- 敏感字段递归脱敏
-- 工具权限和跨项目越权测试
-- 审批动作幂等与审计
-- LLM API Key 存储方案评估
-
-### V2.3-T02：可观测性与成本
-
-- 统一结构化日志
-- run_id、step_id、project_id、user_id 关联
-- token、延迟、错误码和重试统计
-- 卡死任务和 heartbeat 恢复
-- 慢工具和高成本运行查询
-
-### V2.3-T03：前端交互
-
-- Agent 进度和取消体验
-- 覆盖矩阵和根因证据可读性
-- 历史运行、模型和 Prompt 版本展示
-- 失败重试和错误提示
-- legacy/agent 对比入口
-
-### V2.3-T04：评测与回归工程
-
-- 固定离线样本版本
-- 确定性 grader
-- 可观察轨迹约束
-- 重复运行稳定性
-- CI 中执行安全硬门禁和 V1 回归
-
-### V2.3-T05：性能与数据治理
-
-- 上下文裁剪和重复内容消除
-- AgentStep 大字段归档策略
-- 数据保留与删除关联
-- 索引、分页和查询性能
-- 迁移、备份和恢复演练
-
-### V2.3-T06：测试数据准备 Skill
-
-- 优先检索和复用已有测试数据或工具
-- 首期先实现只读查询、方案预览和工具选择
-- 写操作限定测试环境并使用 Approval
-- 参数 Schema、幂等键、回滚/清理说明和审计事件
-- 不允许模型生成任意 SQL 后直接执行
-
-### V2.3-T07：缺陷描述生成 Skill
-
-- 从用户描述、失败运行、请求响应、日志和附件读取证据
-- 生成结构化 defect_draft Artifact
-- 输出标题、环境、前置、步骤、实际、预期、影响和证据引用
-- 用户编辑和确认后才能复制或提交缺陷系统
-- 信息不足时列出待确认字段，不编造复现条件
-
-### V2.3 完成定义
-
-- V2.1、V2.2 的安全硬门禁进入自动化测试。
-- 测试数据准备和缺陷描述 Skill 通过独立权限与 Artifact 验收。
-- Agent 运行有完整可观察轨迹和成本统计。
-- 关键页面可用性经过人工验收。
-- V1、V2.1、V2.2 回归均通过。
-- 开发记录和实际系统状态一致。
-
-## 8. V2.4：待定
-
-V2.4 不在当前实施范围内。
-
-只有完成 V2.1–V2.3 并获得真实运行数据后，用户与 Codex 才决定是否选择以下方向之一：
-
-- 受控重跑和验证动作；
-- 报告 Agent；
-- 场景生成 Agent；
-- 检索增强；
-- 更可靠的分布式任务队列；
-- 对外集成或插件能力。
-
-Claude Code 不得提前为 V2.4 新增表、接口、抽象层或依赖。
-
-## 9. 跨版本验收门禁
-
-### 硬门禁
-
-- JSON/Pydantic 输出合法。
-- 未授权跨项目访问数为 0。
-- secret 出站泄漏数为 0。
-- 未审批自动保存/重跑数为 0。
-- 不超过最大步骤、工具和模型调用预算。
-- 所有数据库迁移可升级、可回滚。
-- V1 核心链路仍可用。
-
-### 质量指标
-
-质量指标先测 legacy baseline，再锁定 V2 阈值，不预先编造目标：
-
-- 用例条款覆盖率、重复率、幻觉率、专家接受率；
-- 根因分类、证据正确率、inconclusive 识别、专家可采信性；
-- 重复运行稳定性；
-- p50/p95 延迟、token 和模型调用成本。
-
-## 10. Claude Code 任务提示词模板
-
-用户与 Codex 每次只把一个任务编号交给 Claude Code：
-
-```text
-请执行 TestMind 任务：<任务编号，例如 V2.1-T01>。
-
-开始前必须阅读：
-1. docs/PROJECT_RECORD.md
-2. docs/V2/01_AGENT_DEVELOPMENT_PLAN.md
-3. docs/V2/06_TEST_AGENT_PLATFORM_ARCHITECTURE.md
-4. docs/V2/04_CASE_GENERATION_AGENT_PRD.md（V2.1 任务）
-5. docs/V2/05_CASE_GENERATION_AGENT_TECHNICAL_DESIGN.md（V2.1 任务）
-6. docs/V2/02_DEVELOPMENT_RECORD.md
-7. docs/V2/03_ACCEPTANCE_CHECKLIST.md
-
-严格要求：
-- 只完成该任务，不提前实现后续任务或版本。
-- 先只读核验真实源码和 git status。
-- 修改前先输出目标、事实判断、完整文件清单、验证命令、风险与回滚方式。
-- 保留用户已有修改，不覆盖无关文件。
-- 实现后运行计划书规定的测试和受影响的 V1 回归。
-- 把实际命令、真实结果、问题和修改文件写入 V2 开发记录。
-- 没有证据不得标记完成，不得编造指标。
-
-现在完成源码核验，输出简短实施摘要；若未触发停止条件，直接编码、验证并更新开发记录，不等待二次确认。
-```
+1. 阅读 [总项目记录](../PROJECT_RECORD.md)、本计划、[架构](06_TEST_AGENT_PLATFORM_ARCHITECTURE.md)、[源码对照](10_PI_SOURCE_AUDIT.md)、[新开发记录](02_DEVELOPMENT_RECORD.md) 和 [验收清单](03_ACCEPTANCE_CHECKLIST.md)。
+2. 只实施用户指定的一个 V2-Pxx；先核验源码并简短说明文件范围、验证和风险，然后直接编码，不重复索要同一范围的确认。
+3. 文档只是开发计划，不授权立刻实施全部任务。新增依赖、真实模型费用/数据出站、真实数据库变更及破坏性操作单独确认。
+4. 保留用户/其他 AI 的未提交修改。不得 reset/checkout/restore 覆盖，不启动或停止用户正在运行的服务。
+5. 先运行新增和直接相关测试；不为每个小改动重跑全部后端测试。P10 才组织一次版本级回归。
+6. 不能用改测试期望掩盖行为退化；不能把旧版测试数当成新 V2 的验收结果。
+7. Python 代码写在 TestMind；D:\pi 仅作源码参考，不作为运行依赖，不安装/执行 Pi，不复制其 Node.js 环境。
+8. 旧 V2.1-Txx 提示词已归档，不再作为当前开发指令。业务用例生成、根因分析、造数、缺陷生成禁止混入 V2。
+
+## 1. V2 交付定义
+
+登录后打开悬浮工作台，无需项目、需求或接口文档即可正常多轮对话。Agent 可决定直接回复、追问、加载已审核的通用 Skill，或调用白名单工具；工具结果回到上下文后可继续回复。普通回复不是 JSON 产物，单次失败不关闭整个会话。
+
+V2 必须具备：
+- user / assistant / tool 多轮消息和可重建上下文；
+- 文本、工具调用及流式事件的统一模型合同；
+- 有界 Agent Loop、参数校验、权限门禁和工具结果反馈；
+- 会话持久化、独立执行、流式 UI、取消、有限恢复；
+- 受控 Skill 发现/按需加载，以及上下文整理/压缩；
+- 启动预检、可观察诊断、故障测试和版本门禁。
+
+不是 V2：
+- 测试用例生成/覆盖/代码生成、失败根因分析、造数和缺陷描述的新增或改造；
+- 任意 Shell/SQL/URL/宿主文件工具、自动下载扩展、npm 插件体系、TUI；
+- 完整复刻 Pi 的会话树、分支、多模态、OAuth 登录、全部 Provider、多 Agent。
+这些非基础能力不因为 Pi 存在就自动纳入；测试业务转 V3，其余留后续独立决策。
+
+## 2. 源码基线与复用决策
+
+Pi 仓库已克隆到 D:\pi：
+- origin：https://github.com/earendil-works/pi.git
+- 参考提交：f41f80466e30f21cdcd4d52aba4a2c2cb6ee3cc6（2026-09-03）。
+- 不跟随 main 自动更新；开发前使用 git show <参考提交>:<路径>，不要为了看旧文件修改仓库分支。
+- 精确文件、符号、测试与 Python 对应见 [源码对照](10_PI_SOURCE_AUDIT.md)。
+- 复用架构思想；若翻译上游实现，记录源文件/commit 并保留 MIT 版权许可，不能宣称完全原创。
+
+TestMind 已有但不等于完整对话内核：
+- Gateway 有 text/json/pydantic 和 tool_calls 数据合同，目前主要是同步 complete；
+- Runner 是按 next_step/execute_step 推进的用例 Workflow，并非自由对话循环；
+- Session、Run、Message、Step、Event 等可复用，但项目外键非空、消息 max+1 序号、步骤边界心跳需要调整；
+- 前端每次发送固定创建 case_generation Run，必须替换为独立会话 turn 入口；
+- 旧业务代码和测试保留，不在本轮删除或“重新标记成未实现”。
+
+## 3. 实施顺序与里程碑
+
+| 任务 | 交付 | 依赖 | 状态 |
+|---|---|---|---|
+| V2-R01 | Agent / LLM 模块目录整理（结构，先行） | 无 | 已完成（2026-09-03，见 02 记录 2.1） |
+| V2-P01 | 源码行为基线、消息/事件/工具合同 | V2-R01 | 待实施 |
+| V2-P02 | 文本 + 工具调用 + 流式模型适配 | P01 | 待实施 |
+| V2-P03 | 纯 Python Agent Loop 与执行器 | P01、P02 | 待实施 |
+| V2-P04 | 无项目会话、Turn 持久化、并发/幂等迁移 | P01、P03 | 待实施 |
+| V2-P05 | Worker 分发、租约、取消和消息排队 | P03、P04 | 待实施 |
+| V2-P06 | 对话 API + 悬浮前端 + SSE | P02、P04、P05 | 待实施 |
+| V2-P07 | 通用 Skill 加载与选择 | P03、P06 | 待实施 |
+| V2-P08 | 上下文预算、摘要和安全恢复 | P04、P07 | 待实施 |
+| V2-P09 | 人工门禁、隔离与故障加固 | P05～P08 | 待实施 |
+| V2-P10 | 真实环境验证、回归和 V2 验收 | P01～P09 | 待实施 |
+
+里程碑 A：P03 后，Fake 模型能多轮聊天并调用无副作用工具。
+里程碑 B：P06 后，浏览器能正常聊天、展示真实消息、刷新恢复，不需要任何测试文档。
+里程碑 C：P10 后，基础架构验收；届时才启动 V3.1 用例生成接入。
+里程碑不是版本完成状态，不承诺未验证工期。
+
+### 代码目录（V2-R01 结构整理后，当前后端事实）
+
+分层保留 routers / schemas / services / models，内部按 Agent、LLM 归类：
+
+~~~text
+backend/app/models/    agent/{agent_session,agent_message,agent_run,agent_step,agent_event,agent_artifact,agent_approval}.py
+                       llm/{llm_provider,llm_model,llm_scene_config}.py
+backend/app/services/  agent/{agent_session_service,agent_run_service,agent_artifact_service,agent_approval_service}.py
+                       llm/{llm_config_service,llm_client_service,llm_gateway}.py
+                       agent_save_service.py（保留根：候选保存业务）
+backend/app/schemas/   agent/{api,platform}.py   llm/{llm_config,llm_gateway}.py
+backend/app/routers/   agent/agent_router.py  llm/llm_config_router.py
+backend/app/agents/    执行内核（Runtime/Registry/工具）与既有 case_generation Workflow 资源，未移动
+~~~
+
+注意：`services/agent` 是平台应用服务；`agents/` 是执行内核；目录分组是结构整理，不等于依赖已解耦。
+
+## 4. 任务实施卡
+
+### V2-P01 — 行为基线与合同
+
+参考：Pi agent/src/types.ts、ai/src/types.ts、agent-loop.test.ts、agent.test.ts。
+
+新增建议：
+- backend/app/agents/conversation/contracts.py、messages.py、events.py
+- backend/tests/conversation/test_contracts.py、fixtures/（合成模型响应）
+- docs/V2/10_PI_SOURCE_AUDIT.md 的实施映射及第三方来源记录
+
+内容：
+- 定义 ConversationTurn（一条用户请求）、ModelTurn（一次模型推理）、ToolCall/ToolResult，避免与旧 Skill Run 混淆；
+- 消息含稳定 ID、角色、text/tool_call/tool_result 内容块、tool_call_id；工具响应不能冒充系统消息；
+- 事件含 session_id、run_id、message_id、tool_call_id、sequence_no、schema_version，按事件类型约束必填字段；
+- 明确模型结束原因、空结果、截断、错误、取消、预算的区别；
+- 数据类型与纯函数不依赖数据库连接，不触发 create_all 或 import-time 建库。
+
+验收：文本/混合工具内容往返；未知事件拒绝；截断参数不执行；不把普通字符串作为用例 JSON 解析。
+不做：业务工具、网络调用、数据库迁移。
+
+### V2-P02 — 统一流式 Provider 边界
+
+参考：Pi ai/src/types.ts、agent-loop.ts 的 streamAssistantResponse。
+
+修改范围：现有 llm_gateway.py、schemas/llm_gateway.py、agents/providers/；新增流式专用模块及测试。保留旧 complete 和旧 wrapper 合同。
+
+内容：
+- 用 asyncio / httpx.AsyncClient 或 SDK 的实际异步接口扩展流式调用；不要在 FastAPI 事件循环中直接调用同步 SDK；
+- 首期实现现有 OpenAI-compatible、Anthropic 两类适配，按真实版本核验协议，不增加第三套模型接入；
+- text_delta、tool_call_delta、message_end、usage、finish_reason、request_id 归一化；
+- 工具参数分片只缓存，完整消息到达且未截断、参数校验通过后才能执行；
+- 文本模式不要求 JSON；只有显式结构化产物使用 response_model；
+- 空 content + 完整工具调用合法；空内容/仅推理内容/length 截断/拒绝/网络断流分别诊断；
+- 重试集中在一层并受本次 Run 预算约束；部分文本已发出或工具可能已执行时不透明重放；
+- 能力三态保留：已确认不支持 tools 则不发送；未知可受控尝试并明确失败，不声称兼容。
+
+验收：Fake 流分片、工具参数交错、空内容但有工具、length/断流、取消关闭连接、两 Adapter 合同；每次物理模型尝试计数，token 未知记未知而非 0。
+不调用真实模型，不改当前配置记录。
+
+### V2-P03 — Agent Loop 与通用工具执行
+
+参考：Pi agent.ts、agent-loop.ts（runLoop/prepareToolCall/executePreparedToolCall）。
+
+新增：conversation/loop.py、tool_executor.py、policy.py、budget.py，测试同目录映射。
+
+内容：
+- 核心只接收消息、Provider、Tool Registry、事件接收器及停止信号，不依赖 ORM；
+- 每轮按“上下文整理 → 模型 → 完整助手消息 → 工具校验/权限 → 工具结果 → 下一轮”执行；
+- 默认串行工具，预留只读并行接口；不得并发共享 SQLAlchemy Session；
+- 先用内存 calculator（Decimal，不使用 eval）/echo 等通用测试夹具验证，不查项目业务数据；
+- 未知工具/参数错误作为明确工具失败反馈给模型；基础设施失败/预算耗尽则结束本 Turn；
+- 补 max_model_calls、max_tool_calls、max_turns、wall_clock_deadline，防模型重复调用同一工具失控；
+- 工具结果按原调用顺序写入，tool_call_id 一一对应；工具可返回通用停止/等待信号；
+- 钩子修改参数后在 TestMind 中重新校验（与 Pi 的相关测试行为有意不同）。
+
+验收：普通聊天 0 工具；工具→回复；多步工具；恶意/未知工具；失败后有限修正；截断工具绝不执行；超限与取消；结果完成后的迟到事件被丢弃。
+不把每条消息硬编码路由到 case_generation；也不靠关键词 if/else 假装 Agent 决策。
+
+### V2-P04 — 会话持久化与迁移
+
+参考：Pi SessionManager/buildSessionContext 的重建语义；不照搬本地 JSONL 为产品唯一存储。
+
+范围：AgentSession/Run/Message/Event、相关 Schema/Service、增量 Alembic、SQLite 外键开启测试。
+
+设计：
+- 会话新增 mode=conversation/legacy_workflow；既有记录默认 legacy_workflow；
+- conversation Session/Run 的 project_id 允许 NULL；旧生成入口仍由服务端强制项目与来源校验；
+- 不创造 project_id=0 或占位项目，不改变 V1 业务表归属；
+- Run 复用为一次 ConversationTurn，workflow_code=conversation，和旧 case_generation 明确分流；
+- messages.content_json 存版本化内容块，模型工具消息必须完整保存并重建；既有文本消息仍可读；
+- 用户消息 + queued Run + 幂等键同事务；相同键同内容返回原 Run，不同内容 409；
+- 同一会话序号分配/活跃 Turn 串行化必须有数据库约束或锁，不能沿用 max+1 裸写；
+- 项目为空时只可通用聊天与无项目工具，身份从登录态取得，不能信任模型传入 user_id/project_id；
+- 新旧入口都按会话 mode 校验：旧 /agent/runs/{id} 等通用查询不能绕过 conversation 的 owner 隔离；旧生成接口不得把无项目 conversation Session 当合法业务会话；
+- 明确增量 revision 的真实 next id，不能假定库仍停在 0002；
+- 降级若已有 NULL 项目等新数据，必须预检后拒绝或提供无损处理方案，不自动删会话凑旧约束。
+
+验收：无项目聊天、旧会话兼容、owner 隔离、双连接并发、重试幂等、消息恢复、失败事务回滚、临时库 migration upgrade/downgrade。
+真实 MySQL 只在 P10 明确授权测试库验证。注意 database.py 导入当前可能执行建库，不能把导入当作只读检查。
+
+### V2-P05 — Worker、租约、取消和排队
+
+范围：workers/agent_worker.py、agent_run_service.py、conversation 持久化运行桥接及针对性测试。
+
+内容：
+- 一个 Worker 入口按 workflow_code 分发 ConversationRunner 和旧 Workflow Runner；不要建立两个都抢所有 queued 行的 Worker；
+- 运行时禁止在 FastAPI --reload startup 隐式启动常驻 Worker；
+- 心跳不再只依赖步骤完成：独立轻量机制、短事务和独立 DB Session，长模型调用不应被误判；
+- 抢占租约/执行代次（fencing token）与条件写入，失去租约的执行器不能继续落消息或产生后续副作用；
+- 默认一个会话一个活跃 Turn，新消息可显式 follow_up 入队；当前 Run 失败/中断后后续队列暂停，给用户恢复/取消选择；
+- abort 传递到模型流与合作式工具；不可中止的外部副作用必须如实标注，不把数据库 cancelled 等同于物理回滚；
+- 进程崩溃标记 interrupted；不自动重放未知是否成功的调用；
+- 暴露安全的 Worker 健康状态，队列无人消费时前端能解释。
+
+验收：两个 Worker 竞争、长调用 heartbeat、取消、过期 Worker 写入被拒、进程中断、队列排序、旧任务分发不回归。
+首期不实现自动抢占式 steer 修改正在执行的工具；Pi 的 steer 也不等于回滚已经发生的动作。
+
+### V2-P06 — 真正的对话 API 与悬浮前端
+
+范围：新增 conversation_router.py / conversation_service.py；前端 API 与现有 test-agent 组件，保持原登录流程。
+
+拟定 API（最终 DTO 在任务实施时固化，不声称已经存在）：
+- POST /agent/conversations：登录用户创建，可无 project_id；
+- POST /agent/conversations/{id}/turns：content、client_request_id、可选 skill_code、queue_mode，返回 202 + run_id + user_message_id；
+- GET /agent/conversations/{id}：快照和当前 Turn；
+- GET /agent/conversations/{id}/messages?after_sequence=...；
+- GET /agent/conversations/{id}/events?after_sequence=...：SSE；
+- POST /agent/conversation-runs/{id}/cancel；
+- GET /agent/conversation-capabilities：当前模型/工具能力及 Worker 可用性，不含密钥。
+既有 /agent/sessions 和 /runs/case-generation 保留，不静默改变旧调用方语义。
+
+内容：
+- 普通对话使用独立 agent_chat 场景或明确选定的会话模型；复用配置中心，不能暗用 requirement_to_function_case 或第一个模型；
+- 配置未就绪在启动前返回明确提示，不先等范围审批；启用聊天入口不自动初始化真实 Key；
+- 登录即可聊天；前端“发送”只提交 Turn，不再先 appendMessage 再无条件 createCaseRun；
+- 助手回复由模型生成并持久化；进度与错误是独立 UI，不伪装成模型答复；
+- SSE 用可携带现有 Bearer 的 fetch 流或明确鉴权方案，不把 Token 放 URL；
+- FastAPI 从数据库事件日志转发 Worker 事件；序号去重、断线续传、终态快照恢复，不能仅用进程内队列；
+- Markdown 禁止危险 HTML，流式末尾按稳定 message_id 合并；最小化继续执行，失败后仍可发新消息；
+- 未完成 P07 前不展示可用的测试 Skill，旧生成入口仅兼容保留。
+
+验收：浏览器至少两轮聊天、0 业务写入、无来源也成功、刷新恢复、取消、重复提交、SSE 重连、错误后再聊、跨用户访问拒绝。
+先 Fake HTTP+Worker，再授权真实模型；不可把 Fake 演示冒充正式配置验证。
+
+### V2-P07 — Skill 加载与调用选择
+
+参考：Pi harness/skills.ts、coding-agent/core/agent-session.ts 的 Skill 调用展开。
+
+新增：conversation/skills/loader.py、catalog.py、resolver.py；受控资源目录；合成 notes_summary Skill 和 loader 测试。
+
+内容：
+- Skill 是任务说明/资源，不要求每个 Skill 都实现 Python Workflow；
+- 只读取显式配置的审核目录；name/description/版本/hash、文件大小、重复名和 frontmatter 错误有诊断；
+- 支持显式 /skill:name 与模型调用 load_skill(name)；只按名称取注册资源，不接受任意 path；
+- 模型只先看到 Skill 摘要，需要时加载正文；参考资源须限制在该 Skill 根目录内，解析真实路径防穿越/链接逃逸；
+- Skill 不能扩大工具权限：配置允许集合 ∩ 用户权限 ∩ 本次会话策略；
+- 不自动执行 Skill scripts、不扫描 .claude 或实习目录、不安装第三方包；
+- 使用实际 YAML 安全解析器前检查现有依赖；必要新增需授权并固定版本，不手写宽松 YAML 解析冒充兼容。
+
+验收：无需 Skill 的聊天、显式/按需加载、未知 Skill 澄清、摘要 Skill、多轮保留、恶意说明不越权；V2 默认 catalog 无测试领域 Skill。
+V3 再将旧 case_generation 包装为独立业务能力。
+
+### V2-P08 — 上下文预算、摘要与会话恢复
+
+参考：Pi compaction.ts、SessionManager 的上下文构建。
+
+内容：
+- 区分展示历史与提交模型的工作上下文；保留原始消息，不为压缩删除历史；
+- 先确定性整理：去 UI-only 事件、压缩过长工具结果、保留 system 策略与完整工具对；
+- 达到上下文阈值后生成摘要记录（模型/版本、输入范围、hash、usage、保留尾部），摘要是派生信息不是系统指令；
+- 不截断 tool_call/tool_result 配对，不合并其他用户/项目上下文；
+- 摘要失败可退回安全窗口或明确 context_limit，不无限重试/重复计费；
+- 摘要和普通模型调用共用 Run 预算；压缩中取消要取消流、保留原上下文并停止发布迟到摘要；
+- 活跃 Run 不允许切换项目；空项目会话绑定项目时仅允许 owner 明确操作，并验证权限；
+- 本版线性会话即可，Pi tree/branch 导航不在完成条件内。
+
+验收：超长合成对话、工具对不丢、摘要失败/取消、重启重建、脱敏、不同会话隔离、摘要不改变审批记录。
+
+### V2-P09 — 人工门禁与故障加固
+
+参考：Pi beforeToolCall/afterToolCall/shouldStopAfterTurn；权限和多用户安全采用 TestMind 自身策略。
+
+内容：
+- 通用 approval_request 合同含操作名、参数 hash、run/tool_call_id、有效期和解析结果；
+- 仅用户鉴权端点能批准，模型和 Skill 不持有“自我批准”工具；
+- 用内存假副作用工具验证待审批/拒绝/过期/幂等，仍不接测试保存或外部写入；
+- 审批恢复重新校验参数、权限和当前 Run，失败不能静默落写；
+- 对取消/断流/权限变更/重连/消息重复/中断恢复做故障注入；
+- 清理已知敏感键并测试嵌套结构；不以关键词脱敏宣称所有 Secret 安全；
+- 审计记录工具、版本、预算、事件与安全错误，不记录隐藏思维链；Provider 的隐藏 reasoning 不是前端事件。
+
+验收：未审批零副作用、模型伪造 approval 无效、租约丢失不执行、参数变化需重新审批、跨用户/项目拒绝、费用尝试计数无遗漏。
+
+### V2-P10 — 基础版本验收和可重复启动
+
+内容：
+- 完成 [验收清单](03_ACCEPTANCE_CHECKLIST.md)，对照上游关键行为而非目录相似度；
+- 新增明确的本地启动说明/脚本：FastAPI、Worker、前端三个进程与配置预检；不再让用户靠猜启动缺失服务；
+- 隔离 Fake 端到端验证后，单独授权测试 MySQL + 小额真实模型测试，记录实际 Provider、模型、版本、调用次数、延迟、错误；
+- 同一合成脚本覆盖普通聊天→工具→Skill→解释结果→失败后继续；不需要任何测试用例表有数据；
+- 仅此发布任务做一次受影响 V1/旧 Agent 综合回归；
+- feature flag 保留可回退入口。回退代码不等于降级数据库，带新数据的迁移回退须预检；
+- 记录上游适配清单、已知差异和未实现项，完成后才允许 V3 业务接入。
+
+未获得真实环境授权时，可交付“隔离验收通过”，但 P10 真实环境项保持未完成，不使用 unlimited 重试等待。
+
+## 5. 技术选型与实现约束
+
+- Python / FastAPI / SQLAlchemy / MySQL / Pydantic / pytest 沿用现有栈，前端 React 沿用。
+- asyncio 做模型流和内核协作；同步 SQLAlchemy 通过短事务 Repository 使用，不跨任务共享 Session；线程桥接必须每次自建/关闭 Session。
+- V2 不引入 Pi npm、Node 后端、LangChain/LangGraph、Redis/Celery。先实现需要的机制，不一次堆所有框架。
+- 不给所有消息强加 JSON；工具参数和需被程序消费的结构才严格校验。
+- 单次最大输出和模型上下文配置不能写死覆盖用户设置；模型返回不足时保留安全诊断。
+- 本计划任务涉及未来迁移和配置，但这次文档调整没有执行它们。
+
+## 6. 跨版本交接
+
+| 旧计划事项 | 新去向 | 当前处理 |
+|---|---|---|
+| 旧 T01～T04 Gateway/模型/Worker | V2 复用输入 | 审计并补缺口，不重复搭同名基础设施 |
+| 旧 T05～T08 用例工具/Workflow/审批 UI | V3.1 | 代码保留，V2 新聊天不自动调用 |
+| 旧 T09 用例影子评测 | V3.1 业务验收 | 不用替代 V2 基础行为评测 |
+| 旧 V2.2 根因分析 | V3.2 | 待 V2 通过 |
+| 旧 V2.3 测试数据、缺陷描述 | V3.3 / V3.4 | 待对应业务权限方案 |
+| 通用安全、会话隔离、预算 | V2 必须 | 不因业务后移而延期 |
+| 测试数据写入安全、结果质量评测 | V3 对应任务 | 使用具体业务门禁 |
+
+旧记录和提示词见 [归档说明](../archive/PRE_PI_V2_2026-09-03/ARCHIVE_NOTICE.md)，新业务路线见 [V3 主计划](../V3/01_TEST_CAPABILITY_PLAN.md)。

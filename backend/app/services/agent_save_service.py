@@ -17,13 +17,13 @@ from sqlalchemy.orm import Session
 from app.agents.runtime.errors import AgentApprovalConflictError, AgentError, AgentPermissionError
 from app.agents.tools.base import ToolContext
 from app.agents.tools.case_context_tools import LoadSourceContextInput, LoadSourceContextTool
-from app.models.agent_approval import AgentApproval
-from app.models.agent_artifact import AgentArtifact
-from app.models.agent_run import AgentRun
-from app.models.agent_session import AgentSession
+from app.models.agent.agent_approval import AgentApproval
+from app.models.agent.agent_artifact import AgentArtifact
+from app.models.agent.agent_run import AgentRun
+from app.models.agent.agent_session import AgentSession
 from app.models.api_case import APICase
 from app.models.function_case import FunctionCase
-from app.services import agent_approval_service, agent_artifact_service, agent_run_service
+from app.services.agent import agent_approval_service, agent_artifact_service, agent_run_service
 
 GATE_SAVE = "save_generated_case_candidates"
 

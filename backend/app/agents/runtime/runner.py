@@ -30,8 +30,8 @@ from app.agents.runtime.errors import (
     UnknownToolError,
 )
 from app.agents.runtime.transitions import TERMINAL_STATUSES, assert_can_transition
-from app.models.agent_run import AgentRun
-from app.services import agent_approval_service, agent_artifact_service, agent_run_service
+from app.models.agent.agent_run import AgentRun
+from app.services.agent import agent_approval_service, agent_artifact_service, agent_run_service
 
 _STATE_KEY = "workflow_state"
 _RESULT_KEY = "result"
@@ -300,12 +300,26 @@ class AgentRunner:
 
     def _fail_step_exception(self, db: Session, run: AgentRun, step_name: str, e: Exception) -> None:
         step = agent_run_service.start_step(db, run, "validation", step_name)
+        # 若 LLM/Provider 层抛出的异常携带诊断信息（如空响应的 finish_reason/request_id），
+        # 一并落库，避免“模型无返回”等失败变成无法排查的黑盒。
+        provider_name = getattr(e, "provider_name", None)
+        model_name = getattr(e, "model_name", None)
+        diag = {}
+        if getattr(e, "finish_reason", None) is not None:
+            diag["finish_reason"] = e.finish_reason
+        if getattr(e, "request_id", None):
+            diag["request_id"] = e.request_id
+        if getattr(e, "error_code", None):
+            diag["llm_error_code"] = e.error_code
         agent_run_service.finish_step(
             db,
             step,
             status="failed",
             error_code="agent_workflow_step_failed",
             error_message=(str(e) or type(e).__name__)[:500],
+            provider_name=provider_name,
+            model_name=model_name,
+            output_json=diag or None,
         )
         agent_run_service.increment_counter(db, run, "steps_used")
         agent_run_service.transition_status(db, run, "failed")

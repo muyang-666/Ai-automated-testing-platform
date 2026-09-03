@@ -15,13 +15,14 @@ from app.agents.runtime.errors import (
     UnknownSkillError,
     UnknownToolError,
 )
-from app.models.agent_approval import AgentApproval
-from app.models.agent_artifact import AgentArtifact
-from app.models.agent_event import AgentEvent
-from app.models.agent_step import AgentStep
+from app.exceptions.llm_errors import LLMProviderError
+from app.models.agent.agent_approval import AgentApproval
+from app.models.agent.agent_artifact import AgentArtifact
+from app.models.agent.agent_event import AgentEvent
+from app.models.agent.agent_step import AgentStep
 from app.models.project import Project
 from app.models.user import User
-from app.services import (
+from app.services.agent import (
     agent_approval_service,
     agent_run_service,
     agent_session_service,
@@ -107,6 +108,31 @@ class FakeEndlessWorkflow:
 
     def execute_step(self, step_name, state, context):
         return StepOutcome(status="continue", output_summary="循环步骤")
+
+
+class FakeLLMFailWorkflow:
+    """模拟空内容等 LLM 失败：异常携带 provider/model/finish_reason/request_id。"""
+
+    code = "fake_llm_fail"
+    version = "1"
+
+    def initial_state(self, input_data):
+        return {"phase": 0}
+
+    def next_step(self, state):
+        return "step_llm"
+
+    def execute_step(self, step_name, state, context):
+        err = LLMProviderError(
+            "模型连续返回空内容，无法解析。请稍后重试，或检查该场景绑定的模型、API Key 与配额。",
+            error_code="llm_empty_content",
+            retryable=True,
+        )
+        err.provider_name = "FakeProvider"
+        err.model_name = "fake-model"
+        err.finish_reason = "stop"
+        err.request_id = "req-diag-1"
+        raise err
 
 
 # ── 构造辅助 ──
@@ -268,6 +294,24 @@ def test_workflow_exception_marks_failed(db_session):
     assert steps[0].error_code == "agent_workflow_step_failed"
     event_types = {e.event_type for e in _events(db_session, session)}
     assert {"run_started", "step_failed", "run_failed"} <= event_types
+
+
+def test_llm_exception_persists_diagnostics_on_failed_step(db_session):
+    session = _seed_session(db_session)
+    run = _seed_run(db_session, session, "fake_llm_fail")
+    runner = _make_runner(_skill(FakeLLMFailWorkflow()))
+
+    runner.run(db_session, run)
+
+    assert run.status == "failed"
+    step = db_session.query(AgentStep).filter(AgentStep.agent_run_id == run.id).one()
+    assert step.status == "failed"
+    assert "空内容" in step.error_message
+    assert step.provider_name == "FakeProvider"
+    assert step.model_name == "fake-model"
+    assert step.output_json == {"finish_reason": "stop", "request_id": "req-diag-1", "llm_error_code": "llm_empty_content"}
+    event_types = {e.event_type for e in _events(db_session, session)}
+    assert {"step_failed", "run_failed"} <= event_types
 
 
 def test_max_steps_exceeded_fails_with_stable_code(db_session):

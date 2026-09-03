@@ -11,9 +11,9 @@ from pathlib import Path
 import pytest
 
 from app.models.function_case import FunctionCase
-from app.models.llm_model import LLMModel
-from app.models.llm_provider import LLMProvider
-from app.models.llm_scene_config import LLMSceneConfig
+from app.models.llm.llm_model import LLMModel
+from app.models.llm.llm_provider import LLMProvider
+from app.models.llm.llm_scene_config import LLMSceneConfig
 from app.models.requirement_doc import RequirementDoc
 from app.schemas.function_case_generation import (
     GenerateFunctionCasesRequest,

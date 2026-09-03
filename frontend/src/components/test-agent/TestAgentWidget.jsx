@@ -110,8 +110,12 @@ export default function TestAgentWidget({ currentUser }) {
   const statusText = STATUS[model.run?.status] || "准备就绪";
   const caseArtifact = model.artifacts.find((artifact) => artifact.id === model.approval?.artifact_id);
   const saved = model.run?.status === "succeeded" && model.artifacts.some((artifact) => artifact.status === "saved");
+  const MODEL_RECOVERABLE_RE = /返回内容为空|连续返回空内容|无法解析为 JSON|未通过 Schema|超时|限流/i;
+  const llmRecoverableHint = model.run?.status === "failed" && MODEL_RECOVERABLE_RE.test(model.run.error_message || "")
+    ? "\n\n提示：这通常是模型暂时没有有效返回。可重新点击“发送”重试一次；若连续多次仍失败，请检查该来源场景绑定的模型、API Key 与配额。"
+    : "";
   const notices = [...model.messages];
-  if (model.run) notices.push({ id: "current-status", role: "assistant", content: model.run.error_message || (saved ? "选中的候选已保存。你可以前往对应的用例管理页查看。" : statusText) });
+  if (model.run) notices.push({ id: "current-status", role: "assistant", content: `${model.run.error_message || (saved ? "选中的候选已保存。你可以前往对应的用例管理页查看。" : statusText)}${llmRecoverableHint}` });
 
   if (layout.minimized) return (
     <button type="button" className="test-agent-launcher" onClick={() => setLayout((current) => ({ ...current, minimized: false }))} aria-label="打开 TestMind Agent">

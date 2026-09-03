@@ -16,8 +16,8 @@ from datetime import datetime, timedelta
 from typing import Callable
 
 from app.agents.runtime.errors import UnknownSkillError
-from app.models.agent_run import AgentRun
-from app.services import agent_run_service
+from app.models.agent.agent_run import AgentRun
+from app.services.agent import agent_run_service
 
 
 @dataclass
@@ -198,7 +198,7 @@ def main(argv=None) -> None:
     from app.agents.bootstrap import build_default_skill_registry, build_default_tool_registry
     from app.agents.runtime.runner import AgentRunner
     from app.core.database import SessionLocal
-    from app.services.llm_gateway import LLMGateway
+    from app.services.llm.llm_gateway import LLMGateway
 
     # 默认生产 Registry：注册 case_generation:v1 与 T05 九个工具
     tool_registry = build_default_tool_registry()

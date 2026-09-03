@@ -13,19 +13,19 @@ from app.models.scene_run import SceneRun
 from app.models.scene_step_run import SceneStepRun
 from app.models.scene_step import SceneStep
 from app.models.api_document import ApiDocument
-from app.models.llm_provider import LLMProvider
-from app.models.llm_model import LLMModel
-from app.models.llm_scene_config import LLMSceneConfig
+from app.models.llm.llm_provider import LLMProvider
+from app.models.llm.llm_model import LLMModel
+from app.models.llm.llm_scene_config import LLMSceneConfig
 from app.models.user import User
 from app.models.user_project_permission import UserProjectPermission
 from app.models.user_role import UserRole
-from app.models.agent_session import AgentSession
-from app.models.agent_message import AgentMessage
-from app.models.agent_event import AgentEvent
-from app.models.agent_run import AgentRun
-from app.models.agent_step import AgentStep
-from app.models.agent_artifact import AgentArtifact
-from app.models.agent_approval import AgentApproval
+from app.models.agent.agent_session import AgentSession
+from app.models.agent.agent_message import AgentMessage
+from app.models.agent.agent_event import AgentEvent
+from app.models.agent.agent_run import AgentRun
+from app.models.agent.agent_step import AgentStep
+from app.models.agent.agent_artifact import AgentArtifact
+from app.models.agent.agent_approval import AgentApproval
 
 __all__ = [
     "APICase",
