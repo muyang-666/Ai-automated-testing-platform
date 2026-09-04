@@ -203,3 +203,19 @@ Python 额外门禁为项目既定安全适配：严格终态 JSON、固定错�
 默认策略在 P09 前阻止 `requires_approval`、`required_permission` 和非只读工具，不把模型请求当成授权。取消/截止会为批次中剩余工具建立关联的“未执行”结果，保证之后可识别每个 call_id；这是为持久恢复做的 Python 适配。
 
 验收见 [P03 验收记录](reviews/V2-P03_ACCEPTANCE.md)：P03 30 项、P02 54 项、P01 90 项、旧 Provider/Gateway 55 项、ToolRegistry 4 项分别通过。没有真实模型/数据库/业务工具调用；Calculator/Echo 都是内存测试夹具。改编代码保留 MIT 与 Copyright (c) 2025 Mario Zechner 说明。
+
+## 16. V2-P04 会话持久化与恢复映射（2026-09-04）
+
+| Pi 固定提交行为 | TestMind P04 | 差异/原因 |
+|---|---|---|
+| SessionMessageEntry 保存完整 AgentMessage | AgentMessage.content_json 保存 P01 消息，另存 message_id/schema_version/timestamp_ms | 关系表便于 owner、Run、幂等与游标查询；恢复仍经 P01 parse_message |
+| appendMessage 追加并推进 leaf | 数据库 next_message_sequence 原子分配后 INSERT | P04 只做线性历史；不复制树 leaf/parentId |
+| buildSessionContext 按路径重建消息 | restore_conversation_messages 按 sequence_no 重建 | compaction/branch summary 留 P08；损坏版本或 ID 不静默跳过 |
+| Session header version | 每条消息 schema_version + session.mode | 兼容旧平台表；既有 session 回填 legacy_workflow |
+| 本地 JSONL 会话文件 | SQLAlchemy AgentSession/Run/Message + Alembic 0003 | TestMind 已是多用户 Web 平台，需要事务、并发约束和 owner 隔离 |
+
+项目新增的数据库规则：conversation project_id 可空；用户消息、queued Run 和幂等键同事务；Run 的 active_slot 唯一/check 约束限制一个活跃 Turn；消息/事件序号由会话行原子游标分配。user_message_id 不建反向 FK，避免与 message.run_id 形成循环外键，服务在同事务核对关联。
+
+旧 Workflow 行为保持：旧会话 mode=legacy_workflow 且 project_id 必填；旧发消息/用例生成入口拒绝 conversation；项目读者不能读取别人的 conversation Run；P05 前旧 Worker 不抢 conversation queued 行。
+
+迁移 head 为 `0003_conversation_persistence`，down_revision=`0002_agent_platform_tables`。升级回填旧模式/游标，head 重叠结构需核验；有 conversation/版本化消息数据时 downgrade 拒绝有损转换。验收见 [P04 验收记录](reviews/V2-P04_ACCEPTANCE.md)。仅使用临时 SQLite，未验证真实 MySQL；不声称兼容 Pi 分支树。

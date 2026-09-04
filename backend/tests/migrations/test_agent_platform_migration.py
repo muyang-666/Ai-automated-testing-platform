@@ -24,7 +24,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 SCRIPT_LOCATION = str(BACKEND_DIR / "alembic")
 
 BASELINE_REVISION = "0001_v1_schema_baseline"
-HEAD_REVISION = "0002_agent_platform_tables"
+HEAD_REVISION = "0003_conversation_persistence"
 
 AGENT_TABLE_NAMES = {
     "agent_sessions",
@@ -115,7 +115,13 @@ def test_stamp_then_upgrade_creates_agent_tables(tmp_path):
     assert {
         "id", "session_id", "project_id", "requester_user_id", "workflow_code",
         "status", "idempotency_key", "heartbeat_at", "error_code",
+        "user_message_id", "active_slot",
     } <= run_cols
+    session_cols = {c["name"]: c for c in inspector.get_columns("agent_sessions")}
+    assert {"mode", "next_message_sequence", "next_event_sequence"} <= set(session_cols)
+    assert session_cols["project_id"]["nullable"] is True
+    message_cols = {c["name"] for c in inspector.get_columns("agent_messages")}
+    assert {"message_id", "schema_version", "timestamp_ms"} <= message_cols
 
     # 唯一约束（sequence_no 与 idempotency）
     msg_uniques = {(uc["name"], tuple(uc["column_names"])) for uc in inspector.get_unique_constraints("agent_messages")}
@@ -126,6 +132,7 @@ def test_stamp_then_upgrade_creates_agent_tables(tmp_path):
     assert ("uq_agent_steps_run_seq", ("agent_run_id", "sequence_no")) in step_uniques
     run_uniques = {(uc["name"], tuple(uc["column_names"])) for uc in inspector.get_unique_constraints("agent_runs")}
     assert ("uq_agent_runs_idempotency", ("session_id", "workflow_code", "idempotency_key")) in run_uniques
+    assert ("uq_agent_runs_session_active_slot", ("session_id", "active_slot")) in run_uniques
 
     # 索引
     run_indexes = {ix["name"] for ix in inspector.get_indexes("agent_runs")}
@@ -228,3 +235,60 @@ def test_noop_baseline_creates_nothing(tmp_path):
     assert _table_names(engine) == {"alembic_version"}
     assert _version_num(engine) == BASELINE_REVISION
     engine.dispose()
+
+
+def test_0003_backfills_legacy_mode_and_sequence_cursors(tmp_path):
+    db_url = _prepare_existing_db(tmp_path)
+    cfg = _make_config(db_url)
+    command.stamp(cfg, BASELINE_REVISION)
+    command.upgrade(cfg, "0002_agent_platform_tables")
+    engine = create_engine(db_url)
+    with engine.begin() as conn:
+        conn.execute(text("INSERT INTO agent_sessions (id, project_id, user_id, title) VALUES (1, 1, 1, 'legacy')"))
+        conn.execute(text("INSERT INTO agent_messages (session_id, role, sequence_no) VALUES (1, 'user', 4)"))
+        conn.execute(text("INSERT INTO agent_events (session_id, event_type, sequence_no) VALUES (1, 'old', 7)"))
+    engine.dispose()
+
+    command.upgrade(cfg, "head")
+    engine = create_engine(db_url)
+    with engine.connect() as conn:
+        row = conn.execute(text(
+            "SELECT mode, project_id, next_message_sequence, next_event_sequence "
+            "FROM agent_sessions WHERE id=1"
+        )).one()
+        assert tuple(row) == ("legacy_workflow", 1, 5, 8)
+    command.downgrade(cfg, "0002_agent_platform_tables")
+    assert _version_num(engine) == "0002_agent_platform_tables"
+    engine.dispose()
+
+
+def test_0003_downgrade_refuses_to_lose_conversation_data(tmp_path):
+    db_url = _prepare_existing_db(tmp_path)
+    cfg = _make_config(db_url)
+    command.stamp(cfg, BASELINE_REVISION)
+    command.upgrade(cfg, "head")
+    engine = create_engine(db_url)
+    with engine.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO agent_sessions "
+            "(id, project_id, user_id, mode, title, next_message_sequence, next_event_sequence) "
+            "VALUES (1, NULL, 1, 'conversation', 'chat', 1, 1)"
+        ))
+    engine.dispose()
+    with pytest.raises(RuntimeError) as exc:
+        command.downgrade(cfg, "0002_agent_platform_tables")
+    assert "会丢失 conversation 数据" in str(exc.value)
+
+
+def test_0003_partial_columns_fail_explicitly(tmp_path):
+    db_url = _prepare_existing_db(tmp_path)
+    cfg = _make_config(db_url)
+    command.stamp(cfg, BASELINE_REVISION)
+    command.upgrade(cfg, "0002_agent_platform_tables")
+    engine = create_engine(db_url)
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE agent_sessions ADD COLUMN mode VARCHAR(20)"))
+    engine.dispose()
+    with pytest.raises(RuntimeError) as exc:
+        command.upgrade(cfg, "head")
+    assert "不完整" in str(exc.value)

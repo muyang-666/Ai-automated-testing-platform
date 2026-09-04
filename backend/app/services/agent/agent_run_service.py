@@ -3,7 +3,7 @@
 - 状态转换一律经 transitions.assert_can_transition，不允许任意赋值；
 - 归属校验：Run 仅 requester 本人（或会话 owner）可见；
 - 事务边界：Service 只 add/flush 不 commit，由 Runner 每步 commit；
-- sequence_no 生成方式为 max+1，并发限制已登记开发记录。
+- 事件 sequence_no 通过会话数据库游标分配；Step 序号仍由单 Run 执行者管理。
 """
 
 import hashlib
@@ -27,13 +27,15 @@ def create_run(
     session: AgentSession,
     workflow_code: str,
     requester_user_id: int,
-    project_id: int,
+    project_id: int | None,
     input_json: dict | None = None,
     workflow_version: str | None = None,
     idempotency_key: str | None = None,
     max_steps: int = 20,
+    user_message_id: int | None = None,
+    active_slot: int | None = None,
 ) -> AgentRun:
-    """创建 queued Run；project_id 必须与所属会话一致。"""
+    """创建 queued Run；conversation 与旧 Workflow 的模式不可混用。"""
     if project_id != session.project_id:
         raise AgentError(
             f"Run 归属项目 {project_id} 与会话归属项目 {session.project_id} 不一致。",
@@ -41,6 +43,13 @@ def create_run(
         )
     if max_steps < 1:
         raise AgentError("max_steps 必须 >= 1", error_code="agent_invalid_max_steps")
+    if workflow_code == "conversation":
+        if session.mode != "conversation":
+            raise AgentError("conversation Run 只能属于 conversation 会话",
+                             error_code="agent_session_mode_mismatch")
+    elif session.mode != "legacy_workflow" or project_id is None:
+        raise AgentError("旧 Workflow 只能属于有项目的 legacy_workflow 会话",
+                         error_code="agent_session_mode_mismatch")
     run = AgentRun(
         session_id=session.id,
         project_id=project_id,
@@ -51,6 +60,8 @@ def create_run(
         input_json=input_json,
         input_hash=_canonical_hash(input_json),
         idempotency_key=idempotency_key,
+        user_message_id=user_message_id,
+        active_slot=active_slot,
         max_steps=max_steps,
         steps_used=0,
         llm_calls_used=0,
@@ -79,6 +90,8 @@ def transition_status(db: Session, run: AgentRun, target: str) -> AgentRun:
     """集中状态转换入口；非法转换抛 InvalidStateTransitionError。"""
     assert_can_transition(run.status, target)
     run.status = target
+    if run.workflow_code == "conversation":
+        run.active_slot = None if target in {"succeeded", "failed", "cancelled", "interrupted"} else 1
     db.flush()
     return run
 
@@ -169,14 +182,9 @@ def append_event(
     event_type: str,
     payload_json: dict | None = None,
 ) -> AgentEvent:
-    """追加事件；sequence_no 取会话内最大值 +1。"""
-    max_no = (
-        db.query(AgentEvent.sequence_no)
-        .filter(AgentEvent.session_id == session_id)
-        .order_by(AgentEvent.sequence_no.desc())
-        .first()
-    )
-    sequence_no = (max_no[0] + 1) if max_no else 1
+    """追加事件；sequence_no 由会话行上的数据库游标分配。"""
+    from app.services.agent.conversation_repository import allocate_sequence
+    sequence_no = allocate_sequence(db, session_id, "next_event_sequence")
     event = AgentEvent(
         session_id=session_id,
         run_id=run_id,
@@ -214,10 +222,10 @@ STALE_ERROR_CODE = "agent_worker_heartbeat_timeout"
 
 
 def next_queued_run_id(db: Session) -> int | None:
-    """最早进入 queued 的 Run ID；无任务返回 None。"""
+    """旧 Workflow Worker 的最早 queued Run；P05 前跳过 conversation。"""
     row = (
         db.query(AgentRun.id)
-        .filter(AgentRun.status == "queued")
+        .filter(AgentRun.status == "queued", AgentRun.workflow_code != "conversation")
         .order_by(AgentRun.id.asc())
         .first()
     )
@@ -233,7 +241,8 @@ def claim_queued_run(db: Session, run_id: int, worker_id: str, now: datetime) ->
     """
     result = db.execute(
         update(AgentRun)
-        .where(AgentRun.id == run_id, AgentRun.status == "queued")
+        .where(AgentRun.id == run_id, AgentRun.status == "queued",
+               AgentRun.workflow_code != "conversation")
         .values(
             status="running",
             worker_id=worker_id,
@@ -299,6 +308,7 @@ def mark_interrupted(
         .where(AgentRun.id == run_id, AgentRun.status == "running")
         .values(
             status="interrupted",
+            active_slot=None,
             error_code=error_code,
             error_message=error_message,
             finished_at=now,

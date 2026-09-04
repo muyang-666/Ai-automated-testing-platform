@@ -12,7 +12,7 @@
 | V2-P01 | 基线与数据合同 | 阶段验收通过（限定合同/纯校验范围） | Codex 实际 90 passed in 5.41s，见 2.10 |
 | V2-P02 | 流式 Provider | 部分实现，审查未通过，待集中修正 | Codex 复跑 24 项通过，合成反例确认基础缺口，见 2.13 |
 | V2-P03 | Agent Loop / Tool Executor | 阶段验收通过（纯 Python/Fake 范围） | P03 30 项；P02 54、P01 90、旧 Provider/Gateway 55、ToolRegistry 4 项回归，见 2.15 |
-| V2-P04 | 会话存储与迁移 | 待实施 | — |
+| V2-P04 | 会话存储与迁移 | 阶段验收通过（临时 SQLite/真实事务范围） | P04 20 项；P01 90、P02 54、P03 30、旧平台 100 项回归，见 2.16 |
 | V2-P05 | Worker、租约和取消 | 待实施 | — |
 | V2-P06 | 对话 API 与前端 | 待实施 | — |
 | V2-P07 | Skill 基础能力 | 待实施 | — |
@@ -358,3 +358,14 @@ V2-R01 之上仍保留他人/本轮的未提交改动（旧 Agent 空响应可�
 - 实际测试：P03 `30 passed, 13 warnings in 4.36s`；P02 `54 passed, 13 warnings in 6.63s`；P01 `90 passed in 9.20s`；旧 Provider/Gateway `55 passed, 13 warnings in 3.40s`；ToolRegistry `4 passed in 0.05s`。分开统计，warning 为既有 Pydantic 弃用提示。
 - 实际修正：迟到 update 竞态先失败后修复；取消补齐剩余结果时 stop 覆盖 canceled 的状态错误先失败后修复。P03 纯导入子进程确认不加载 DB/Web/Worker/HTTP 客户端模块。
 - 结论：P03 在纯 Python/Fake 范围验收通过，见 [P03 验收记录](reviews/V2-P03_ACCEPTANCE.md)。同步 handler 无法物理抢占，需及时取消的工具应异步协作；持久化/恢复属 P04。未进入 P04。
+
+## 2.16 2026-09-04 — V2-P04 会话持久化、并发与幂等验收通过
+
+- 用户要求直接进入 P04。新增 `0003_conversation_persistence`、conversation repository/service 和 `tests/conversation_persistence/`；修改 Agent Session/Run/Message ORM、内部/API Schema、旧 session/run 服务与必要旧路由门禁。未进入 P05/P06，不整理学习笔记。
+- session 新增 mode 与消息/事件序号游标；conversation session/run 的 project_id 可空。Run 复用为 ConversationTurn，增加 user_message_id 和 active_slot；数据库唯一/check 约束保证一个活跃 Turn，终态释放。
+- 用户 P01 消息、queued conversation Run、client_request_id/input_hash 在同一事务保存。相同键同内容复用，同键不同内容冲突；中间失败全部回滚。完整 P01 assistant/toolResult JSON 按序保存并通过 parse_message 恢复。
+- 数据库游标使用原子 `UPDATE column = column + 1` 后在同事务读取预留值；双连接取得不重复序号。并发幂等扩测发现查询窗口竞态，已在活跃槽冲突前二次读取幂等记录。
+- 旧路由允许 owner 读取 conversation，但禁止项目读者旁路；旧发消息/用例生成入口拒绝 conversation。P05 前旧 Worker selector/claim 跳过 conversation queued Run，避免误报未知 Workflow。
+- `0003` 回填旧行为、核验 create_all 重叠 head、拒绝部分结构；downgrade 发现 conversation/版本化消息数据时拒绝有损降级。user_message_id 不建反向 FK，避免与 message.run_id 构成迁移环，归属由同事务服务校验。
+- 最终实际结果：P04 `20 passed, 14 warnings in 9.35s`；P01 `90 passed in 9.82s`；P02 `54 passed, 13 warnings in 7.35s`；P03 `30 passed, 13 warnings in 3.93s`；旧 Service/API/Model/Worker `100 passed, 151 warnings in 10.98s`。各组分列。
+- 全部数据库验证使用临时/内存 SQLite；未读取或连接真实 MySQL。结论：P04 在声明范围验收通过，见 [P04 验收记录](reviews/V2-P04_ACCEPTANCE.md)。P05 尚未开始。

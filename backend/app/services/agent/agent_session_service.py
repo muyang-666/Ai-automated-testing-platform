@@ -2,7 +2,7 @@
 
 权限规则（本任务范围）：会话仅 owner 本人可见/操作；admin 绕过留给 T07 Router 层。
 事务边界：Service 只 add/flush 不 commit，由调用方（Runner 或测试）控制。
-sequence_no 生成方式为 max+1，并发限制已登记开发记录（T04B 前单进程同步使用）。
+sequence_no 通过 agent_sessions 的数据库游标分配，不再使用 max+1。
 """
 
 from sqlalchemy.orm import Session
@@ -93,6 +93,7 @@ def create_session(
     session = AgentSession(
         project_id=project_id,
         user_id=user_id,
+        mode="legacy_workflow",
         title=title,
         status="active",
         current_skill_code=current_skill_code,
@@ -129,13 +130,8 @@ def append_message(
     if message_type not in MESSAGE_TYPES:
         raise AgentError(f"非法消息类型: {message_type}", error_code="agent_invalid_message_type")
     if sequence_no is None:
-        max_no = (
-            db.query(AgentMessage.sequence_no)
-            .filter(AgentMessage.session_id == session.id)
-            .order_by(AgentMessage.sequence_no.desc())
-            .first()
-        )
-        sequence_no = (max_no[0] + 1) if max_no else 1
+        from app.services.agent.conversation_repository import allocate_sequence
+        sequence_no = allocate_sequence(db, session.id, "next_message_sequence")
     message = AgentMessage(
         session_id=session.id,
         run_id=run_id,

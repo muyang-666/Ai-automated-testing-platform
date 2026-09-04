@@ -1,7 +1,7 @@
 # V2 开发主计划：Pi 架构的 Python 实现
 
 > 生效：2026-09-03。用户已确认：V2 只做 Agent 基本架构，测试能力扩展全部归入 V3。
-> 状态：V2-P01～P03 已通过各自范围的 Codex 验收；P04～P10 待实施。
+> 状态：V2-P01～P04 已通过各自范围的 Codex 验收；P05～P10 待实施。
 > 路线：V1 既有平台 → V2 Python 对话 Agent 基础 → V3 测试领域 Skills。
 > 本文件替代旧 V2.1/V2.2/V2.3 任务路线，不代表 Pi 全功能复刻或官方 Python 移植。
 
@@ -62,7 +62,7 @@ TestMind 已有但不等于完整对话内核：
 | V2-P01 | 源码行为基线、消息/事件/工具合同 | V2-R01 | 阶段验收通过，见 P01_ACCEPTANCE.md |
 | V2-P02 | 文本 + 工具调用 + 流式模型适配 | P01 | 阶段验收通过，见 V2-P02_ACCEPTANCE.md |
 | V2-P03 | 纯 Python Agent Loop 与执行器 | P01、P02 | 阶段验收通过，见 V2-P03_ACCEPTANCE.md |
-| V2-P04 | 无项目会话、Turn 持久化、并发/幂等迁移 | P01、P03 | 待实施 |
+| V2-P04 | 无项目会话、Turn 持久化、并发/幂等迁移 | P01、P03 | 阶段验收通过，见 V2-P04_ACCEPTANCE.md |
 | V2-P05 | Worker 分发、租约、取消和消息排队 | P03、P04 | 待实施 |
 | V2-P06 | 对话 API + 悬浮前端 + SSE | P02、P04、P05 | 待实施 |
 | V2-P07 | 通用 Skill 加载与选择 | P03、P06 | 待实施 |
@@ -158,6 +158,8 @@ P02 已按 [集中续做提示词](prompts/V2-P02_CONTINUATION_CLAUDE_PROMPT.md)
 不把每条消息硬编码路由到 case_generation；也不靠关键词 if/else 假装 Agent 决策。
 
 ### V2-P04 — 会话持久化与迁移
+
+状态：已在临时 SQLite/真实 ORM 事务范围验收通过，见 [P04 验收记录](reviews/V2-P04_ACCEPTANCE.md)。conversation Run 当前保持 queued，旧 Worker 不会误抢；P05 统一分发与租约尚未开始。
 
 参考：Pi SessionManager/buildSessionContext 的重建语义；不照搬本地 JSONL 为产品唯一存储。
 

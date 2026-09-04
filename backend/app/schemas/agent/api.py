@@ -21,8 +21,9 @@ class AgentSessionCreate(BaseModel):
 
 class AgentSessionResponse(AgentResponseBase):
     id: int
-    project_id: int
+    project_id: Optional[int]
     user_id: int
+    mode: str = "legacy_workflow"
     title: str
     status: str
     current_skill_code: Optional[str] = None
@@ -46,6 +47,9 @@ class AgentMessageResponse(AgentResponseBase):
     id: int
     session_id: int
     run_id: Optional[int] = None
+    message_id: Optional[str] = None
+    schema_version: int = 1
+    timestamp_ms: Optional[int] = None
     role: str
     message_type: str
     content: Optional[str] = None
@@ -84,7 +88,7 @@ class CaseGenerationRunRequest(BaseModel):
 class RunResponse(AgentResponseBase):
     id: int
     session_id: int
-    project_id: int
+    project_id: Optional[int]
     requester_user_id: int
     workflow_code: str
     workflow_version: Optional[str] = None
@@ -93,6 +97,7 @@ class RunResponse(AgentResponseBase):
     input_json: Optional[dict[str, Any]] = None
     output_json: Optional[dict[str, Any]] = None
     input_hash: Optional[str] = None
+    user_message_id: Optional[int] = None
     max_steps: int
     steps_used: int
     llm_calls_used: int

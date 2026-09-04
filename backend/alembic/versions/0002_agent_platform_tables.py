@@ -270,14 +270,16 @@ def _verify_table(bind, table_name: str, spec: dict) -> None:
     # 列：集合、nullable、类型
     actual_columns = {c["name"]: c for c in inspector.get_columns(table_name)}
     expected_columns = {c.name: c for c in spec["columns"]}
-    if set(actual_columns) != set(expected_columns):
+    if not set(expected_columns) <= set(actual_columns):
         missing = sorted(set(expected_columns) - set(actual_columns))
-        extra = sorted(set(actual_columns) - set(expected_columns))
-        errors.append(f"列集合不一致: 缺失={missing}, 多余={extra}")
+        errors.append(f"缺少 0002 必需列: {missing}")
     else:
         for name, spec_col in expected_columns.items():
             actual = actual_columns[name]
-            if bool(actual["nullable"]) != bool(spec_col.nullable):
+            forward_nullable = table_name in {"agent_sessions", "agent_runs"} and name == "project_id"
+            if bool(actual["nullable"]) != bool(spec_col.nullable) and not (
+                forward_nullable and actual["nullable"] and not spec_col.nullable
+            ):
                 errors.append(f"列 {name} nullable 不一致: 期望={spec_col.nullable}, 实际={actual['nullable']}")
             if str(actual["type"]).upper() != str(spec_col.type).upper():
                 errors.append(f"列 {name} 类型不一致: 期望={spec_col.type}, 实际={actual['type']}")
@@ -293,7 +295,7 @@ def _verify_table(bind, table_name: str, spec: dict) -> None:
         for uc in inspector.get_unique_constraints(table_name)
     }
     expected_uniques = {(name, tuple(cols)) for name, cols in spec["uniques"]}
-    if actual_uniques != expected_uniques:
+    if not expected_uniques <= actual_uniques:
         errors.append(
             f"唯一约束不一致: 期望={sorted(expected_uniques)}, 实际={sorted(actual_uniques)}"
         )
@@ -306,7 +308,7 @@ def _verify_table(bind, table_name: str, spec: dict) -> None:
         if not (ix.get("name") or "").startswith("sqlite_autoindex")
     }
     expected_indexes = {(name, tuple(cols)) for name, cols in spec["indexes"]}
-    if actual_indexes != expected_indexes:
+    if not expected_indexes <= actual_indexes:
         errors.append(f"索引不一致: 期望={sorted(expected_indexes)}, 实际={sorted(actual_indexes)}")
     for ix in all_indexes:
         if (ix.get("name"), tuple(ix.get("column_names") or [])) in expected_indexes and ix.get("unique"):
@@ -325,7 +327,7 @@ def _verify_table(bind, table_name: str, spec: dict) -> None:
         (tuple(sorted(cols)), referred, ondelete.upper())
         for cols, referred, ondelete in spec["fks"]
     }
-    if actual_fks != expected_fks:
+    if not expected_fks <= actual_fks:
         errors.append(f"外键不一致: 期望={sorted(expected_fks)}, 实际={sorted(actual_fks)}")
 
     if errors:

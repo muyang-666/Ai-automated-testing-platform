@@ -106,6 +106,8 @@ def _require_readable_run(db: Session, run_id: int, user: User) -> AgentRun:
         raise HTTPException(status_code=404, detail="Run 不存在")
     if session.user_id == user.id:
         return run
+    if session.mode == "conversation":
+        raise HTTPException(status_code=404, detail="Run 不存在")
     if not can_read_project(db, user, run.project_id):
         raise HTTPException(status_code=404, detail="Run 不存在")
     return run
@@ -223,6 +225,8 @@ def create_message_api(
     current_user: User = Depends(get_current_user),
 ):
     session = _require_session(db, session_id, current_user)
+    if session.mode != "legacy_workflow":
+        raise HTTPException(status_code=409, detail="conversation 会话请使用后续对话入口")
     # role 由后端强制为 user，用户不能伪造 assistant/system/tool
     message = agent_session_service.append_message(
         db, session, role="user", content=data.content,
@@ -264,6 +268,8 @@ def _build_run_input(source_type, source_id, case_types, max_cases, user_goal) -
 
 
 def _create_case_generation_run(db: Session, session: AgentSession, user: User, data) -> AgentRun:
+    if session.mode != "legacy_workflow" or session.project_id is None:
+        raise HTTPException(status_code=409, detail="用例生成只支持有项目的旧 Workflow 会话")
     try:
         return agent_run_service.create_run(
             db, session, "case_generation", user.id, session.project_id,
@@ -282,6 +288,8 @@ def create_case_generation_run_api(
     current_user: User = Depends(get_current_user),
 ):
     session = _require_session(db, data.session_id, current_user)
+    if session.mode != "legacy_workflow" or session.project_id is None:
+        raise HTTPException(status_code=409, detail="用例生成只支持有项目的旧 Workflow 会话")
 
     # 来源必须存在且属于 Session 项目
     from app.models.api_document import ApiDocument
@@ -505,6 +513,8 @@ def save_candidates_api(
     current_user: User = Depends(get_current_user),
 ):
     run = _require_readable_run(db, run_id, current_user)
+    if run.workflow_code == "conversation" or run.project_id is None:
+        raise HTTPException(status_code=409, detail="conversation Run 不支持保存用例候选")
     require_project_write(db, current_user, run.project_id)
     try:
         result = agent_save_service.save_candidates(db, run, data.candidate_ids, current_user.id)

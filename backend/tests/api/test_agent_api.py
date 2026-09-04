@@ -38,7 +38,7 @@ from app.models.user import User
 from app.models.user_project_permission import UserProjectPermission
 from app.models.user_role import UserRole
 from app.schemas.llm.llm_gateway import LLMResult
-from app.services.agent import agent_approval_service, agent_artifact_service, agent_run_service
+from app.services.agent import agent_approval_service, agent_artifact_service, agent_run_service, conversation_service
 from app.workers.agent_worker import AgentWorker
 
 PROJECT_A = 101
@@ -237,6 +237,29 @@ def _create_run(client, session_id, source_type="requirement", source_id=1, **ex
     payload = {"session_id": session_id, "source_type": source_type, "source_id": source_id}
     payload.update(extra)
     return client.post("/agent/runs/case-generation", json=payload)
+
+
+def test_p04_conversation_mode_is_owner_only_on_legacy_read_routes(client, db_session):
+    session = conversation_service.create_conversation_session(
+        db_session, requester_user_id=USER_ID, title="无项目聊天"
+    )
+    db_session.commit()
+    submission = conversation_service.submit_conversation_turn(
+        db_session, session_id=session.id, requester_user_id=USER_ID,
+        content="你好", client_request_id="p04-api-1",
+        message_id_factory=lambda: "p04-user-message", timestamp_ms_factory=lambda: 1,
+    )
+
+    detail = client.get(f"/agent/sessions/{session.id}")
+    assert detail.status_code == 200
+    assert detail.json()["project_id"] is None and detail.json()["mode"] == "conversation"
+    assert client.get(f"/agent/runs/{submission.run.id}").status_code == 200
+    assert client.post(f"/agent/sessions/{session.id}/messages", json={"content": "旧入口"}).status_code == 409
+    assert _create_run(client, session.id, source_id=1).status_code == 409
+
+    _switch_user(db_session, VIEWER_ID)
+    assert client.get(f"/agent/sessions/{session.id}").status_code == 404
+    assert client.get(f"/agent/runs/{submission.run.id}").status_code == 404
 
 
 def _advance_worker(db, gateway):

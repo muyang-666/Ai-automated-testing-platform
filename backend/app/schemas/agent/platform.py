@@ -12,7 +12,8 @@ from pydantic import BaseModel, ConfigDict, Field
 # ── 集中状态/枚举定义 ──
 
 SESSION_STATUSES = ("active", "closed", "archived")
-MESSAGE_ROLES = ("user", "assistant", "system", "tool")
+MESSAGE_ROLES = ("user", "assistant", "toolResult", "system", "tool")
+SESSION_MODES = ("legacy_workflow", "conversation")
 MESSAGE_TYPES = ("text", "status", "gate", "artifact_ref", "error")
 RUN_STATUSES = (
     "queued",
@@ -29,7 +30,8 @@ ARTIFACT_STATUSES = ("draft", "reviewing", "approved", "saved", "rejected")
 APPROVAL_STATUSES = ("pending", "approved", "rejected", "expired", "cancelled")
 
 SessionStatus = Literal["active", "closed", "archived"]
-MessageRole = Literal["user", "assistant", "system", "tool"]
+MessageRole = Literal["user", "assistant", "toolResult", "system", "tool"]
+SessionMode = Literal["legacy_workflow", "conversation"]
 MessageType = Literal["text", "status", "gate", "artifact_ref", "error"]
 RunStatus = Literal[
     "queued",
@@ -54,8 +56,9 @@ class AgentBase(BaseModel):
 
 
 class AgentSessionCreate(AgentBase):
-    project_id: int = Field(..., description="所属项目ID")
+    project_id: Optional[int] = Field(default=None, description="可选项目ID；conversation 可空")
     user_id: int = Field(..., description="会话所属用户ID")
+    mode: SessionMode = Field(default="legacy_workflow", description="会话模式")
     title: str = Field(..., max_length=200, description="会话标题")
     status: SessionStatus = Field(default="active", description="状态：active/closed/archived")
     current_skill_code: Optional[str] = Field(default=None, max_length=100, description="当前选中的 Skill 编码")
@@ -76,6 +79,9 @@ class AgentSessionResponse(AgentSessionCreate):
 class AgentMessageCreate(AgentBase):
     session_id: int = Field(..., description="所属会话ID")
     run_id: Optional[int] = Field(default=None, description="关联 Run ID，可空")
+    message_id: Optional[str] = Field(default=None, max_length=64, description="P01 稳定消息ID；旧消息可空")
+    schema_version: int = Field(default=1, ge=1, description="消息合同版本")
+    timestamp_ms: Optional[int] = Field(default=None, ge=0, description="Unix 毫秒时间戳")
     role: MessageRole = Field(..., description="角色：user/assistant/system/tool")
     message_type: MessageType = Field(default="text", description="类型：text/status/gate/artifact_ref/error")
     content: Optional[str] = Field(default=None, description="消息文本内容")
@@ -109,7 +115,7 @@ class AgentEventResponse(AgentEventCreate):
 
 class AgentRunCreate(AgentBase):
     session_id: int = Field(..., description="所属会话ID")
-    project_id: int = Field(..., description="所属项目ID")
+    project_id: Optional[int] = Field(default=None, description="可选项目ID；conversation 可空")
     requester_user_id: int = Field(..., description="发起用户ID")
     workflow_code: str = Field(..., max_length=100, description="Workflow 编码，如 case_generation")
     workflow_version: Optional[str] = Field(default=None, max_length=50, description="Workflow 版本")
@@ -119,6 +125,7 @@ class AgentRunCreate(AgentBase):
     output_json: Optional[dict[str, Any]] = Field(default=None, description="任务输出JSON")
     input_hash: Optional[str] = Field(default=None, max_length=64, description="输入内容哈希")
     idempotency_key: Optional[str] = Field(default=None, max_length=128, description="幂等键，可空")
+    user_message_id: Optional[int] = Field(default=None, description="conversation 首条用户消息ID")
     model_snapshot_json: Optional[dict[str, Any]] = Field(default=None, description="模型快照，只存非敏感信息")
     prompt_version: Optional[str] = Field(default=None, max_length=50, description="Prompt 版本")
     max_steps: int = Field(default=20, ge=1, description="最大步骤数")
