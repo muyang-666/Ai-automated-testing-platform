@@ -24,7 +24,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 SCRIPT_LOCATION = str(BACKEND_DIR / "alembic")
 
 BASELINE_REVISION = "0001_v1_schema_baseline"
-HEAD_REVISION = "0003_conversation_persistence"
+HEAD_REVISION = "0004_agent_run_execution_token"
 
 AGENT_TABLE_NAMES = {
     "agent_sessions",
@@ -115,7 +115,7 @@ def test_stamp_then_upgrade_creates_agent_tables(tmp_path):
     assert {
         "id", "session_id", "project_id", "requester_user_id", "workflow_code",
         "status", "idempotency_key", "heartbeat_at", "error_code",
-        "user_message_id", "active_slot",
+        "user_message_id", "active_slot", "execution_token",
     } <= run_cols
     session_cols = {c["name"]: c for c in inspector.get_columns("agent_sessions")}
     assert {"mode", "next_message_sequence", "next_event_sequence"} <= set(session_cols)

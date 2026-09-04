@@ -42,11 +42,18 @@ class AgentWorker:
         poll_interval_seconds: float = 1.0,
         stale_after_seconds: float = 300.0,
         conversation_runner_factory: Callable[[], Any] | None = None,
+        heartbeat_interval_seconds: float | None = None,
+        heartbeat_failure_limit: int = 1,
     ):
         if poll_interval_seconds <= 0:
             raise ValueError("poll_interval_seconds 必须 > 0")
         if stale_after_seconds < 0:
             raise ValueError("stale_after_seconds 必须 >= 0")
+        if heartbeat_interval_seconds is None:
+            from app.core.config import settings
+            heartbeat_interval_seconds = settings.AGENT_HEARTBEAT_INTERVAL_SECONDS
+        if heartbeat_interval_seconds <= 0:
+            raise ValueError("heartbeat_interval_seconds 必须 > 0")
         self._session_factory = session_factory
         self._runtime_factory = runtime_factory
         self._conversation_runner_factory = conversation_runner_factory
@@ -55,6 +62,8 @@ class AgentWorker:
         self._sleeper = sleeper or time.sleep
         self.poll_interval_seconds = poll_interval_seconds
         self.stale_after_seconds = stale_after_seconds
+        self.heartbeat_interval_seconds = heartbeat_interval_seconds
+        self.heartbeat_failure_limit = max(1, heartbeat_failure_limit)
 
     # ── 单次处理 ──
 
@@ -71,8 +80,9 @@ class AgentWorker:
         if run_id is None:
             return WorkerRunResult(action="idle")
 
-        claimed = agent_run_service.claim_queued_run(db, run_id, self.worker_id, self._now())
-        if not claimed:
+        execution_token = agent_run_service.claim_queued_run(
+            db, run_id, self.worker_id, self._now())
+        if execution_token is None:
             # 被其他 Worker 抢先（条件 UPDATE rowcount=0）
             return WorkerRunResult(action="contended", run_id=run_id)
         db.commit()  # 抢占事务结束：不在 Runtime/LLM 期间持有抢占事务
@@ -82,13 +92,15 @@ class AgentWorker:
             # 防御：抢占后状态被外部修改
             return WorkerRunResult(action="contended", run_id=run_id)
 
-        # P05-C dispatch：conversation → ConversationRunner；其余 → legacy AgentRunner
+        # P05-C/D dispatch：conversation → ConversationRunner；其余 → legacy AgentRunner
         if run.workflow_code == "conversation":
-            return self._run_conversation(db, run_id)
+            return self._run_conversation(db, run_id, execution_token)
 
         def step_hook(current_run: AgentRun) -> None:
-            # best-effort：心跳随 Runner 的 commit 一起持久化，返回值不做控制流
-            agent_run_service.heartbeat(db, current_run.id, self.worker_id, self._now())
+            # best-effort fenced 心跳：随 Runner 的 commit 一起持久化，
+            # 仅当 status='running' 且 worker_id/execution_token 匹配时生效
+            agent_run_service.heartbeat(db, current_run.id, self.worker_id,
+                                        self._now(), execution_token=execution_token)
 
         runner = self._runtime_factory(step_hook)
         try:
@@ -113,21 +125,22 @@ class AgentWorker:
             final_status=fresh.status if fresh else None,
         )
 
-    def _run_conversation(self, db, run_id: int) -> WorkerRunResult:
+    def _run_conversation(self, db, run_id: int, execution_token: int) -> WorkerRunResult:
         """conversation Run：ConversationRunner.run()（async）执行并自行 finalize。
 
-        Runner 内部已把执行期异常收敛为 failed outcome；Worker 只兜底 Runner 之外
-        （claim 后、finalize 阶段）的 unexpected exception，且仅在 Run 仍为 running 时
-        标记 failed（幂等/单一 ownership：不重复 finalize 已终态的 Run）。
+        P05-D：执行期间并行运行 ownership control loop（fenced heartbeat +
+        cancel 观察 + ownership lost 检测），ownership 丢失或收到取消时置
+        cancel_event 让 AgentLoop 尽快停止。control heartbeat 使用独立 Session、
+        每次 tick 短事务，不持有长事务；Runner 网络等待期间不碰 DB（P05-C 保持）。
+        Runner 内部把执行期异常收敛为 failed outcome；Worker 只兜底 Runner 之外
+        的 unexpected exception，且仅在 Run 仍为 running 时标记 failed（单一 ownership）。
         """
         if self._conversation_runner_factory is None:
             db.rollback()
             self._mark_failed(db, run_id, "agent_unknown_workflow", "未配置 conversation runner")
             return WorkerRunResult(action="failed", run_id=run_id, final_status="failed")
         try:
-            runner = self._conversation_runner_factory()
-            # P05-C：同步 Worker 内为单次 Run 建独立事件循环；循环/async 化属后续阶段
-            asyncio.run(runner.run(db, run_id))
+            asyncio.run(self._run_conversation_async(db, run_id, execution_token))
         except Exception as e:
             db.rollback()
             fresh = db.query(AgentRun).get(run_id)
@@ -140,6 +153,78 @@ class AgentWorker:
             run_id=run_id,
             final_status=fresh.status if fresh else None,
         )
+
+    async def _run_conversation_async(self, db, run_id: int, execution_token: int) -> None:
+        """runner task + ownership control task 同 loop 并发；runner 结束即停 control。"""
+        cancel_event = asyncio.Event()
+        runner = self._conversation_runner_factory()
+        runner_task = asyncio.create_task(
+            runner.run(db, run_id, cancel_event=cancel_event,
+                       worker_id=self.worker_id, execution_token=execution_token))
+        control_task = asyncio.create_task(self._ownership_control(run_id, execution_token,
+                                                                   cancel_event))
+        try:
+            await asyncio.wait({runner_task}, return_when=asyncio.FIRST_COMPLETED)
+            runner_task.result()  # runner 内部异常上抛给 _run_conversation 的统一边界
+        finally:
+            control_task.cancel()
+            try:
+                await control_task
+            except asyncio.CancelledError:
+                pass
+
+    async def _ownership_control(self, run_id: int, execution_token: int,
+                                 cancel_event: asyncio.Event) -> None:
+        """每个 tick：fenced heartbeat → 区分 cancel / ownership lost / 已终态。
+
+        一次 heartbeat 异常即安全中止（不吞异常、不做复杂 retry）：执行安全不确定时
+        停止当前执行，避免假装 ownership 仍正常。
+        """
+        consecutive_heartbeat_failures = 0
+        while True:
+            if cancel_event.is_set():
+                return
+            try:
+                state = self._ownership_probe(run_id, execution_token)
+            except Exception:
+                consecutive_heartbeat_failures += 1
+                if consecutive_heartbeat_failures >= self.heartbeat_failure_limit:
+                    cancel_event.set()
+                    return
+                await asyncio.sleep(self.heartbeat_interval_seconds)
+                continue
+            consecutive_heartbeat_failures = 0
+            if state == "ok":
+                pass
+            elif state == "cancelled":
+                cancel_event.set()  # 用户取消（DB 已终态 + run_cancelled 事件由取消方写入）
+                return
+            elif state in {"lost", "finalized"}:
+                cancel_event.set()  # ownership lost：让 AgentLoop 尽快停止
+                return
+            await asyncio.sleep(self.heartbeat_interval_seconds)
+
+    def _ownership_probe(self, run_id: int, execution_token: int) -> str:
+        """独立 Session 的 fenced heartbeat；rowcount=0 时 SELECT 复核原因。"""
+        session = self._session_factory()
+        try:
+            updated = agent_run_service.heartbeat(
+                session, run_id, self.worker_id, self._now(),
+                execution_token=execution_token)
+            if updated == 1:
+                session.commit()
+                return "ok"
+            session.rollback()
+            run = session.query(AgentRun).get(run_id)
+            if run is None:
+                return "finalized"
+            if run.status == "cancelled":
+                return "cancelled"
+            if run.status in {"succeeded", "failed", "interrupted"}:
+                return "finalized"
+            return "lost"  # 仍 running 但 worker/token 不匹配 → ownership 被替换
+        finally:
+            session.close()
 
     def _mark_failed(self, db, run_id: int, error_code: str, message: str) -> None:
         run = db.query(AgentRun).get(run_id)

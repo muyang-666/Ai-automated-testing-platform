@@ -108,7 +108,7 @@ class RaisingConversationRunner:
     def __init__(self):
         self.called = False
 
-    async def run(self, db, run_id, cancel_event=None):
+    async def run(self, db, run_id, cancel_event=None, **kwargs):
         self.called = True
         raise RuntimeError("conversation-runner-boom")
 
@@ -119,7 +119,7 @@ class RecordingConversationRunner:
     def __init__(self):
         self.called_run_ids = []
 
-    async def run(self, db, run_id, cancel_event=None):
+    async def run(self, db, run_id, cancel_event=None, **kwargs):
         self.called_run_ids.append(run_id)
         return None
 
@@ -191,8 +191,8 @@ class ChatConversationRunner:
             timestamp_factory=lambda: 10,
         )
 
-    async def run(self, db, run_id, cancel_event=None):
-        return await self._runner.run(db, run_id, cancel_event=cancel_event)
+    async def run(self, db, run_id, cancel_event=None, **kwargs):
+        return await self._runner.run(db, run_id, cancel_event=cancel_event, **kwargs)
 
 
 def fresh_run(db_session, run_id):
@@ -357,7 +357,7 @@ def test_claim_service_no_longer_excludes_conversation_queued_run(db_session):
     session = SessionLocal()
     try:
         assert agent_run_service.next_queued_run_id(session) == run_id
-        assert agent_run_service.claim_queued_run(session, run_id, "worker-x", datetime(2026, 1, 1)) is True
+        assert agent_run_service.claim_queued_run(session, run_id, "worker-x", datetime(2026, 1, 1)) is not None
         session.commit()
     finally:
         session.close()
@@ -380,7 +380,7 @@ def test_conversation_and_legacy_queued_runs_share_one_queue_ordered_by_id(db_se
         while candidate is not None:
             candidates.append(candidate)
             assert agent_run_service.claim_queued_run(
-                session, candidate, "worker-x", datetime(2026, 1, 1)) is True
+                session, candidate, "worker-x", datetime(2026, 1, 1)) is not None
             session.commit()
             candidate = agent_run_service.next_queued_run_id(session)
     finally:

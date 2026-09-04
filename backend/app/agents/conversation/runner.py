@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Callable, Literal
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agents.conversation.budget import AgentLoopLimits
@@ -58,6 +59,7 @@ class ConversationRunOutcome:
     turns: int = 0
     error_code: str | None = None
     error_type: str | None = None  # 仅异常类型名（不含消息内容），供诊断/审计
+    run_finalized: bool = True  # False = 旧 ownership/已终态，未改动任何 Run 生命周期状态
     persisted_message_ids: tuple[str, ...] = ()
     # 本轮 AgentLoop 产生的事件快照（供测试与未来 SSE 通道；本轮不落库为逐条事件行）
     loop_events: tuple[Any, ...] = ()
@@ -87,8 +89,15 @@ class ConversationRunner:
     # ------------------------------------------------------------------ 主入口
 
     async def run(self, db: Session, run_id: int,
-                  cancel_event: asyncio.Event | None = None) -> ConversationRunOutcome:
-        """执行一个 conversation Run 到终态。Worker claim/lease 不在本模块。"""
+                  cancel_event: asyncio.Event | None = None, *,
+                  worker_id: str | None = None,
+                  execution_token: int | None = None) -> ConversationRunOutcome:
+        """执行一个 conversation Run 到终态。Worker claim/lease 不在本模块。
+
+        P05-D fencing：提供 worker_id + execution_token 时（Worker 生产路径），
+        在每次关键写（消息持久化/终态/事件）前先做 ownership 断言；丢失/已被
+        外部终结时不再提交任何 Run 状态（run_finalized=False）。
+        """
         run, session_id, actor_user_id = self._validate_run(db, run_id)
         await self._start_run(db, run)
 
@@ -110,11 +119,61 @@ class ConversationRunner:
             config = self._build_config(loop_events, cancel_event)
             result = await run_agent_loop(prompts=[], context=context, config=config)
         except Exception as exc:
-            # 恢复/执行阶段失败：不产生伪助手消息；标记 failed（best-effort），不向上抛。
+            # 执行异常：先复核 ownership/终态（旧 Worker 不得在丢失后落 failed），
+            # 仍持有 ownership 才标记 failed（best-effort），不向上抛。
+            state = self._execution_state(db, run.id, worker_id, execution_token)
+            if state == "terminal":
+                return self._no_write_outcome_for_terminal(db, run.id)
+            if state == "lost":
+                return ConversationRunOutcome(status="failed", error_code="ownership_lost",
+                                              error_type=type(exc).__name__,
+                                              run_finalized=False)
             return self._fail_run(db, run, error_code="runner_execution_error",
                                   error_type=type(exc).__name__)
 
+        state = self._execution_state(db, run.id, worker_id, execution_token)
+        if state == "terminal":
+            # 已被外部终结（如用户 cancel 已置 status=cancelled 并写过事件）：不再写
+            return self._no_write_outcome_for_terminal(db, run.id)
+        if state == "lost":
+            return ConversationRunOutcome(
+                status="failed", error_code="ownership_lost",
+                model_calls=result.model_calls, tool_calls=result.tool_calls,
+                turns=result.turns, run_finalized=False)
         return self._finalize_run(db, run, result, loop_events)
+
+    @staticmethod
+    def _execution_state(db: Session, run_id: int, worker_id: str | None,
+                         execution_token: int | None) -> str:
+        """'ok'（可继续写） | 'terminal'（已被外部终结） | 'lost'（ownership 被替换）。
+
+        用标量 SELECT（不走 ORM 身份映射）读取最新已提交状态，避免 Worker 会话
+        中缓存的旧 ownership 让过期执行者误判自己仍持有执行权。
+        """
+        row = db.execute(
+            select(AgentRun.status, AgentRun.worker_id, AgentRun.execution_token)
+            .where(AgentRun.id == run_id)
+        ).first()
+        if row is None or row.status != "running":
+            return "terminal"
+        if worker_id is None or execution_token is None:
+            return "ok"  # 非 Worker 直调（测试/未来入口）不做 fencing
+        if row.worker_id != worker_id or row.execution_token != execution_token:
+            return "lost"
+        return "ok"
+
+    @staticmethod
+    def _no_write_outcome_for_terminal(db: Session, run_id: int) -> ConversationRunOutcome:
+        status = db.execute(
+            select(AgentRun.status).where(AgentRun.id == run_id)
+        ).scalar_one_or_none()
+        if status == "cancelled":
+            return ConversationRunOutcome(status="cancelled", error_code="canceled",
+                                          run_finalized=False)
+        if status == "succeeded":
+            return ConversationRunOutcome(status="succeeded", run_finalized=False)
+        return ConversationRunOutcome(status="failed", error_code="already_terminal",
+                                      run_finalized=False)
 
     # ------------------------------------------------------------------ 校验
 

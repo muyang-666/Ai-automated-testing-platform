@@ -209,10 +209,10 @@ def test_second_worker_claim_rowcount_zero(db_session):
     try:
         clock = FakeClock()
         # Worker A 抢占成功
-        assert agent_run_service.claim_queued_run(db_session, run.id, WORKER_A, clock()) is True
+        assert agent_run_service.claim_queued_run(db_session, run.id, WORKER_A, clock()) is not None
         db_session.commit()
         # Worker B 对同一候选条件更新 → rowcount 0
-        assert agent_run_service.claim_queued_run(db2, run.id, WORKER_B, clock()) is False
+        assert agent_run_service.claim_queued_run(db2, run.id, WORKER_B, clock()) is None
         db2.rollback()
 
         refreshed = db_session.query(AgentRun).get(run.id)
@@ -234,7 +234,7 @@ def test_non_queued_status_not_claimable(db_session, target_status):
     db_session.commit()
 
     clock = FakeClock()
-    assert agent_run_service.claim_queued_run(db_session, run.id, WORKER_A, clock()) is False
+    assert agent_run_service.claim_queued_run(db_session, run.id, WORKER_A, clock()) is None
     worker = _make_worker(clock=clock)
     assert worker.run_once().action == "idle"  # 没有 queued 任务
     assert run.status == target_status  # 状态未被改动
@@ -247,12 +247,18 @@ def test_heartbeat_owner_only(db_session):
     session = _seed_session(db_session)
     run = _seed_queued_run(db_session, session)
     clock = FakeClock()
-    assert agent_run_service.claim_queued_run(db_session, run.id, WORKER_A, clock()) is True
+    token = agent_run_service.claim_queued_run(db_session, run.id, WORKER_A, clock())
+    assert token is not None
     db_session.commit()
 
     clock.advance(5)
-    assert agent_run_service.heartbeat(db_session, run.id, WORKER_A, clock()) == 1
-    assert agent_run_service.heartbeat(db_session, run.id, WORKER_B, clock()) == 0  # 非 owner 不能更新
+    # fenced heartbeat：owner + 正确 execution_token 才能更新
+    assert agent_run_service.heartbeat(db_session, run.id, WORKER_A, clock(),
+                                       execution_token=token) == 1
+    assert agent_run_service.heartbeat(db_session, run.id, WORKER_B, clock(),
+                                       execution_token=token) == 0  # 非 owner 不能更新
+    assert agent_run_service.heartbeat(db_session, run.id, WORKER_A, clock(),
+                                       execution_token=token + 99) == 0  # 旧 token 被拒
     db_session.commit()
 
     refreshed = db_session.query(AgentRun).get(run.id)
@@ -266,7 +272,7 @@ def test_heartbeat_only_when_running(db_session):
     agent_run_service.transition_status(db_session, run, "succeeded")
     db_session.commit()
 
-    assert agent_run_service.heartbeat(db_session, run.id, WORKER_A, FakeClock()()) == 0
+    assert agent_run_service.heartbeat(db_session, run.id, WORKER_A, FakeClock()(), execution_token=None) == 0
 
 
 # ── Worker 执行结果 ──
@@ -322,7 +328,7 @@ def test_stale_running_interrupted(db_session):
     session = _seed_session(db_session)
     run = _seed_queued_run(db_session, session)
     clock = FakeClock()
-    assert agent_run_service.claim_queued_run(db_session, run.id, WORKER_A, clock()) is True
+    assert agent_run_service.claim_queued_run(db_session, run.id, WORKER_A, clock()) is not None
     db_session.commit()
 
     clock.advance(301)  # stale_after=300
@@ -341,7 +347,7 @@ def test_fresh_running_not_touched(db_session):
     session = _seed_session(db_session)
     run = _seed_queued_run(db_session, session)
     clock = FakeClock()
-    assert agent_run_service.claim_queued_run(db_session, run.id, WORKER_A, clock()) is True
+    assert agent_run_service.claim_queued_run(db_session, run.id, WORKER_A, clock()) is not None
     db_session.commit()
 
     clock.advance(60)  # 未超 stale_after
@@ -381,7 +387,7 @@ def test_interrupted_not_auto_requeued(db_session):
     session = _seed_session(db_session)
     run = _seed_queued_run(db_session, session)
     clock = FakeClock()
-    assert agent_run_service.claim_queued_run(db_session, run.id, WORKER_A, clock()) is True
+    assert agent_run_service.claim_queued_run(db_session, run.id, WORKER_A, clock()) is not None
     db_session.commit()
     clock.advance(301)
     worker = _make_worker(clock=clock, stale_after=300.0)

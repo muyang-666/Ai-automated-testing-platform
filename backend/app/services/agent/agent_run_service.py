@@ -10,7 +10,7 @@ import hashlib
 import json
 from datetime import datetime
 
-from sqlalchemy import and_, func, or_, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.agents.runtime.errors import AgentError, AgentPermissionError
@@ -235,14 +235,14 @@ def next_queued_run_id(db: Session) -> int | None:
     return row[0] if row else None
 
 
-def claim_queued_run(db: Session, run_id: int, worker_id: str, now: datetime) -> bool:
+def claim_queued_run(db: Session, run_id: int, worker_id: str, now: datetime) -> int | None:
     """原子抢占：只有 status='queued' 的行会被更新（conversation 与 legacy 通用）。
 
-    条件 UPDATE 保证两个 Worker 看到同一候选时只有一个成功（rowcount==1）。
-    抢占成功后调用方应立即 commit，释放抢占事务，再进入 Runtime。
-    只能抢占 queued；cancelled/waiting_approval/终态不会被抢占。
-    active_slot 语义：conversation 同会话最多一个 queued/running 的
-    active_slot=1 Run 由 P04 的 UQ(session_id, active_slot) 约束保证，claim 不绕过它。
+    成功时同步获得执行代次 execution_token（单调递增：NULL→1，已有→+1），
+    返回该 token；竞争失败返回 None。调用方应立即 commit 释放抢占事务。
+    只抢占 queued；cancelled/waiting_approval/终态不可抢占。
+    active_slot 语义：conversation 同会话最多一个 active_slot=1 Run 由
+    P04 的 UQ(session_id, active_slot) 保证，claim 不绕过。
     """
     result = db.execute(
         update(AgentRun)
@@ -252,25 +252,55 @@ def claim_queued_run(db: Session, run_id: int, worker_id: str, now: datetime) ->
             worker_id=worker_id,
             heartbeat_at=now,
             started_at=func.coalesce(AgentRun.started_at, now),
+            execution_token=func.coalesce(AgentRun.execution_token, 0) + 1,
         )
         .execution_options(synchronize_session=False)
     )
-    return result.rowcount == 1
+    if result.rowcount != 1:
+        return None
+    token = db.execute(
+        select(AgentRun.execution_token).where(AgentRun.id == run_id)
+    ).scalar_one_or_none()
+    return token
 
 
-def heartbeat(db: Session, run_id: int, worker_id: str, now: datetime) -> int:
-    """Owner-only 心跳：仅 owner Worker 且 status='running' 时更新。
+def heartbeat(db: Session, run_id: int, worker_id: str, now: datetime, *,
+              execution_token: int | None) -> int:
+    """Fenced owner-only 心跳：仅当 status='running' 且 worker_id 与 execution_token
+    都匹配当前 ownership 时更新。
 
-    返回 rowcount。注意：MySQL 在更新值与当前值完全相同时 rowcount 可能为 0，
-    因此调用方不得基于返回值做控制流分支（best-effort 语义）。
+    返回 rowcount（0 表示 ownership lost 或非 running）。注意 MySQL 在值不变时
+    rowcount 可能为 0，因此调用方必须以 SELECT 复核区分"值未变"与"失去 ownership"，
+    不能只凭返回值做唯一判定（best-effort 语义见 Worker control loop）。
     """
     result = db.execute(
         update(AgentRun)
-        .where(AgentRun.id == run_id, AgentRun.status == "running", AgentRun.worker_id == worker_id)
+        .where(
+            AgentRun.id == run_id,
+            AgentRun.status == "running",
+            AgentRun.worker_id == worker_id,
+            AgentRun.execution_token == execution_token,
+        )
         .values(heartbeat_at=now)
         .execution_options(synchronize_session=False)
     )
     return result.rowcount or 0
+
+
+def assert_execution_ownership(db: Session, run_id: int, worker_id: str,
+                               execution_token: int | None) -> None:
+    """fencing 断言：Worker 在执行关键写（消息持久化/终态/事件）前复核 ownership。
+
+    不匹配抛 AgentError(error_code='agent_ownership_lost')，调用方必须停止提交
+    任何 Run 生命周期状态，不得先写消息再发现自己过期。
+    """
+    run = db.query(AgentRun).filter(AgentRun.id == run_id).first()
+    if run is None or run.status != "running" \
+            or run.worker_id != worker_id or run.execution_token != execution_token:
+        raise AgentError(
+            f"Run {run_id} 的执行所有权已失效（worker/token 不匹配或已非 running）",
+            error_code="agent_ownership_lost",
+        )
 
 
 def find_stale_run_ids(db: Session, stale_before: datetime, limit: int = 50) -> list[int]:

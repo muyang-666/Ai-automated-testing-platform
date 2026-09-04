@@ -107,7 +107,7 @@ def test_worker_selector_claims_conversation_queued_run_after_p05(db_session):
     assert submitted.run.status == "queued"
     assert agent_run_service.next_queued_run_id(db_session) == submitted.run.id
     assert agent_run_service.claim_queued_run(
-        db_session, submitted.run.id, "worker-x", datetime.utcnow()) is True
+        db_session, submitted.run.id, "worker-x", datetime.utcnow()) is not None
     db_session.commit()
     assert db_session.get(AgentRun, submitted.run.id).status == "running"
 

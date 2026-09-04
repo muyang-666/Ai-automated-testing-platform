@@ -546,3 +546,53 @@ run_agent_loop() / loop.py + tool_executor/policy/budget # 已实现，无生产
 - P05-D：heartbeat / lease refresh / fencing / stale recovery / long-LLM protection；Worker cancel 状态传播。
 - P05-E：follow-up queue / failed-head handling / conversation continuation semantics。
 - 其他：同步 Worker 内 asyncio.run 的异步化候选（P05-D 评估）；conversation 工具白名单与模型场景绑定（P06）；conversation AgentLoop 执行事件逐条落库与 SSE（P06）。
+
+## 2.20 2026-09-04 — V2-P05-D：Worker Execution Ownership Reliability（已实现并测试）
+
+- 授权范围：lease/fenced heartbeat/stale recovery/fencing token/Worker 层 cancel propagation；不实现 P05-E follow-up；不开始 P06；不重构 Worker Pool；不改 frontend/V3。
+
+### 新增 DB 字段（最小迁移）
+
+- `agent_runs.execution_token`（Integer，nullable）：P05-D fencing 执行代次。Alembic `0004_agent_run_execution_token`（down_revision=0003），与 create_all 先建表场景幂等（存在且 nullable 即返回）；downgrade 只删该列；历史行保持 NULL（旧数据安全），任何新 claim 起都会获得 token。未新增队列表。
+
+### Execution ownership model（真实代码）
+
+- claim（agent_run_service.claim_queued_run）原子获得 worker_id + heartbeat_at + started_at + execution_token；token 由 `COALESCE(execution_token,0)+1` 在条件 UPDATE 中递增，随后同事务 SELECT 读回返回给调用方（`int | None`，None=竞争失败）。两个 Worker 不可能拿到同一代次。
+- heartbeat（agent_run_service.heartbeat）改为 fenced：WHERE status='running' AND worker_id=… AND execution_token=…；rowcount=0 表示 ownership lost/非 running。
+- assert_execution_ownership：Runner 关键写前复核，不匹配抛 error_code=agent_ownership_lost。
+- Worker control（agent_worker.py）：conversation 执行时并行 `_ownership_control` task —— 每 tick（默认 AGENT_HEARTBEAT_INTERVAL_SECONDS=10.0，测试 0.02）用**独立 Session + 短事务**做 fenced heartbeat，并对 rowcount=0 做 SELECT 复核区分：cancelled（用户取消）→ cancel_event；lost（仍 running 但 worker/token 不匹配）或 finalized（他人已终结）→ cancel_event。heartbeat 异常（连续 heartbeat_failure_limit 次，默认 1）→ 安全中止，不假装 ownership 正常。control 不写 AgentEvent（不制造噪声事件）。
+- Runner（conversation/runner.py）：run() 增加 worker_id/execution_token 参数；恢复/执行后、任何消息持久化与终态写入前用标量 SELECT 复核 `_execution_state`（不走 ORM 身份映射，避免读到旧 ownership）——terminal（已被外部终结）→ 不再写任何状态（run_finalized=False，outcome 镜像 cancelled/succeeded/already_terminal）；lost → outcome failed/ownership_lost/run_finalized=False，不写消息不覆盖新 owner；ok 才 persist/finalize。AgentLoop 保持纯 P03（只知 cancel/deadline/budget/tools/provider，无 fencing/SQL）。
+
+### Cancel propagation（真实路径）
+
+- 来源：现有 API `POST /agent/runs/{id}/cancel`（transition running→cancelled + 一次 run_cancelled 事件，取消方写入，不加新字段）。
+- 传播：Worker control 每 tick 观察到 status=cancelled → cancel_event.set() → SlowGateway/AgentLoop 协作中止（aborted/canceled）→ Runner 发现 terminal → 不再写（run_cancelled 不重复、run_started 仍唯一）。协作式取消：Provider 不做即时杀死，若 Provider 不支持取消只能在模型调用结束检查（本轮 Fake 为协作式，真实 Provider 限制如实记录）。
+
+### Stale recovery
+
+- 复用既有 recover_stale_runs / mark_interrupted：running + heartbeat 超时 → interrupted（条件 UPDATE WHERE status='running'），保留 worker_id 供排查；不自动 requeue（遵循现有状态机）；interrupted 后旧 token 心跳必然失败；重新排队后再次 claim token 递增（测试覆盖 token1→2）。
+
+### 配置
+
+- core Settings 新增 AGENT_HEARTBEAT_INTERVAL_SECONDS=10.0 / AGENT_STALE_THRESHOLD_SECONDS=300.0（heartbeat interval << stale threshold）；Worker 构造参数 heartbeat_interval_seconds 缺省读取 Settings。
+
+### Transaction boundary
+
+- heartbeat 每 tick 独立 Session 短事务立即 commit；模型网络等待期间无长 DB 事务（P05-C 探测测试保持通过）；Runner 所有权复核与写事务分离。
+
+### Tests（实际命令与结果，backend，项目 venv）
+
+- 新增 `tests/workers/test_agent_worker_reliability.py` 7 项：claim token 单调递增（token1→重新 claim token2）；fenced heartbeat 正确/旧 token/非 owner；长 LLM 等待（0.18s）期间 heartbeat 持续刷新且另一 Session 查询不被阻塞；stale recovery → interrupted + 旧 token 失效 + 不自动 requeue；ownership 执行中被替换（token 1→2）→ 旧 Worker 不 finalize/不写消息/新 owner 不被覆盖；DB cancel → cancel_event → AgentLoop abort → Run cancelled（run_started/run_cancelled 各一次，无成功/失败事件）；Runner 直调级 ownership_lost outcome.run_finalized=False。
+- 全后端：`pytest tests -q --ignore=tests/conversation/test_isolation.py` → 555 passed；isolation 单独 3 passed。迁移测试 head 更新至 0004（含 overlap create_all 幂等路径）。
+
+### 已知限制（记录）
+
+- ownership 复核为"关键写前单点校验"：校验与随后的消息/终态提交间隔毫秒级，极端并发下仍可能有窗口，未做行级条件 UPDATE 写入（后续如需可把终态/事件写成 fenced 条件 UPDATE）。
+- 同步 Worker 内每 conversation Run 一个 asyncio.run 事件循环（P05-C 保留）；异步化候选留后续评估。
+- legacy 仍为 step-boundary fenced heartbeat（步骤间心跳），conversation 为 interval control heartbeat——两种节奏的临时差异已记录；CaseGenerationWorkflow 本身无行为变化（仅 step_hook 心跳带上了 execution_token 条件）。
+- cancel 后 AgentLoop 的响应速度取决于 Provider 协作取消能力。
+
+### Deferred（未实现，留给后续）
+
+- P05-E：follow-up queue / failed-head handling / continuation ordering / steering / interrupt user message。
+- 其他：cancel 的 SSE/前端表达（P06）；conversation 工具白名单与模型场景绑定（P06）。
