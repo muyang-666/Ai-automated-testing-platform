@@ -454,3 +454,53 @@ run_agent_loop() / loop.py + tool_executor/policy/budget # 已实现，无生产
 
 - 无业务代码改动 → 未运行 pytest（不能把未运行测试写成通过）。
 - 文档静态检查：01/03 修改仅调整文案与验收归属，未新增/删除被引用的标题锚点；docs/V2 链接扫描此前已通过（本次无新文件链接）。
+
+## 2.18 2026-09-04 — V2-P05-B：ConversationRunner 最小生产执行桥（已实现并测试）
+
+- 授权范围：只实现 ConversationRunner 及其测试；不实现 Worker 分发 / claim 规则修改 / lease / heartbeat / fencing / follow-up；不删除 legacy Workflow；不开始 P06/P07/P08；不改 frontend / Alembic / DB schema / V3。
+
+### 新增文件
+
+- `backend/app/agents/conversation/runner.py`：ConversationRunner（生产执行适配器，新增，未接线到 Worker）。
+- `backend/tests/agents/conversation/test_runner.py`：Runner 测试（内存 SQLite + Fake Provider，8 项）。
+- 未修改任何既有模块；`conversation/__init__.py` 未改动（仓库习惯是从具体模块显式导入）。
+
+### Runner 合同（真实实现）
+
+- 构造注入：gateway（提供 async `.stream(snapshot, request, *, context, control, limits)`）、ProviderSnapshot、ToolRegistry、system_prompt、AgentLoopLimits / AttemptBudget / StreamLimits、policy、id/timestamp factory。
+- 执行身份：`run.requester_user_id`，并要求 == 会话 owner；从不接受模型提供的身份；user/project 不来自消息内容。
+- `async run(db, run_id, cancel_event=None) -> ConversationRunOutcome`；允许启动状态 queued/running（queued 由 Runner 经 transition_status 置 running，不做 claim SQL）；终态经 transition_status/mark_finished_at/save_output_json；计数器 llm_calls_used/tool_calls_used 递增。
+- restore：复用 `conversation_service.restore_conversation_messages()`（不重写 ORM→Domain 转换）；校验恢复历史以本 Run 用户消息结尾（user_message_id 比对）。
+- AgentLoop 调用：`run_agent_loop(prompts=[], context=...)`，历史（含当前 Turn 用户消息）在 submit 时已入库，置于 context.messages；不复制 while 循环。
+- 生命周期事件复用既有 DB event_type：run_started / run_succeeded / run_failed / run_cancelled（与 legacy AgentRunner 同名单，未新造事件类型）。AgentLoop 执行事件（agent_start/message_*/turn_*/tool_*）本轮只在内存收集（outcome.loop_events），逐条落库留到 P06 SSE。
+- 终态映射：completed→succeeded；aborted+canceled→cancelled；error / limit / stopped / waiting / 非取消 aborted→failed（stopped/waiting 会话级语义本轮无产品路径，见 Deferred）。
+- 执行/恢复阶段异常：不落伪消息，best-effort 置 failed（error_code=runner_execution_error，error_message 为固定文案不泄露原始异常），不向上抛；校验阶段异常（非 conversation Run、终态不可启动、owner 不符）向上抛给调用方。
+
+### Message 增量持久化策略
+
+- `run_agent_loop` 返回 `result.new_messages`；因本模块以 prompts=[] 调用，历史消息只存在于 context.messages，不会再次出现于 new_messages —— 结构上杜绝整段重写历史。
+- 显式保险：过滤 UserMessage（persist 合同禁止重复写用户首消息）；按 message_id 排除已持久化行；随后一次性调 `persist_conversation_messages()`。
+- 不依赖 DB unique（session_id, message_id）作为主要去重逻辑（该约束仅作最后防线）。
+
+### 事务边界（真实实现）
+
+- 网络等待期间不持有 DB 事务：① start 短事务（running + run_started）立即 commit；② restore 只读后立即 rollback；③ run_agent_loop 网络等待期无任何 DB 事务；④ 收尾：persist_conversation_messages 自带一次提交，事件+终态在随后一次 commit。
+- 已知妥协（记录，未重构）：persist_conversation_messages 内部自提交导致"新消息提交"与"run 终态提交"是两个事务；若两次之间进程崩溃，可能出现消息已写而 Run 停在 running 的中间态 —— 该中间态语义上等价于 interrupted 恢复场景（P05-C/D 的 recovery 职责），本轮按复用优先原则接受。
+
+### 测试（实际命令与结果，backend，项目 venv，禁插件缓存）
+
+- 新增 Runner：`pytest tests/agents/conversation/test_runner.py -q` → 8 passed
+- P01 回归（纯合同，confcutdir 隔离父 conftest）：`pytest --confcutdir=tests/conversation tests/conversation -q` → 90 passed
+- P03 回归：`pytest --confcutdir=tests/agent_loop tests/agent_loop -q` → 30 passed
+- P04 回归：`pytest tests/conversation_persistence -q` → 11 passed
+- 全后端：`pytest tests -q --ignore=tests/conversation/test_isolation.py` → 539 passed；隔离测试单独 `pytest --confcutdir=tests/conversation tests/conversation/test_isolation.py -q` → 3 passed
+- 覆盖场景：无 Tool 单轮；一次 ToolCall（calculator，工具结果回到第二次模型请求）；多轮恢复（历史顺序 user/assistant/user，只新增本轮消息）；Provider 抛异常 → failed 且无伪助手消息；模型 error 终态 → failed；cancel_event 预置 → cancelled 且零模型请求；终态 Run 不可再启动；legacy(case_generation) Run 被拒。
+
+### Deferred（未实现，留给后续）
+
+- Worker 分发（conversation → ConversationRunner；legacy → AgentRunner）与 queued claim 规则放开（P05-C）；
+- lease / heartbeat / fencing / follow-up / 队列暂停（P05-C/D）；
+- cancel 的 Worker 层传播与 DB cancelled 状态同步（P05-D）；
+- AgentLoop 执行事件逐条落库与 SSE 推送（P06）；
+- stopped / waiting 终态的会话级语义（工具显式终止、审批等待恢复；P10 Approval 相关）；
+- 模型 Provider snapshot/配置来源（Runner 已注入；由 Worker/配置中心在 P05-C/P06 提供）。

@@ -46,6 +46,7 @@
 - [x] 外键开启的 SQLite 迁移测试通过；有 conversation 数据时 downgrade 明确拒绝。
 
 ## P05 Conversation Runtime 收敛 + Workflow 退役
+> 2026-09-04 P05-B：ConversationRunner（最小生产执行桥）已实现并通过测试（runner 8 项 + P01 90 + P03 30 + P04 11 + 全后端 539 回归）。本阶段门禁暂不勾选：Worker 分发/claim/lease/heartbeat/fencing/follow-up 未接入，勾选项需端到端成立。
 - [ ] Conversation queued Run 被 Worker 消费（不再跳过、不再永远 queued）；同会话一个活跃 Turn。
 - [ ] lease / heartbeat：长模型调用不丢 lease；过期执行器写入被 fencing 拒绝。
 - [ ] cancel 可终止当前 Turn；follow_up 保序且不并行写同一会话；失败/中断后队列暂停。
