@@ -3,7 +3,7 @@
 > 本文来自实际源码阅读，不只依据 README。检索日期：2026-09-03。
 > 上游目录：D:\pi；origin：https://github.com/earendil-works/pi.git。
 > 参考 commit：f41f80466e30f21cdcd4d52aba4a2c2cb6ee3cc6，标题：fix(coding-agent): update interactive mode test fixture。
-> 状态：已阅读/已规划；未移植、未安装 npm 依赖、未运行上游测试。
+> 状态：P01 当前范围合同已翻译与轻适配，并通过 Codex 阶段复审（实际 90 项测试通过）；未安装 Pi npm 依赖、未运行上游测试。
 
 ## 1. 固定版本的方法
 
@@ -75,3 +75,131 @@ Pi 的基本闭环允许模型不调用工具而直接回复；工具调用后�
 - 改编代码保留上游版权与 MIT 许可说明；后续提交相应第三方说明文件。
 - 对外表述为“参考 Pi 架构的 Python TestAgent”，不称“Pi 官方 Python SDK”，不声称兼容 Pi 全部扩展。
 - 前端仍为 React/JavaScript；“Python 实现”指服务端内核，不是把 Web UI 改写为 Python。
+
+## 6. V2-P01-01/02 已落地映射（2026-09-03，编码未测）
+
+上游（f41f80466e30f21cdcd4d52aba4a2c2cb6ee3cc6）→ Python 对应：
+
+| 上游 | Python（backend/app/agents/conversation/messages.py） | 差异/说明 |
+|---|---|---|
+| TextContent（ai/types.ts） | class TextContent | type 固定 "text"；text 可为空字符串 |
+| ToolCall | class ToolCall | type="toolCall"、id、name、arguments（Record<string,any> → dict[str, Any]）；thoughtSignature/namespace 未译 |
+| UserMessage | class UserMessage | content: string \| TextContent[]；role="user" |
+| AssistantMessage | class AssistantMessage | content: list[TextContent \| ToolCall]，同一列表可混合两种块且保序、可为空；api/provider/usage/stopReason 等元信息未译 |
+| ToolResultMessage | class ToolResultMessage | 独立消息 role="toolResult"，tool_call_id/tool_name/content/details/is_error；usage/addedToolNames 未译 |
+| Message 联合 | Message = Annotated[Union[…], Field(discriminator="role")] + parse_message(TypeAdapter) | 按 role 判别解析 |
+| createToolResultMessage（agent-loop.ts） | 本轮仅按对象关系翻译类型，函数执行逻辑留对应 Loop 任务 | 未实现执行/保序运行 |
+| agent-loop.test.ts（工具结果源序/完成序测试） | 只读语义依据 | 运行测试留 Loop 任务 |
+
+轻适配：Python snake_case（tool_call_id←toolCallId、is_error←isError）；补应用层 message_id/schema_version（真整数 1 严格校验）与调用方 timestamp（Unix 毫秒）；role 名保留 "toolResult"，Provider 适配时才映射旧接口 tool。
+
+许可：改编自上游类型结构，保留 MIT 许可与 Copyright (c) 2025 Mario Zechner（完整文本已随 messages.py 注释与开发记录 2.3 记录）；未复制其他上游正文。
+
+只读审查补充：timestamp 为 Pi 原有字段，Python 当前另限制为非负整数；应用层新增项是 message_id/schema_version。当前 Assistant/ToolResult 的 content 默认 [] 比 Pi 类型的必填字段更宽，后续同文件修改时收敛；Pi 执行器构造结果时对缺失 content 的归一化应留在对应构建位置。未运行功能测试。
+
+## 7. V2-P01-03 字段映射与 None 适配（2026-09-03，编码未测）
+
+| 上游（ai/types.ts，f41f804…） | Python（conversation/messages.py） | 说明 |
+|---|---|---|
+| StopReason（7 值） | StopReason = Literal[…] | 保留原值，未知拒绝，不默认为 stop，不含 Run 预算状态 |
+| Usage + Usage.cost | Usage、UsageCost | snake_case（cacheRead→cache_read…、totalTokens→total_tokens）；上游必填仍须提供，允许显式 None=未知；cost 可 None；cache_write_1h/reasoning 可选默认 None |
+| Usage 计数/费用 | _ensure_count_or_none / _ensure_finite_number_or_none（before 校验） | 非负整数/有限非负数字；bool/负数/NaN/Infinity 拒绝 |
+| DeferredHandle | DeferredHandle | provider/model_id/api/id 必填；expires_at/poll_after_ms/data 可选；data 仅 JSON |
+| AssistantMessage 模型元信息 | api/provider/model/usage/stop_reason 必填；response_model/response_id/deferred/error_message/raw_stop_reason/end_turn 可选 | providerThinkingLevel、diagnostics 未译 |
+| ToolResultMessage.usage | usage: Usage \| None = None | 工具执行自身用量；addedToolNames 未译 |
+| Assistant/ToolResult content 必填可空 | content 无默认值，允许 [] | Pi 对缺失 content 的归一化留结果构建函数 |
+
+P01-03 只读复核：上一节 content 默认 [] 的差异现已收尾。DeferredHandle.data 的 _ensure_json_safe 当前还接受 tuple，并以 Any 原样保留，与上游 JsonValue[] 的数组表达及本项目“仅 JSON 数据”约定不符；下一次同文件修改时仅保留 list 分支，不引入额外规范化框架。以上为静态审查，未执行功能测试。
+
+## 8. V2-P01 阶段收尾映射（2026-09-03，针对性测试 66 条通过）
+
+| 上游（f41f804…） | Python（conversation/） | 差异/说明 |
+|---|---|---|
+| AssistantMessageEvent（9 种） | events.py 内 9 个事件模型 + AssistantMessageEvent 判别联合 | 字段 snake_case（content_index←contentIndex）；thinking_* 不入合同，未知 type 拒绝；done.reason 仅 stop/length/toolUse/deferred、error.reason 仅 error/aborted，并校验与消息 stop_reason 一致；partial 里保留 AssistantMessage 中间形状，toolcall_delta 的 delta 只作字符串 |
+| AgentEvent（10 种，agent/src/types.ts） | events.py 内 10 个事件模型 + AgentEvent 判别联合 | agent_start/end、turn_start/end、message_start/update/end、tool_execution_start/update/end；message/toolResult 复用 messages.py 类型 |
+| 事件应用层字段（项目轻适配） | AssistantEventEnvelope / AgentEventEnvelope | 外壳携带 schema_version/session_id/run_id/message_id/tool_call_id/sequence_no；按类型校验 message_id/tool_call_id 并能从内层核对；sequence_no 只校验正整数不分配 |
+| validateToolCall/validateToolArguments（ai/src/utils/validation.ts，含 TypeBox 转换） | tool_validation.py 的 prepare_tool_call / validate_tool_calls_from_final_message | 只按既有 ToolRegistry 查名并走输入模型 Pydantic 严格校验；不复制 TypeBox 类型转换器；未知工具/无输入模型/参数错误安全失败，不回显敏感值 |
+| failToolCallsFromTruncatedMessage / createToolResultMessage（agent-loop.ts） | tool_validation.py 的 not_complete 守卫与 build_tool_result_message | length/pending/error/aborted/deferred 阻断；stop/toolUse 均可携带工具块；结果构造 ID/名称取自原 ToolCall，content=None 归一化为 [] |
+| DeferredHandle.data JsonValue[] | messages.py _ensure_json_safe | 阶段收尾修正：JSON 数组只接受 list，tuple/set 等拒绝（上一节静态审查登记已处理） |
+
+已保留许可：MIT License / Copyright (c) 2025 Mario Zechner（完整文本随 conversation/messages.py 模块头）。真实执行保序/零副作用、Provider 流式与取消留 P02/P03。
+
+## 9. P01 阶段审查修正项（2026-09-03）
+
+第 8 节为实施者提交的映射与测试记录，不代表通过验收。Codex 实际反例表明：事件内部字段/嵌套关联校验不完整；参数入口未强制 strict、错误摘要可回显自定义校验器中的输入；无效输入模型不能安全失败；隔离测试缺少禁止尝试记录与负向自检。
+
+Pi streamAssistantResponse 的 message_update 使用同一个助手快照；runLoop 的 turn_end 携带当轮助手消息与工具结果，下一次模型响应另有 turn_start/turn_end。当前合成正例与这些产生点有差异，需按源代码纠正，不增加独立历史扫描器。详见 [P01 审查证据](reviews/V2-P01_REVIEW.md)。
+
+## 10. V2-P01 集中修正映射（2026-09-03，79 条通过，待 Codex 复审）
+
+| 审查缺口 | 修正（conversation/） | 差异/说明 |
+|---|---|---|
+| 错误摘要回显参数值/模型配置异常 | tool_validation.py：_safe_validation_summary 只输出受控 loc+标准 type；_is_valid_input_model 预检；非 ValidationError → validation_failed 固定文案 | 不复制 Pi validation.ts 的原始错误输出；配置问题(invalid_config)与参数问题(invalid_arguments/validation_failed)可区分 |
+| 严格参数依赖模型配置 | prepare_tool_call 入口 model_validate(..., strict=True) | 本项目既定严格策略在可信边界强制，不依赖工具作者；保留模型 extra/字段策略 |
+| 内部事件宽松/关联未闭合 | events.py：全部内部事件 strict+forbid；content_index 指向同类型块；toolcall_end 与 partial 快照一致；message_update 同 assistant message_id；turn_end.tool_results 必填 | 与 Pi streamAssistantResponse/runLoop 的实际产生位置一致；thinking_* 仍拒绝 |
+| 合成样例 turn 语义 | test_synthetic_sample.py 两 Pi turn 事件序列 | turn_end.message=当轮助手消息、tool_results 单列；依据 runLoop（f41f804…）事件顺序 |
+| 隔离自检缺失 | test_isolation.py：禁止尝试记录 + 导入/网络负向自检 | 网络保护只拦 socket.connect/create_connection，不破坏标准库导入；非宿主沙箱证明 |
+
+## 11. V2-P01 复审收尾映射（2026-09-03，90 条通过，待 Codex 复审）
+
+| 复审缺口 | 修正（conversation/） | 差异/说明 |
+|---|---|---|
+| 动态 loc/type/工具名回显 | tool_validation.py：对外固定错误码+固定文案，删去正则可信字段摘要 | 不转发 loc/type/msg/str(exc)/工具名；动态字典键、未知字段名、PydanticCustomError 自定 type 一律不回显 |
+| 候选构造漏出 ValidationError | PreparedToolCall 构造纳入 try；model_dump 结果必须为 dict，否则 validation_failed | 覆盖校验、序列化形状、候选构造三段；错误码区分 invalid_arguments/validation_failed |
+| 隔离网络逐项与尝试记录 | test_isolation.py：connect/create_connection 独立布尔、正式阶段尝试记录并判失败、故障注入自检 | 不破坏标准库导入（只拦方法）；非宿主沙箱声明不变 |
+| Pi 合法早期 partial 空调用 ID | messages.py ToolCall.id 允许空串；toolcall_end 与候选/结果构造要求有效 ID | 依据 ensureToolCallBlock（openai-completions.ts，f41f804…）；不伪造 ID、不用 model_construct |
+| 工具结果消息生命周期事件 | test_synthetic_sample.py 补 tool_result 的 message_start/message_end（在 tool_execution_end 与 turn_end 之间） | 依据 agent-loop.ts emitToolResultMessage（800–803 行）；按稳定 message_id 断言 |
+
+历史 66/79 passed 与两次审查记录保留；真实执行/Provider 流式/持久化仍留后续阶段。
+
+## 12. P01 最终复审（2026-09-03）
+
+Codex 已核对第 10 节当前实现与回归，并实际运行完整 P01 套件：90 passed in 5.41s。当前约定的合同/纯校验范围验收通过，见 [验收证据](reviews/V2-P01_ACCEPTANCE.md)。历史章节中的“待修/待复审”描述对应当时快照；后续 Provider 聚合、错误协议诊断与实际执行仍须在相应阶段验证，不以本次合同验收宣称完整 Pi 兼容。
+
+## 13. V2-P02 流式 Provider 映射（2026-09-03，部分实现并测试，未验收）
+
+| 需求（P02 任务书） | 实现 | 状态/差异 |
+|---|---|---|
+| 流入口/事件输出 | providers/streaming.py + openai/anthropic stream adapter，输出 P01 AssistantMessageEvent | OpenAI 与 Anthropic typed 路径已测基础文本/工具；unknown raw SSE 差异已登记 |
+| 请求转换（两类历史） | streaming.py 纯转换 | 四消息历史 openai/anthropic 已测，含 tool_result 分组与错配拒绝 |
+| 单层重试/预算/取消 | services/llm/llm_stream_gateway.py | 已测重试/预算/预检/取消/不重放 |
+| OpenAI SSE 解析/限额/usage/[DONE] | openai_stream_adapter.py | 已测文本/工具/空 choices usage/断流/帧限/非 JSON |
+| Anthropic messages.create typed 事件 | anthropic_stream_adapter.py | 已测 end_turn、ping+空、tool_use partial_json |
+| 高级矩阵（并发/取消 task/索引重映射/raw SSE/httpx2 契约等） | 未完成定向测试 | 登记为阶段未验证项 |
+
+## 14. V2-P02 集中修正与最终映射（2026-09-04，Fake 范围验收通过）
+
+第 13 节保留首次实现快照。本节记录其后集中修正后的事实；固定上游仍为 `f41f80466e30f21cdcd4d52aba4a2c2cb6ee3cc6`。
+
+| Pi / 协议行为 | TestMind Python 实现 | 轻适配与验收证据 |
+|---|---|---|
+| `ensureToolCallBlock` 按供应商 index 建块并在增量时更新 | `openai_stream_adapter._OpenAIAssembler` | 允许早期空 ID；两个调用交错、ID 延后、start/end 唯一；终态严格 JSON 对象，`{}` 合法，任一坏调用令整条消息失败 |
+| OpenAI Chat Completions 原始 SSE、`[DONE]`、最后 usage 块 | `OpenAIStreamAdapter` + `BoundedSSEDecoder` | 显式 Bearer；多 data 行以换行连接；frame/tool/累计输入按 UTF-8 字节有界；等待完整终止证据和 choices=[] usage |
+| Anthropic `content_block_start/delta/stop` 与 raw SSE | `AnthropicStreamAdapter` + `_AnthropicAssembler` | SDK `with_streaming_response.create` 只负责真实请求/响应生命周期，原始字节由共享解码器消费；未知事件可见失败；thinking 过滤并重映射本地索引 |
+| AssistantMessageEvent 唯一 start/终态 | 两 Adapter 输出 P01 事件，LLMStreamGateway 抑制隐藏重试的重复 start | 每块 start/delta/end 完整且快照深拷贝；一个逻辑流唯一 done/error，不输出 AgentEvent |
+| `convertMessages` 中工具调用/结果关联 | `streaming.to_openai_messages_and_tools` / `to_anthropic_system_messages_and_tools` | snake_case；按相邻批次核对 ID、名称、重复和遗漏；Anthropic 结果合为 user tool_result；不执行工具 |
+| Provider 单次请求与上层重试分层 | `LLMStreamGateway`，由现有 `LLMGateway.stream` async context manager 管理 | capability_overrides/别名复用；共享 AttemptBudget 与本地 retry_no 分开；每物理请求一个 AttemptRecord；提前退出确定关闭 |
+| Pi Usage 的独立 input/cache/output 语义 | 两聚合器生成 P01 Usage | OpenAI prompt_tokens 减已知 cached_tokens 得非缓存 input；Anthropic 累计 usage 覆盖；未知为 None，不计算费用 |
+| 上游取消与事件流关闭语义 | `await_controlled` + Gateway 上下文 | cancel_event 覆盖等响应头/读块/退避；有限总 deadline；Task.cancel 重抛；残留等待任务收尾 |
+
+Python 额外门禁为项目既定安全适配：严格终态 JSON、固定错误文案、不保存隐藏 thinking、显式资源限额、无环境凭证回落、响应 ID 与请求跟踪 ID 分离。没有复制 Pi 的兼容供应商全集、价格表、deferred/pause/server tools 或 Agent Loop。
+
+最终证据：P02 54 项、P01 90 项、旧 Provider/Gateway 55 项分别通过，见 [P02 验收记录](reviews/V2-P02_ACCEPTANCE.md)。未调用真实供应商；线上兼容性留 P10。改编模块保留 MIT 与 Copyright (c) 2025 Mario Zechner 说明。
+
+## 15. V2-P03 Agent Loop 与工具执行映射（2026-09-04）
+
+| Pi 固定提交符号 | TestMind Python | 保留与适配 |
+|---|---|---|
+| `runLoop` | conversation/loop.py `run_agent_loop` | 模型→工具→结果→下一模型；Agent/Turn/Message 事件顺序；steering/follow-up/持久化分别留 P05/P04 |
+| `streamAssistantResponse` | loop.py `_stream_assistant` | P02 start→message_start、块事件→message_update、终态→message_end；Provider 不发 AgentEvent |
+| `prepareToolCall` / `validateToolArguments` | P01 prepare_tool_call + P03 policy/evaluate_policy | 复用 ToolRegistry/Pydantic；策略改写参数后再次 strict 校验是项目加固 |
+| `executeToolCallsSequential` | tool_executor.execute_tool_call + loop 串行 for | 首期只串行；结果按调用源序，重复 ID 执行前拒绝；不导入 SQLAlchemy Session |
+| `executePreparedToolCall` 更新回调 | ToolHandlerContext.report_update | handler 完成瞬间停止接收 update；取消/截止清理异步任务，迟到更新丢弃 |
+| `createToolResultMessage` / `emitToolResultMessage` | P01 build_tool_result_message + P03 message_start/end | ID/名称取原调用；校验/策略/工具异常形成固定安全结果供下一轮修正 |
+| `AgentToolResult.terminate` | ToolExecutionResult.signal | 扩为 continue/stop/wait；P03 不实现审批等待的持久恢复 |
+| AbortSignal | asyncio.Event + monotonic deadline | 异步策略/工具可协作取消；同步 handler 只能调用前后检查，不能物理抢占 |
+| 上游无本项目四项统一硬限制 | AgentLoopLimits / AgentLoopBudget | max_turns/model_calls/tool_calls/deadline；P02 AttemptBudget 单独计物理请求 |
+
+默认策略在 P09 前阻止 `requires_approval`、`required_permission` 和非只读工具，不把模型请求当成授权。取消/截止会为批次中剩余工具建立关联的“未执行”结果，保证之后可识别每个 call_id；这是为持久恢复做的 Python 适配。
+
+验收见 [P03 验收记录](reviews/V2-P03_ACCEPTANCE.md)：P03 30 项、P02 54 项、P01 90 项、旧 Provider/Gateway 55 项、ToolRegistry 4 项分别通过。没有真实模型/数据库/业务工具调用；Calculator/Echo 都是内存测试夹具。改编代码保留 MIT 与 Copyright (c) 2025 Mario Zechner 说明。

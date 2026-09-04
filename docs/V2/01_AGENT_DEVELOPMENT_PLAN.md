@@ -1,20 +1,24 @@
 # V2 开发主计划：Pi 架构的 Python 实现
 
 > 生效：2026-09-03。用户已确认：V2 只做 Agent 基本架构，测试能力扩展全部归入 V3。
-> 状态：规划完成，V2-P01～P10 尚未实施；已有旧版代码只作为复用基线。
+> 状态：V2-P01～P03 已通过各自范围的 Codex 验收；P04～P10 待实施。
 > 路线：V1 既有平台 → V2 Python 对话 Agent 基础 → V3 测试领域 Skills。
 > 本文件替代旧 V2.1/V2.2/V2.3 任务路线，不代表 Pi 全功能复刻或官方 Python 移植。
 
 ## 0. Claude Code 执行协议
 
-1. 阅读 [总项目记录](../PROJECT_RECORD.md)、本计划、[架构](06_TEST_AGENT_PLATFORM_ARCHITECTURE.md)、[源码对照](10_PI_SOURCE_AUDIT.md)、[新开发记录](02_DEVELOPMENT_RECORD.md) 和 [验收清单](03_ACCEPTANCE_CHECKLIST.md)。
-2. 只实施用户指定的一个 V2-Pxx；先核验源码并简短说明文件范围、验证和风险，然后直接编码，不重复索要同一范围的确认。
+1. 首次接手阅读总项目记录、主计划、架构、源码对照、开发记录和验收清单；后续按当前阶段提示词读取必要章节与实际源码，不每次重复全量阅读。
+2. 最新协作方式：一次交付一个完整 V2-Pxx 阶段，阶段内实现、必要修正、针对性测试和记录连续完成，不再逐小步交接。先核验源码并简短说明范围，然后直接实施；完成指定阶段后停止，不自动跨到下一阶段。
 3. 文档只是开发计划，不授权立刻实施全部任务。新增依赖、真实模型费用/数据出站、真实数据库变更及破坏性操作单独确认。
 4. 保留用户/其他 AI 的未提交修改。不得 reset/checkout/restore 覆盖，不启动或停止用户正在运行的服务。
-5. 先运行新增和直接相关测试；不为每个小改动重跑全部后端测试。P10 才组织一次版本级回归。
+5. 阶段交付必须编写并运行新增/直接相关测试，必要修正在阶段内完成。旧小步“不写不跑测试”限制只描述历史任务，不适用于当前阶段收尾。未测试不算验收；P01 验证后才接 P02；P10 才组织版本级回归。
 6. 不能用改测试期望掩盖行为退化；不能把旧版测试数当成新 V2 的验收结果。
 7. Python 代码写在 TestMind；D:\pi 仅作源码参考，不作为运行依赖，不安装/执行 Pi，不复制其 Node.js 环境。
 8. 旧 V2.1-Txx 提示词已归档，不再作为当前开发指令。业务用例生成、根因分析、造数、缺陷生成禁止混入 V2。
+9. 协作顺序：Codex 先读固定 Pi 源码 → 生成阶段提示词 → Claude 完成实现/针对性测试/记录 → Codex 复审。只有用户明确要求“整理笔记”时才更新 D:\TestAgent node 或生成知识点，不随完成报告自动整理。用户理解、代码完成、测试结果分别记录。
+10. 最新设计原则：严格沿用 Pi 固定源码的对象关系、职责和调用顺序，实施选定范围的 Python 翻译与轻适配，不额外设计替代内核。轻适配限于语言/类型系统、现有 Python Web/存储边界和用户明确要求的预算/权限/审批；差异记录依据。一次交付一个相关功能组合，测试仍在阶段末进行。
+11. 学习笔记按阶段组织：每个阶段一个文件夹，该阶段全部知识点写在一份《学习笔记.md》。文档内按原子知识点分小节，用短解释、关键源码和例子说明；不再逐知识点建文件。用户要求提前补笔记时可先整理，但明确标注待修与未验证内容。
+12. 后续阶段提示词更详细具体：写清实际源码事实、允许文件/模块、实施先后、关键函数/字段合同、默认值/未知值、正常与异常分支、正反测试输入及预期、实际命令、完成报告和停止边界。必要时给短伪代码；不要只说“参考 Pi 自行实现”，也不为细化指令扩展阶段范围。
 
 ## 1. V2 交付定义
 
@@ -55,9 +59,9 @@ TestMind 已有但不等于完整对话内核：
 | 任务 | 交付 | 依赖 | 状态 |
 |---|---|---|---|
 | V2-R01 | Agent / LLM 模块目录整理（结构，先行） | 无 | 已完成（2026-09-03，见 02 记录 2.1） |
-| V2-P01 | 源码行为基线、消息/事件/工具合同 | V2-R01 | 待实施 |
-| V2-P02 | 文本 + 工具调用 + 流式模型适配 | P01 | 待实施 |
-| V2-P03 | 纯 Python Agent Loop 与执行器 | P01、P02 | 待实施 |
+| V2-P01 | 源码行为基线、消息/事件/工具合同 | V2-R01 | 阶段验收通过，见 P01_ACCEPTANCE.md |
+| V2-P02 | 文本 + 工具调用 + 流式模型适配 | P01 | 阶段验收通过，见 V2-P02_ACCEPTANCE.md |
+| V2-P03 | 纯 Python Agent Loop 与执行器 | P01、P02 | 阶段验收通过，见 V2-P03_ACCEPTANCE.md |
 | V2-P04 | 无项目会话、Turn 持久化、并发/幂等迁移 | P01、P03 | 待实施 |
 | V2-P05 | Worker 分发、租约、取消和消息排队 | P03、P04 | 待实施 |
 | V2-P06 | 对话 API + 悬浮前端 + SSE | P02、P04、P05 | 待实施 |
@@ -92,6 +96,8 @@ backend/app/agents/    执行内核（Runtime/Registry/工具）与既有 case_g
 
 ### V2-P01 — 行为基线与合同
 
+执行节奏：P01 已验收，证据见 [P01 验收记录](reviews/V2-P01_ACCEPTANCE.md)。阶段收尾及修正提示词保留历史，不再重复派发；下一阶段是 P02，按新的详细任务书接续。
+
 参考：Pi agent/src/types.ts、ai/src/types.ts、agent-loop.test.ts、agent.test.ts。
 
 新增建议：
@@ -101,7 +107,7 @@ backend/app/agents/    执行内核（Runtime/Registry/工具）与既有 case_g
 
 内容：
 - 定义 ConversationTurn（一条用户请求）、ModelTurn（一次模型推理）、ToolCall/ToolResult，避免与旧 Skill Run 混淆；
-- 消息含稳定 ID、角色、text/tool_call/tool_result 内容块、tool_call_id；工具响应不能冒充系统消息；
+- 核心消息结构直接对齐 Pi 的 UserMessage / AssistantMessage / ToolResultMessage 联合；文本与 ToolCall 是内容块，工具反馈是独立消息，通过 tool_call_id 关联，不能包装成系统消息。应用层稳定 ID 和版本是轻适配；Provider 边界再映射到旧 tool 角色；
 - 事件含 session_id、run_id、message_id、tool_call_id、sequence_no、schema_version，按事件类型约束必填字段；
 - 明确模型结束原因、空结果、截断、错误、取消、预算的区别；
 - 数据类型与纯函数不依赖数据库连接，不触发 create_all 或 import-time 建库。
@@ -110,6 +116,8 @@ backend/app/agents/    执行内核（Runtime/Registry/工具）与既有 case_g
 不做：业务工具、网络调用、数据库迁移。
 
 ### V2-P02 — 统一流式 Provider 边界
+
+P02 已按 [集中续做提示词](prompts/V2-P02_CONTINUATION_CLAUDE_PROMPT.md)完成修正，并通过 [阶段验收](reviews/V2-P02_ACCEPTANCE.md)。历史 [原任务书](prompts/V2-P02_STREAMING_PROVIDERS_CLAUDE_PROMPT.md)与 [首次审查](reviews/V2-P02_PARTIAL_REVIEW.md)保留。Fake 流式套件 54 项、P01 回归 90 项、旧 Provider/Gateway 回归 55 项分别通过；真实供应商验证留 P10。下一阶段为 P03，尚未实施。
 
 参考：Pi ai/src/types.ts、agent-loop.ts 的 streamAssistantResponse。
 
@@ -129,6 +137,8 @@ backend/app/agents/    执行内核（Runtime/Registry/工具）与既有 case_g
 不调用真实模型，不改当前配置记录。
 
 ### V2-P03 — Agent Loop 与通用工具执行
+
+状态：已在纯 Python/Fake 范围验收通过，见 [P03 验收记录](reviews/V2-P03_ACCEPTANCE.md)。实现位于 conversation/{loop,tool_executor,budget,policy}.py；P02 Fake HTTP 集成链证明工具结果进入第二次模型请求。P04 持久化尚未开始。
 
 参考：Pi agent.ts、agent-loop.ts（runLoop/prepareToolCall/executePreparedToolCall）。
 

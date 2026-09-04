@@ -1,16 +1,17 @@
 # 新 V2 开发记录：Python Agent 基础
 
 > 更新：2026-09-03。旧路线记录已原文归档，不删除其中最新修复与测试证据。
-> 当前唯一完成事项：源码阅读、参考仓库克隆、版本与任务规划，以及 V2-R01 目录整理（纯结构，非对话内核验收）。以下 P 代码任务均未验收。
+> 当前状态：V2-P01 合同阶段已通过 Codex 复审（实际 90 passed in 5.41s，见 2.10）；
+> V2-R01 结构整理已完成；P02 部分实现，Codex 审查发现基础缺口，待集中修正（见 2.13）；P03 起未实施。
 
 ## 1. 当前任务状态
 
 | 编号 | 内容 | 状态 | 证据 |
 |---|---|---|---|
 | V2-R01 | Agent / LLM 模块目录整理（结构，先于 P01） | 已完成 | 6 条结构测试 + 338 条受影响/回归通过，见 2.1 |
-| V2-P01 | 基线与数据合同 | 待实施 | — |
-| V2-P02 | 流式 Provider | 待实施 | — |
-| V2-P03 | Agent Loop / Tool Executor | 待实施 | — |
+| V2-P01 | 基线与数据合同 | 阶段验收通过（限定合同/纯校验范围） | Codex 实际 90 passed in 5.41s，见 2.10 |
+| V2-P02 | 流式 Provider | 部分实现，审查未通过，待集中修正 | Codex 复跑 24 项通过，合成反例确认基础缺口，见 2.13 |
+| V2-P03 | Agent Loop / Tool Executor | 阶段验收通过（纯 Python/Fake 范围） | P03 30 项；P02 54、P01 90、旧 Provider/Gateway 55、ToolRegistry 4 项回归，见 2.15 |
 | V2-P04 | 会话存储与迁移 | 待实施 | — |
 | V2-P05 | Worker、租约和取消 | 待实施 | — |
 | V2-P06 | 对话 API 与前端 | 待实施 | — |
@@ -100,3 +101,260 @@ pytest tests/structure tests/models/test_agent_platform_models.py tests/migratio
 ### 未提交说明
 
 V2-R01 之上仍保留他人/本轮的未提交改动（旧 Agent 空响应可恢复重试与失败诊断、前端失败提示、文档规划与归档等）；未 commit/push，未进入任何 P 任务，等待检查。
+
+## 2.2 2026-09-03 — V2-P01-01 纯文本消息合同（已编码，未做功能测试）
+
+- 授权范围：只定义纯文本消息两个类型，不实现工具/Turn/Event/Loop/Provider/API/持久化；不写、不跑 pytest；不改旧 LLMMessage/Gateway/DB/前端/依赖；不 commit/push。
+- 新增文件：
+  - `backend/app/agents/conversation/__init__.py`（仅说明，无副作用导入）
+  - `backend/app/agents/conversation/messages.py`
+- 两个类型最终字段：
+  - `TextContent`：`type: Literal["text"] = "text"`、`text: str`（允许空字符串）；`extra="forbid"`。
+  - `Message`：`message_id: str`（min_length=1，调用方提供，不生成/不重建）、`schema_version: Literal[1] = 1`、`role: Literal["user","assistant"]`、`content: list[TextContent]`（min_length=1）；`extra="forbid"`。
+- 未知版本、非法角色、额外字段与空内容列表由 Pydantic 校验拒绝；正文“你好”是普通文本，非 JSON。
+- 参考来源已注释：Pi 固定提交 f41f80466e30f21cdcd4d52aba4a2c2cb6ee3cc6 的 packages/ai/src/types.ts（TextContent/UserMessage/AssistantMessage）与 packages/agent/src/types.ts（AgentContext）；MIT 版权声明随注释保留，未迁移多模态/thinking/Provider 字段。
+- 语法检查（项目根目录，`-I` 隔离，仅 ast 解析不导入业务模块）：
+  ```text
+  .\.venv\Scripts\python.exe -I -c 'import ast; ... ast.parse(...) ...'
+  syntax OK
+  ```
+- 阶段末待测（本小步不运行）：中文文本往返后 message_id 与内容顺序不变；非法角色/版本/额外字段/空内容列表被拒绝；独立导入不产生数据库或网络副作用。
+- 状态：P01 未验收、未勾选；未进入 V2-P01-02。
+
+### P01-01 导师只读复核（2026-09-03）
+
+- 已核实：messages.py 定义 TextContent、Message；conversation/__init__.py 仅说明文字；尚未发现业务模块接入新 Message。新合同未带来浏览器聊天或 Agent Loop 能力。
+- 仅记录声称：上方语法检查结果 syntax OK；本次未重跑语法检查或功能测试，不追加通过数。
+- 待修：两个模型仅配置 extra="forbid"，没有启用 strict 类型校验；Pydantic 2.9 默认允许部分类型转换，因此未满足提示词的严格类型要求。应限定在本文件补齐严格校验，并核查 schema_version 对 bool/float 等与整数 1 相等值的边界；功能测试仍留阶段末。
+- 状态：已编码、静态审查有待修项、P01 未验收；不自动进入下一小步。已形成独立小修正提示词，没有直接修改业务代码。
+
+### P01-01 严格类型校验修正（2026-09-03，已编码未测试）
+
+- 位置：`backend/app/agents/conversation/messages.py`（仅本文件）。
+- 处理方式：`TextContent` 与 `Message` 的 `model_config` 由 `extra="forbid"` 改为 `extra="forbid", strict=True`（拒绝隐式类型转换，保留多余字段拒绝）；新增 `schema_version` 的 `field_validator(mode="before")`，用 `type(value) is int` 显式排除 bool/float/str 后要求等于 1。
+- schema_version 边界：`True`（bool == 1）、`1.0`、`"1"`、`2` 均拒绝，只接受真正的整数 `1`；字段默认值仍为 1。
+- 保持不变的允许行为：`text` 空字符串、正常字符串与列表输入、message_id 往返不重建；未新增通用校验框架、未扩展工具/Turn/Event/Loop。
+- 语法检查（项目根目录，`-I` 隔离，仅 ast 解析）：
+  ```text
+  .\.venv\Scripts\python.exe -I -c 'import ast; from pathlib import Path; p = Path("backend/app/agents/conversation/messages.py"); ast.parse(p.read_text(encoding="utf-8-sig"), filename=str(p)); print("syntax OK")'
+  syntax OK
+  ```
+- 阶段末待测（本步不运行）：正常文本往返保留 ID；`True/1.0/"1"/2/非法角色/额外字段/空内容列表` 被拒绝；独立导入无副作用。
+- 状态：修正已编码，功能测试留阶段末，P01 未验收；未进入 P01-02。
+
+### 修正后只读复核与下一步（2026-09-03）
+
+- Codex 核实两个模型都有 strict=True/extra="forbid"，schema_version 前置校验明确拒绝非 int 或非 1 的输入；原静态审查缺口已在源码中补齐，可以继续 P01-02。未重新运行语法检查或功能测试，P01 未验收。
+- 用户要求一次适度多做、更多参考 Pi。下一项仍为 P01-02，范围扩展为工具消息、角色约束和历史配对纯校验；原 P01-05 的配对部分前移，后续不重复建设。
+- 本轮只准备提示词并补读 Pi 工具调用/结果回传源码，没有修改业务代码，没有执行 P01-02。
+
+### 同轮设计要求收敛（2026-09-03，以此为准）
+
+- 用户进一步明确：严格参照 Pi 的设计思路，只做翻译和轻度适配。
+- 上面刚提出、尚未实施的工具结果内容块包装及独立历史配对校验器撤回。P01-02 改为直接对齐 Pi 的 UserMessage / AssistantMessage / ToolResultMessage 联合和 ToolCall；调用 ID 关联及保序在后续翻译 Pi 原有 Loop/Executor 位置落实。
+- 经只读检索未发现新 conversation.Message 的业务引用，提示词允许将本阶段尚未接入的教学类收敛为 Pi 风格联合；旧 LLMMessage/业务 API 保持不动。P01-02 尚未实施，功能测试未做。
+
+## 2.3 2026-09-03 — V2-P01-02 消息与工具结果类型翻译（已编码，未测试）
+
+- 授权范围：仅在 `backend/app/agents/conversation/messages.py`（及包 `__init__.py` 说明）按 Pi 翻译消息与工具结果类型；不实现独立历史配对校验器/message_history、不做 Tool Executor、Agent Loop、Provider 适配、事件、数据库或前端；不写不跑 pytest。
+- 上游参考（只读）：Pi 固定提交 f41f80466e30f21cdcd4d52aba4a2c2cb6ee3cc6 的 packages/ai/src/types.ts（TextContent/ToolCall/UserMessage/AssistantMessage/ToolResultMessage/Message）、packages/agent/src/agent-loop.ts（createToolResultMessage 等）、agent-loop.test.ts（仅读）。
+- 实际文件：`backend/app/agents/conversation/messages.py`（重写）、`__init__.py`（说明更新）。
+- 落地结构：TextContent；ToolCall（type="toolCall"、id、name、arguments: dict[str, Any]）；三种消息共享 `_MessageFields`（message_id/schema_version 真整数 1/timestamp Unix 毫秒，strict + extra=forbid，schema_version 与 timestamp 均带 before 严格校验）；UserMessage（role="user"，content: str | list[TextContent]）；AssistantMessage（role="assistant"，content: list[TextContent | ToolCall]，可为空）；ToolResultMessage（role="toolResult"，顶层 tool_call_id/tool_name/content: list[TextContent]（可为空）/details/is_error）；`Message` 为按 role 判别的 Annotated 联合，`parse_message` 为 TypeAdapter 解析入口。P01-01 的统一 Message 未接入业务，已直接收敛，未保留第二套消息系统。
+- 轻适配：snake_case（tool_call_id ← toolCallId、is_error ← isError）；保留 Pi 的 role 名 "toolResult"（Provider 适配时才映射旧接口 tool）；补 message_id/schema_version 与调用方 timestamp。
+- 暂未翻译（逐项登记）：Assistant 的 api/provider/model/usage/stopReason/deferred/diagnostics/errorMessage/rawStopReason/endTurn 等元信息；ToolResultMessage 的 usage、addedToolNames；ToolCall 的 thoughtSignature、namespace；ImageContent/thinking 多模态；动态工具发现。不填虚假零用量或默认成功。
+- 语法检查（项目根目录，-I 隔离，仅 ast 解析，不导入业务模块）：
+  ```text
+  .\.venv\Scripts\python.exe -I -c 'import ast; from pathlib import Path; files = list(Path("backend/app/agents/conversation").glob("*.py")); assert files, "No source files"; [ast.parse(p.read_text(encoding="utf-8-sig"), filename=str(p)) for p in files]; print("syntax OK")'
+  syntax OK
+  ```
+- 阶段末待测（本步不运行）：三种消息分别构造/解析；文本与工具混合内容往返保序；ToolResultMessage 顶层关联 ID/名称/is_error 保留；允许空内容形状；未知 role/type 与错误类型拒绝；message_id/schema_version 往返与严格版本校验；独立导入无数据库/网络副作用。结果配对与保序的真实运行测试留对应 Loop 任务。
+- 状态：P01 未验收、未勾选；未进入 V2-P01-03。
+
+### P01-02 导师只读审查（2026-09-03）
+
+- 已核实：实际 Python 类型与报告一致；工具请求是 AssistantMessage 的内容块，工具结果是独立 ToolResultMessage；Message 按 role 判别，parse_message 使用 TypeAdapter；源码包含上游固定提交、暂未翻译字段和完整 MIT 文本。未发现新建历史扫描器/执行器或业务调用接入。
+- 本轮未运行语法或功能测试；syntax OK 是实施报告/开发记录提供的证据，不作为本轮重跑结果。不能从 git status 推导整个实施过程没有并发编辑。
+- 结论：本次核心对象关系未发现阻断性偏差，可继续后续合同翻译；阶段仍未验收，用户理解待反馈。
+- 记录一个收尾差异：AssistantMessage/ToolResultMessage 的 content 使用 default_factory=list，允许字段省略，而 Pi 类型声明 content 必填。下一次修改同一消息合同时收敛为必填但允许 []，并在阶段测试区分“缺字段”与“空列表”；不为此单独拆修复轮次。Pi createToolResultMessage 对工具执行返回的缺失 content 做归一化，属于执行器输出构建位置，不等于消息输入字段可省略。
+
+## 2.4 2026-09-03 — V2-P01-03 模型信息、用量与停止原因（已编码，未测试）
+
+- 授权范围：只在 `backend/app/agents/conversation/messages.py`（及包 `__init__.py` 说明）按 Pi 翻译模型信息/Usage/StopReason/DeferredHandle；不新增状态机/事件/Loop/工具执行/Provider 适配/重试/预算器；不写不跑 pytest。
+- 上游参考（只读）：Pi 固定提交 f41f80466e30f21cdcd4d52aba4a2c2cb6ee3cc6 的 packages/ai/src/types.ts（Usage/StopReason/DeferredHandle/AssistantMessage/ToolResultMessage/AssistantMessageEvent）与 packages/agent/src/agent-loop.ts、agent-loop.test.ts（length 截断语义，只读）。
+- 实际文件：`backend/app/agents/conversation/messages.py`（扩展）、`__init__.py`（说明更新）。
+- 落地：`StopReason = Literal["pending","stop","length","toolUse","error","aborted","deferred"]`；`UsageCost`（input/output/cache_read/cache_write/total，有限非负数字或 None）；`Usage`（input/output/cache_read/cache_write/total_tokens/cost 必填可 None，cache_write_1h/reasoning 可选默认 None）；`DeferredHandle`（provider/model_id/api/id 必填，expires_at/poll_after_ms/data 可选，data 仅 JSON）；`AssistantMessage` 增必填 api/provider/model/usage/stop_reason 与可选 response_model/response_id/deferred/error_message/raw_stop_reason/end_turn；`ToolResultMessage` 增可选 usage（工具执行自身用量）。Assistant/ToolResult 的 content 改为必填但允许 []（移除 default_factory）。
+- None 适配：上游必填计数/费用仍须提供，但显式 None 表示未知；不补 0、不加总、不计算价格；bool/负数/NaN/Infinity 拒绝；reasoning 是 output 子集、cache_write_1h 是 cache_write 子集（仅注释）。
+- 未译登记：Assistant 的 providerThinkingLevel、diagnostics；ToolResultMessage 的 addedToolNames/动态加载；ToolCall 的 thoughtSignature/namespace；多模态/thinking/AssistantMessageEvent。
+- 语义注释：length=截断非成功；toolUse=请求非已执行；pending/deferred 非完成；error/aborted 不自动关闭会话；实际控制流留 Pi Loop 翻译任务。
+- 语法检查（项目根目录，-I 隔离，仅 ast 解析）：
+  ```text
+  syntax OK（backend/app/agents/conversation/*.py）
+  ```
+- 阶段末待测：模型信息/用量往返；显式 None 与 0 区分；缺必填字段拒绝；未知 StopReason/错误类型/负数/非有限费用拒绝；content=[] 合法而缺 content 拒绝；七种原因保留；可选 DeferredHandle 保留；原角色/调用 ID/版本不回归；导入无副作用。
+- 状态：P01 未验收、未勾选；未进入 V2-P01-04。
+
+### P01-03 导师只读审查（2026-09-03）
+
+- 已核实：Usage/UsageCost、StopReason 七值、DeferredHandle、助手模型信息和工具可选用量均已实现；计数/费用显式 None、必填但允许 [] 的 content 已按任务落地。上一步 content 默认值差异已收尾。未运行语法检查或功能测试，syntax OK 仅为实施报告证据。
+- 报告示例问题：meta 已含 message_id，AssistantMessage(**meta, message_id="m1", ...) 会重复传同名参数；应从共享 meta 移除 message_id，仅在每条消息构造时给出。这是示例错误，不是消息类缺陷；ast 语法检查不会验证这种运行时参数冲突。
+- 待合并收尾：_ensure_json_safe 将 (list, tuple) 都视为数组，data 又为 Any 并原样返回，tuple 会保留为非 JSON 类型。按 Pi JsonValue[] 与当前“仅 JSON 数据”约定，应仅接受 list，不默默把 tuple 转成 list；下一步同文件轻修，阶段末补原始/嵌套 tuple 拒绝场景，不另建通用 JSON 框架。
+- 当前状态：P01-03 已编码并只读审查，保留上述 JSON 边界项，阶段未验收。可以继续准备 P01-04 事件合同并合并小修；本轮未开始后续实现。git status 不作为实施全过程无并发编辑的证明。
+
+### 阶段交付方式调整（2026-09-03）
+
+- 用户要求后续不再拆得过细，以完整 V2-Pxx 阶段实施，做好后再学，知识点继续沉淀。
+- P01 已有消息合同保留；剩余事件、必要纯工具校验、已知小修、针对性测试和记录合为一份阶段收尾任务，不再单独派发 P01-04/05/06。
+- 当前源码仍只有 conversation/messages.py 与包说明，阶段收尾提示词已准备，未执行；本轮未修改业务代码、未运行功能测试。实施者本次被明确要求完成针对性测试，历史“不写不跑测试”只适用于旧小步。
+
+## 2.5 2026-09-03 — V2-P01 阶段收尾：合同补齐、针对性测试与记录
+
+- 授权范围：按完整阶段收尾 P01（不再逐小步暂停）；允许修改 backend/app/agents/conversation/ 与新增 backend/tests/conversation/；不改旧 LLM Gateway/Workflow/ORM/Worker/Router/前端；不连接真实模型/数据库；不做 git 提交。
+- 实际新增/修改文件：
+  - `backend/app/agents/conversation/messages.py`：修正 DeferredHandle.data 的 JSON 数组边界（只接受 list，tuple 拒绝），保留消息/用量/费用/版本严格校验；
+  - `backend/app/agents/conversation/events.py`（新增）：两层事件与外壳；
+  - `backend/app/agents/conversation/contracts.py`（新增）：ConversationTurn / ModelTurn 最小纯元数据；
+  - `backend/app/agents/conversation/tool_validation.py`（新增）：参数纯校验入口与 ToolResultMessage 纯构造；
+  - `backend/tests/conversation/`（新增 6 个文件）：消息、事件、工具校验、合成样例、隔离子进程测试与共享合成样例模块。
+- Pi 对应与必要差异（详见 10_PI_SOURCE_AUDIT.md 第 8 节）：AssistantMessageEvent 9 种、AgentEvent 10 种；done.reason 仅 stop/length/toolUse/deferred、error.reason 仅 error/aborted 且与助手消息 stop_reason 一致；thinking_* 不入当前合同；参数分片只作字符串不补齐；事件外壳另带 schema_version/session_id/run_id/message_id/tool_call_id/sequence_no（只校验不分配）；参数校验按既有 ToolRegistry 查询并走输入模型严格校验，不复制 Pi TypeBox 转换。
+- 已知修复：`_ensure_json_safe` 原先放行 tuple，现只接受 list（JSON 数组）；报告/测试中的共享 meta 不再混用 message_id（测试均显式逐条构造）。
+- 实际命令与结果（backend，隔离运行，禁用自动插件 + confcutdir 排除父级数据库 conftest）：
+  ```text
+  PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest --confcutdir=tests/conversation tests/conversation -q -p no:cacheprovider
+  66 passed in ~2s
+  git diff --check -- backend/app/agents/conversation backend/tests/conversation docs/V2 docs/PROJECT_RECORD.md（无空白错误；新增未跟踪文件已人工检查格式）
+  ```
+- 阶段待验证（真实行为，不在 P01）：工具真实执行零副作用与保序、取消、Provider 流式、持久化、Worker/SSE。合成样例只证明合同数据关联与往返。
+- 状态：P01 合同项已勾入 03 验收清单（带“阶段实现及针对性测试完成，待 Codex 审查”）；P02 起未实施；不自动进入 P02。
+
+## 2.6 2026-09-03 — Codex 阶段审查：需集中修正
+
+- 只读审查全部新增合同/纯函数与当前测试；按约定未修改业务代码或测试实现。
+- 针对性复跑 test_tool_validation.py、test_events.py、test_isolation.py，使用项目 .venv、confcutdir 和禁用自动插件，得到 37 passed in 2.72s；没有重跑全后端或全部 66 项。原 66 passed 保留为实施记录。
+- 隔离进程合成反例复现：内部事件默默转换错误类型/丢弃额外字段；嵌套消息 ID 与工具快照 ID 不一致仍通过；普通输入模型将 "7" 转成 7；无效 input_model 抛 AttributeError；自定义校验错误摘要泄漏合成输入标记。handler 调用计数为 0，无真实工具/模型/数据库操作。
+- 隔离测试负向自检：在保护安装后尝试被禁止的 httpx 导入并捕获异常，子进程仍返回 0/ISOLATION_OK；证明“命中禁止项必须失败”的测试机制不完整，并非证明当前实际连接了网络。
+- 固定 Pi 源码核对：合成事件样例缺少第二组 turn 边界，并把工具结果当 turn_end.message；需改为符合两次助手响应的原有顺序。
+- 审查详情：[P01 审查记录](reviews/V2-P01_REVIEW.md)。集中修正任务：[P01 阶段修正提示词](prompts/V2-P01_STAGE_REPAIR_CLAUDE_PROMPT.md)。本轮仅准备任务，未执行修正，P02 不启动。
+- 原子知识点先列待复盘：嵌套合同边界、可信严格校验入口、错误消息也可能带输入、测试门禁的负向自检。待阶段修正复审后按真实实现成文，不提前宣称用户已理解。
+
+## 2.7 2026-09-03 — V2-P01 集中修正（审查缺口修复，79 条针对性测试通过）
+
+- 授权范围：P01 同一阶段集中修正，不进入 P02；只改 conversation 合同/纯函数与 tests/conversation 及本阶段文档；不改旧 Registry/Gateway/Workflow/ORM/API/Worker/前端。
+- 审查依据：docs/V2/reviews/V2-P01_REVIEW.md（Codex 复跑 3 个相关文件 37 passed；合成反例确认五类缺口）。
+- 逐项修正与新增回归：
+  1. 工具安全错误：`_safe_validation_summary` 不再拼接可能含输入值的 error.msg/str(exc)，只输出受控 loc（合法标识符/整数索引，动态键脱敏 ?）与 pydantic 标准错误类型；`input_model` 必须是有效 Pydantic 模型类（否则 invalid_config，不再 AttributeError）；非 ValidationError 的校验/序列化异常 → 固定文案 validation_failed。新增：合成自定义 validator 回显输入、无效 input_model（字符串/普通类/None/数字）、model_dump 抛异常三条回归。
+  2. 严格参数入口：`prepare_tool_call` 在 `model_validate(..., strict=True)` 强制严格，不依赖工具作者配置；新增未启用 strict 的 `count: int` 模型回归，证明 "7"/True/1.5 被拒、整数通过、handler 零调用。
+  3. 事件内部校验与关联闭合：全部内部事件模型加 strict + extra=forbid；text_*/toolcall_* 的 content_index 必须指向 partial 中同类型块（True/bytes/未知字段/越界/错块类型反例）；toolcall_end 的完整 ToolCall 必须与 partial 同索引快照一致；message_update 外层必须是 assistant 且与嵌套 partial/最终消息同一 message_id（修正原“user 快照嵌套另一 assistant”错误正例）；turn_end.tool_results 改为必填（允许空），缺失拒绝。
+  4. Pi 行为样例：四消息场景按两个 Pi turn 重写（turn1 = 工具请求助手消息 + tool_results 单列结果；turn2 = 最终回复），断言关键先后与关联而非硬凑数量。
+  5. 隔离门禁：记录每次被禁止导入尝试（收尾即使被捕获也判失败）；负向自检 1 验证被禁模块真的被拦；负向自检 2 阻止 socket.connect/create_connection 且验证保护生效（不发起真实连接）；未通过扩大放行范围。
+- 实际命令与结果（backend，隔离运行）：
+  ```text
+  PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest --confcutdir=tests/conversation tests/conversation -q -p no:cacheprovider
+  79 passed in ~2s
+  ```
+  过程说明：审查报告的 37 passed/合成反例输出保留为“修前失败”的原始证据；本工作区未另存独立的修前失败中间态。修正过程中的两次自身错误（隔离脚本 socket 类整体替换破坏 ssl 导入、样例 nth() 缺默认参数）已在最终版本修复，不计入缺口。
+- 已核实/未验证：缺口的修前失败依据 + 修后 79 项全部通过；真实工具执行/保序、Provider 流式、持久化与 Worker/SSE 仍属后续阶段，未验证。
+- 状态：P01 集中修正完成，待 Codex 复审；P02 起未实施、未勾选。保留原 66 passed 与审查记录，不篡改历史。
+
+## 2.8 2026-09-03 — Codex 复审：79 项通过，仍有剩余边界
+
+- 实际运行 P01 全部针对性测试，项目 .venv、禁用自动插件、confcutdir 隔离父级 conftest：79 passed in 3.25s；未运行全后端回归。
+- 已确认原严格类型入口、内部事件配置、主要消息/工具 ID 关联、两个 turn 等修正已落地。
+- 定向合成反例仍确认：合法标识符形式的动态/额外字段键及自定义 error type 泄漏；model_serializer 返回非字典时，PreparedToolCall 构造从 try 外漏出原始 ValidationError。handler 调用为 0。
+- 隔离负向探针仍可返回 ISOLATION_OK：正式阶段连接尝试的保护异常被捕获；或 create_connection 被替换成空操作，第二项网络自检未实际验证成功。没有真实连接。
+- Pi 固定源码核对发现：openai-completions.ts 的 ensureToolCallBlock 可先发 id 为空的 toolcall_start，当前 ToolCall.id 非空限制误拒绝；已修正的两轮样例仍遗漏工具结果的 message_start/message_end。
+- 详情：[P01 集中修正复审](reviews/V2-P01_RECHECK.md)。任务：[P01 复审收尾](prompts/V2-P01_RECHECK_REPAIR_CLAUDE_PROMPT.md)。当前未进入 P02、未修改业务源码/测试。
+- 用户最新要求：学习笔记仅在用户明确说整理时更新。本轮未修改 D:\TestAgent node，也未生成知识点。
+
+## 2.9 2026-09-03 — V2-P01 复审收尾：剩余边界修复（90 条针对性测试通过）
+
+- 授权范围：同一 P01 阶段集中收尾，不进入 P02；只改 conversation 合同/纯函数与 tests/conversation 及必要记录；不改学习笔记；不动旧 Registry/Gateway/Workflow/ORM/API/Worker/前端。
+- 审查依据：docs/V2/reviews/V2-P01_RECHECK.md（Codex 实跑完整 P01 79 passed in 3.25s，合成反例确认 5 类剩余边界）。
+- 修正与新回归：
+  1. 错误摘要改为“固定错误码 + 固定文案”，不再转发 loc/type/msg/工具名等动态内容；新反例覆盖动态字典键、extra=forbid 未知字段名、PydanticCustomError 以输入为 type 三种泄露路径（均断言不泄漏标记、错误码稳定）。
+  2. 候选构造纳入同一受控边界：校验、序列化结果必须为参数字典（否则 validation_failed），PreparedToolCall 构造失败也转稳定错误；model_serializer 返回字符串/列表回归单独覆盖。
+  3. 隔离门禁逐项自检：connect 与 create_connection 各独立布尔；校准自检与正式阶段分段，正式阶段被捕获的连接尝试在收尾判失败；故障注入（把某保护入口替换为空操作）使自检失败；自检 socket 在 finally 关闭。
+  4. Pi 合法早期 partial：ToolCall.id 允许空串（Pi ensureToolCallBlock 的 toolcall_start/delta 临时块），最终候选/结果构造/ toolcall_end 仍要求有效 ID；新增“start→delta→end 空 ID 到达齐 ID”合法形状与空 ID 终态拒绝回归。
+  5. Pi 工具结果消息事件：合成样例在 tool_execution_end 之后、turn_end1 之前补 tool_result 的 message_start/message_end，并按稳定 message_id 断言先后（依据 Pi agent-loop.ts 的 emitToolResultMessage 顺序）。
+- 过程说明：新增反例依据 RECHECK 报告的合成诊断编写；代码修正与回归在同一工作区完成，本工作区未留存独立的“修前失败”中间态，审查报告的 79 passed 与合成反例输出作为修前证据保留。
+- 实际命令与结果（backend，隔离运行）：
+  ```text
+  PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest --confcutdir=tests/conversation tests/conversation -q -p no:cacheprovider
+  90 passed in ~5s
+  ```
+- 已核实/未验证：五类边界修复均通过；真实工具执行/保序、Provider 流式聚合、持久化与 Worker/SSE 仍留后续阶段，未验证。
+- 状态：P01 集中收尾完成，待 Codex 复审；P02 起未实施、未勾选。历史 66/79 与两次审查记录保留，不篡改。
+
+## 2.10 2026-09-03 — Codex 最终复审：P01 合同阶段验收通过
+
+- 已核对修正后的工具安全边界、Pi 早期 partial、两层事件关联、完整两轮工具消息事件序列，以及隔离逐项自检和正式尝试记录。
+- 使用项目 .venv 实际运行全部 P01 针对性测试，禁用自动插件与字节码写入、confcutdir 排除父级数据库 conftest：`90 passed in 5.41s`，exit 0。未运行全后端回归。
+- 上两次审查发现的动态错误回显、非字典序列化漏出、被捕获连接漏记、自检状态复用、早期空 ID 误拒和工具结果消息事件遗漏已在当前合同范围内收敛。
+- 结论：P01 阶段验收通过，仅限合同、纯校验和声明范围内的隔离测试；完整 Agent Loop、真实工具执行/取消/保序、Provider 流式与存储/Worker/SSE 仍属后续阶段。
+- 验收证据：[P01 验收记录](reviews/V2-P01_ACCEPTANCE.md)。原 66/79/90 运行记录保留，不相加、不反向补造修前失败输出；没有独立留存新 pytest 红测中间态的流程不足如实保留。
+- 用户要求后续提示词更详细：明确文件/接口、实施顺序、每个关键分支的输入输出、失败处理、正反测试与预期、验证命令和停止边界，减少实施猜测；仍一次一个完整阶段。
+- 本轮未修改业务源码或测试、未调用真实模型/数据库/工具 handler、未整理学习笔记；P02 尚未开始。
+
+## 2.11 2026-09-03 — P02 源码核对与详细任务书准备
+
+- 用户要求说明当前能力并生成更详细的 P02 阶段提示词；本轮只读核对并维护开发文档，不修改业务代码，不运行项目测试或真实请求，不整理学习笔记。
+- 当前事实：P01 合同阶段已验收；Gateway 与两 Adapter 仍是同步 complete，异步流入口未实现。旧 Workflow/Worker/前端是复用资产，不代表新对话链路已接通。
+- 本地元数据：Python 3.11.9、Pydantic 2.9.2、pytest 8.3.3、httpx 0.27.2、anthropic 1.3.0；Anthropic SDK 内部依赖当前 httpx2 2.12.0。已只读核对 AsyncMessages.create/stream、AsyncStream 关闭与 raw_events、AsyncAnthropic 构造/关闭。
+- Pi 参考固定 f41f80466e30f21cdcd4d52aba4a2c2cb6ee3cc6 的 Provider 流与消息转换、stop reason 映射、EventStream 和 streamAssistantResponse；未运行或改动 Pi。
+- 已核对官方 OpenAI Chat Completions、Anthropic streaming/tool-result 与 HTTPX async 文档；当前 SDK 无 temperature 参数、最终用量块、累计 token 与资源关闭等写入任务书。
+- 新任务书：[V2-P02 完整提示词](prompts/V2-P02_STREAMING_PROVIDERS_CLAUDE_PROMPT.md)。包含统一异步入口、两类请求/响应映射、P01 事件复用、私有缓冲、取消/deadline/预算、单层重试、安全诊断、Fake 流和直接相关回归命令。
+- 状态：P02 提示词已准备，代码未实施、未验收；没有替用户发送给 Claude，没有进入 P03。
+
+## 2.12 2026-09-03 — V2-P02 流式 Provider（部分实现与针对性测试，未验收）
+
+> 本节保留 Claude 当次完成报告；其中“已验证”的覆盖范围由下一节 Codex 审查进一步校正，不等同于阶段验收。原重复编号 2.9 更正为 2.12。
+
+- 授权范围：按 P02 任务书实现流式；本记录如实标记阶段未完成。
+- 实际新增/修改文件：
+  - `backend/app/agents/providers/streaming.py`：StreamRequest/ProviderSnapshot/StreamContext/StreamControl/AttemptBudget/AttemptRecord/StreamLimits + 固定错误码；纯请求转换（OpenAI messages/tools、Anthropic system/messages/tools，工具结果必须指回本历史请求，否则安全失败）。
+  - `backend/app/agents/providers/openai_stream_adapter.py`：httpx AsyncClient + 原始 SSE 解码（CRLF/LF、注释、连续 data、[DONE]、choices=[] usage），块先入 partial 再发事件，限额在字节进入缓冲时检查。
+  - `backend/app/agents/providers/anthropic_stream_adapter.py`：AsyncAnthropic messages.create(stream=True) typed 事件映射（message/content_block_*/message_delta/message_stop），ping 忽略，tool_use partial_json 缓存到块结束。
+  - `backend/app/services/llm/llm_stream_gateway.py`：能力预检、共享 AttemptBudget、Gateway 单层重试、取消/退避、预算耗尽/预检失败为 0 请求。
+  - `backend/app/agents/conversation/events.py`：事件模型 `type` 增加默认值（保持判别联合可构建；构造不再强制重复传 type）。
+  - `backend/tests/providers_streaming/`：转换/DTO/OpenAI 流/Gateway/Anthropic 流测试（tests_streaming_kit.py 合成样例）。
+- 实际命令与结果（backend，禁用自动插件 + confcutdir/无父 conftest，零网络 Fake transport）：
+  ```text
+  pytest --confcutdir=tests/providers_streaming tests/providers_streaming -q   → 24 passed
+  pytest --confcutdir=tests/conversation tests/conversation -q                → 90 passed（P01 回归）
+  pytest tests/providers/test_openai_compatible_adapter.py tests/providers/test_anthropic_adapter.py \
+         tests/services/test_llm_gateway.py -q                               → 55 passed（旧回归）
+  ```
+- 已验证：OpenAI 文本流（start→text_*→done+usage 空 choices 不漏）、tool_calls 交错 delta 与 toolUse 完成、length 不发布假 toolcall_end、缺 [DONE] 断流为 error、帧超限为 error、非 JSON 协议为 error；Gateway 单次成功/瞬态错误重试成功/预算 1 拦截第二次/预检不支持 tools 0 请求/开始前取消 0 请求/已发出内容不透明重放；Anthropic 文本 end_turn、ping 忽略 + 空文本非成功、tool_use partial_json 完整解析；P01 与旧 provider/gateway 回归未退化。
+- 未验证/未实现（如实登记，阶段未验收）：Anthropic 未知 SSE 事件需 raw_events 路径（当前 typed 迭代被 SDK 过滤，差异已登记）；温度显式请求 → unsupported_parameter（anthropic 无该参数，未 extra_body）；index 重映射（thinking 忽略后的本地索引）仅有代码、缺定向测试；跨 UTF-8 分片/CRLF 全矩阵、双 stream 并发隔离、deadline 语义与 Task.cancel、model_serializer 等安全项、SDK/httpx2 全部契约均未完成验证；工具结果构造到 Provider 层的保留（executeToolCallsSequential）未实现（属 P03）。
+- 状态：V2-P02 部分实现与测试，待 Codex 复审；不勾选 P02 门禁；P03 起未实施。保留 P01 复审历史。
+
+## 2.13 2026-09-04 — Codex 审查 P02 部分实现：集中续做
+
+- 只读检查四个新增模块、既有 Gateway、测试与固定 Pi 源码；未修改业务源码/测试、未调用真实模型/业务数据库，未整理学习笔记。
+- 项目 .venv、禁用自动插件/字节码、隔离父 conftest，并加配置/数据库导入及业务连接保护，实际运行流式套件：`24 passed, 13 warnings in 3.29s`。本轮未重跑 P01 90 项和旧回归 55 项，这两组本次结果仍来自 Claude 报告。
+- 额外合成探针确认：OpenAI 请求无 Authorization；合法空对象工具误拒、好坏混合工具仍成功；Anthropic 坏 JSON 正常完成且合法工具重复 end；SSE 多行错误拼接/整帧限额漏检；重试重复 start、共享预算与本次重试次数混淆、真实 httpx.ConnectError 不重试；等响应头取消不生效；关闭外层迭代器后客户端仍未关闭；历史转换接受被打断或重复工具结果。
+- 源码确认 AttemptRecord 未接线、错误码/partial 丢失、统一 Gateway async with 入口缺失、Anthropic text_start/toolcall_delta 与 raw 限额未补齐。并发、完整取消/deadline 等仍未验，不作为能力声称。
+- 首次审查防护误拦 Windows asyncio 初始化 socketpair，属审查脚本错误；调整保护安装时机后才得到有效结果，不把该次失败计入项目修前失败。详细证据见 [P02 部分审查](reviews/V2-P02_PARTIAL_REVIEW.md)。
+- 纠正归属：工具执行属于 P03，但把已有 ToolResultMessage 正确转换进 Provider 历史属于 P02。取消、关闭、鉴权、尝试记录和 raw 限额也是 P02 原始要求。
+- 形成 [P02 集中续做提示词](prompts/V2-P02_CONTINUATION_CLAUDE_PROMPT.md)：保留当前模块和合并快照，补现有 LLMGateway 的上下文入口，先固化反例再集中修正和验证。未代替用户发送给 Claude。
+- 状态：P02 部分实现，审查未通过；门禁未勾选，不进入 P03。P01 验收结果保留。
+
+## 2.14 2026-09-04 — V2-P02 集中修正与验收通过
+
+- 用户明确授权 Codex 依据集中续做提示词直接修复；本轮修改 P02 流式 Provider、现有 LLMGateway、流式测试和阶段文档，没有进入 P03、没有整理学习笔记。
+- 统一入口：现有 `LLMGateway.stream(snapshot, request, *, context, control, limits=None)` 返回异步上下文管理器；内部 LLMStreamGateway 复用原别名/能力解析。当前合并 ProviderSnapshot 作为已记录的轻适配，不额外拆 ModelSnapshot。
+- OpenAI 补显式 Authorization、原始有界 SSE、严格多工具聚合、空对象/混合坏参数、缓存用量和 ID；Anthropic 改走 SDK streaming raw response 字节，补 text/tool 完整生命周期、初始块、thinking 索引映射、未知事件和唯一块结束。
+- Gateway 补预检、有限总 deadline、cancel/Task.cancel/提前关闭、共享预算与局部重试分离、每物理请求 AttemptRecord、安全 error_code/partial；请求转换补工具结果相邻批次、名称、重复和遗漏校验。
+- 审查反例均固化为回归或等价门禁；新增 socket 三入口负向自检在事件循环创建后安装，Fake transport 在禁网状态下仍通过。
+- 最终实际结果：P02 `54 passed, 13 warnings in 6.54s`；P01 `90 passed in 7.31s`；旧 Provider/Gateway `55 passed, 13 warnings in 4.95s`。三组分列、不相加；warning 为既有 Pydantic class-based config 弃用提示。
+- AST/行尾检查通过；`git diff --check` 无新增空白错误，仅既有 LF/CRLF 提示。无真实网络、模型、数据库、工具 handler、服务启动或 git 操作。
+- 结论：P02 在 Fake/内存协议范围验收通过，证据见 [P02 验收记录](reviews/V2-P02_ACCEPTANCE.md)。真实供应商验证留 P10；P03 尚未实施，不自动开始。
+
+## 2.15 2026-09-04 — V2-P03 纯 Agent Loop 与 Tool Executor 验收通过
+
+- 用户明确要求 Codex 直接进入下一阶段并编码。本轮新增 conversation/{loop,tool_executor,budget,policy}.py、tests/agent_loop/，更新 conversation 包说明与阶段文档；没有修改数据库/Worker/API/前端/Skill，不整理学习笔记。
+- Loop 参考 Pi runLoop/streamAssistantResponse：把 P02 AssistantMessageEvent 映射成 P01 AgentEvent，完整助手工具请求经串行执行后生成独立 ToolResultMessage 并进入下一次模型历史；普通回复零工具结束。
+- Tool Executor 复用 P01 ToolRegistry/prepare_tool_call/build_tool_result_message；策略改参后 strict 重校验。默认策略阻止写工具、需审批和需额外权限的工具；P09 前不伪造授权。
+- AgentLoopBudget 分开记录逻辑 turn/model/tool 与 P02 物理 AttemptBudget，四类限额为硬停止；同批工具预算原子预留、调用 ID 去重、结果按源序。取消/截止补全剩余未执行结果，异步策略/工具可中断，迟到 update 被丢弃。
+- 实际测试：P03 `30 passed, 13 warnings in 4.36s`；P02 `54 passed, 13 warnings in 6.63s`；P01 `90 passed in 9.20s`；旧 Provider/Gateway `55 passed, 13 warnings in 3.40s`；ToolRegistry `4 passed in 0.05s`。分开统计，warning 为既有 Pydantic 弃用提示。
+- 实际修正：迟到 update 竞态先失败后修复；取消补齐剩余结果时 stop 覆盖 canceled 的状态错误先失败后修复。P03 纯导入子进程确认不加载 DB/Web/Worker/HTTP 客户端模块。
+- 结论：P03 在纯 Python/Fake 范围验收通过，见 [P03 验收记录](reviews/V2-P03_ACCEPTANCE.md)。同步 handler 无法物理抢占，需及时取消的工具应异步协作；持久化/恢复属 P04。未进入 P04。

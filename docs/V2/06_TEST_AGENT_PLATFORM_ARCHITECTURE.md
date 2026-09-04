@@ -3,6 +3,8 @@
 > 生效：2026-09-03。替代旧测试 Workflow 优先的 V2 架构。
 > Pi 参考提交及源码证据见 [源码对照](10_PI_SOURCE_AUDIT.md)；以下为拟实现设计，不是当前代码现状。
 
+> 2026-09-03 最新约定：内核按 Pi 固定源码翻译与轻适配。消息联合为 UserMessage / AssistantMessage / ToolResultMessage；工具调用位于助手内容，工具结果为独立消息，核心 role 保留 toolResult，Provider 边界才映射到 tool。下文统一内容块/持久化描述不得解读为新增 tool_result 内容块包装；不另建 Pi 没有的全历史配对校验器。预算、权限、审批与现有 Web/数据库集成仍是必要平台适配。
+
 ## 1. 组件边界
 
 ~~~text

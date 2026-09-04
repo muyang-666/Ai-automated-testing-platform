@@ -11,6 +11,8 @@
 
 import json
 import time
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from typing import Any
 
 from pydantic import BaseModel, ValidationError
@@ -56,6 +58,7 @@ class LLMGateway:
         retry_delay_seconds: float = 1.0,
         sleeper=None,
         capability_overrides: dict | None = None,
+        stream_adapters: dict | None = None,
     ):
         self._adapters = adapters if adapters is not None else _default_adapters()
         self.max_retries = max(0, max_retries)
@@ -63,6 +66,7 @@ class LLMGateway:
         self._sleeper = sleeper if sleeper is not None else time.sleep
         # capability_overrides: {(provider_type, model_name 或 "*"): ProviderCapabilities}
         self._capability_overrides = capability_overrides or {}
+        self._stream_adapters = stream_adapters or {}
 
     # ── Adapter 选择 ──
 
@@ -140,6 +144,38 @@ class LLMGateway:
             break
 
         return self._apply_structured_parsing(result, request, response_model)
+
+    def stream(self, snapshot, request, *, context, control, limits=None):
+        """Return a managed P02 event stream; leaving the context closes it."""
+        from app.services.llm.llm_stream_gateway import LLMStreamGateway
+
+        def resolve_capabilities(current_snapshot):
+            provider = SimpleNamespace(
+                provider_type=current_snapshot.provider_type,
+                name=current_snapshot.name,
+            )
+            model = SimpleNamespace(model_name=current_snapshot.model_name)
+            return self.capabilities(provider, model)
+
+        coordinator = LLMStreamGateway(
+            max_retries=self.max_retries,
+            retry_delay_seconds=self.retry_delay_seconds,
+            openai_stream_factory=self._stream_adapters.get("openai_compatible"),
+            anthropic_stream_factory=self._stream_adapters.get("anthropic"),
+            capability_resolver=resolve_capabilities,
+        )
+
+        @asynccontextmanager
+        async def managed():
+            events = coordinator.stream(
+                snapshot, request, context, control=control, limits=limits,
+            )
+            try:
+                yield events
+            finally:
+                await events.aclose()
+
+        return managed()
 
     # ── 结构化输出本地校验层（两级降级中的第 2 级） ──
 
