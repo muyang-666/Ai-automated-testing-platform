@@ -1,8 +1,8 @@
-# 新 V2 开发记录：Python Agent 基础
+# 新 V2 开发记录：对话式 Test Agent
 
-> 更新：2026-09-03。旧路线记录已原文归档，不删除其中最新修复与测试证据。
-> 当前状态：V2-P01 合同阶段已通过 Codex 复审（实际 90 passed in 5.41s，见 2.10）；
-> V2-R01 结构整理已完成；P02 部分实现，Codex 审查发现基础缺口，待集中修正（见 2.13）；P03 起未实施。
+> 更新：2026-09-04。旧路线记录已原文归档，不删除其中最新修复与测试证据。
+> 当前状态：V2-R01 结构整理已完成；V2-P01～P04 已分别通过各自声明范围验收（P01 见 2.10、P02 见 2.14、P03 见 2.15、P04 见 2.16）。
+> 2026-09-04：P05 起按 [P05～P10 新路线](12_POST_P04_DEVELOPMENT_PLAN.md) 实施，尚未开始；P05～P10 阶段主题已改为 Conversation Runtime 收敛 / Conversation API / Test Artifact Core / Artifact Tools / Chat+MindMap+Diff / Context+Approval+Recovery（不再沿用“Skill / 上下文 / 人工门禁”旧标题）。
 
 ## 1. 当前任务状态
 
@@ -13,12 +13,12 @@
 | V2-P02 | 流式 Provider | 部分实现，审查未通过，待集中修正 | Codex 复跑 24 项通过，合成反例确认基础缺口，见 2.13 |
 | V2-P03 | Agent Loop / Tool Executor | 阶段验收通过（纯 Python/Fake 范围） | P03 30 项；P02 54、P01 90、旧 Provider/Gateway 55、ToolRegistry 4 项回归，见 2.15 |
 | V2-P04 | 会话存储与迁移 | 阶段验收通过（临时 SQLite/真实事务范围） | P04 20 项；P01 90、P02 54、P03 30、旧平台 100 项回归，见 2.16 |
-| V2-P05 | Worker、租约和取消 | 待实施 | — |
-| V2-P06 | 对话 API 与前端 | 待实施 | — |
-| V2-P07 | Skill 基础能力 | 待实施 | — |
-| V2-P08 | 上下文和压缩 | 待实施 | — |
-| V2-P09 | 门禁与故障加固 | 待实施 | — |
-| V2-P10 | 基础版本验收 | 待实施 | — |
+| V2-P05 | Conversation Runtime 收敛 + Workflow 退役 | 待实施 | 按 [12](12_POST_P04_DEVELOPMENT_PLAN.md) |
+| V2-P06 | Conversation API + SSE + 基础工作台 | 待实施 | 同上 |
+| V2-P07 | Test Artifact Core | 待实施 | 同上 |
+| V2-P08 | Artifact Tools + Test Design Skill | 待实施 | 同上 |
+| V2-P09 | Chat + MindMap + Diff 协作工作台 | 待实施 | 同上 |
+| V2-P10 | Context / Approval / Recovery / E2E | 待实施 | 同上 |
 
 ## 2. 2026-09-03 — 重新划分 V2/V3 并阅读 Pi
 

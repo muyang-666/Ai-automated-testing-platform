@@ -1,8 +1,9 @@
-# V2 开发主计划：Pi 架构的 Python 实现
+# V2 开发主计划：对话式 Test Agent 与可持续测试资产
 
-> 生效：2026-09-03。用户已确认：V2 只做 Agent 基本架构，测试能力扩展全部归入 V3。
-> 状态：V2-P01～P04 已通过各自范围的 Codex 验收；P05～P10 待实施。
-> 路线：V1 既有平台 → V2 Python 对话 Agent 基础 → V3 测试领域 Skills。
+> 生效：2026-09-03（Pi 架构 Python 实现路线）。2026-09-04 修正：P05 起按 [方向 ADR](11_V2_DIRECTION_ADR.md)，不再采用“V2 只做通用 Agent 基础、测试能力全部归入 V3”的旧边界；改为在 V2 内完成“可持续编辑 Test Artifact”的纵向闭环。
+> 状态：V2-P01～P04 已通过各自范围的 Codex 验收；P05（Conversation Runtime 收敛 + Legacy Workflow 退役）起按新路线实施，尚未开始。
+> 路线：V1 既有平台 → V2 对话式 Test Agent（Agent Core + 持续对话 + Test Artifact + Artifact Editing Tools + Revision/Diff/Undo + Chat/MindMap/Diff 工作台）→ V3 更高级测试能力（API 测试 / RCA / 造数 / 缺陷 / 执行）。
+> P05～P10 详细里程碑与任务书以 [12_POST_P04_DEVELOPMENT_PLAN.md](12_POST_P04_DEVELOPMENT_PLAN.md) 为准，本文件只保留阶段定位与既有 P01～P04 记录。
 > 本文件替代旧 V2.1/V2.2/V2.3 任务路线，不代表 Pi 全功能复刻或官方 Python 移植。
 
 ## 0. Claude Code 执行协议
@@ -14,7 +15,7 @@
 5. 阶段交付必须编写并运行新增/直接相关测试，必要修正在阶段内完成。旧小步“不写不跑测试”限制只描述历史任务，不适用于当前阶段收尾。未测试不算验收；P01 验证后才接 P02；P10 才组织版本级回归。
 6. 不能用改测试期望掩盖行为退化；不能把旧版测试数当成新 V2 的验收结果。
 7. Python 代码写在 TestMind；D:\pi 仅作源码参考，不作为运行依赖，不安装/执行 Pi，不复制其 Node.js 环境。
-8. 旧 V2.1-Txx 提示词已归档，不再作为当前开发指令。业务用例生成、根因分析、造数、缺陷生成禁止混入 V2。
+8. 旧 V2.1-Txx 提示词已归档，不再作为当前开发指令。固定 case_generation Workflow 不作为新 Agent 的执行主链（退役计划见 [16_LEGACY_WORKFLOW_MIGRATION_PLAN.md](16_LEGACY_WORKFLOW_MIGRATION_PLAN.md)）；基础测试设计与用例协作编辑属于 V2，API 测试、根因分析、造数、缺陷辅助等更高级测试领域归 V3。
 9. 协作顺序：Codex 先读固定 Pi 源码 → 生成阶段提示词 → Claude 完成实现/针对性测试/记录 → Codex 复审。只有用户明确要求“整理笔记”时才更新 D:\TestAgent node 或生成知识点，不随完成报告自动整理。用户理解、代码完成、测试结果分别记录。
 10. 最新设计原则：严格沿用 Pi 固定源码的对象关系、职责和调用顺序，实施选定范围的 Python 翻译与轻适配，不额外设计替代内核。轻适配限于语言/类型系统、现有 Python Web/存储边界和用户明确要求的预算/权限/审批；差异记录依据。一次交付一个相关功能组合，测试仍在阶段末进行。
 11. 学习笔记按阶段组织：每个阶段一个文件夹，该阶段全部知识点写在一份《学习笔记.md》。文档内按原子知识点分小节，用短解释、关键源码和例子说明；不再逐知识点建文件。用户要求提前补笔记时可先整理，但明确标注待修与未验证内容。
@@ -22,21 +23,27 @@
 
 ## 1. V2 交付定义
 
-登录后打开悬浮工作台，无需项目、需求或接口文档即可正常多轮对话。Agent 可决定直接回复、追问、加载已审核的通用 Skill，或调用白名单工具；工具结果回到上下文后可继续回复。普通回复不是 JSON 产物，单次失败不关闭整个会话。
+V2 交付一台可持续对话、并围绕 Test Artifact 持续协作编辑的 Test Agent（见 [11_V2_DIRECTION_ADR.md](11_V2_DIRECTION_ADR.md)）。登录后用户可与 Agent 连续对话，创建或打开测试 Artifact；Agent 根据当前用户意图自主决定直接回复、读取资料、加载 Skill 或调用 Artifact 工具。测试设计不存在强制固定路径：用户可以先生成测试点、直接补用例、修改现有用例、检查覆盖或局部重构。所有测试资产修改以增量 Operation 产生 Revision 和 Diff，并实时反映到脑图工作区。
+
+P10 完成后，用户应能在浏览器中完成“创建/打开 Artifact → 持续聊天 → AI 动态调用 Tool 修改 Artifact → 脑图实时展示 → 查看 Diff → 继续修改/撤销 → 刷新恢复”的完整闭环（E2E 故事见 [12](12_POST_P04_DEVELOPMENT_PLAN.md#8-v2-p10--contextapprovalrecovery-与完整验收)）。
 
 V2 必须具备：
-- user / assistant / tool 多轮消息和可重建上下文；
+- user / assistant / tool 多轮消息和可重建上下文；登录后无项目即可开始；
 - 文本、工具调用及流式事件的统一模型合同；
 - 有界 Agent Loop、参数校验、权限门禁和工具结果反馈；
 - 会话持久化、独立执行、流式 UI、取消、有限恢复；
-- 受控 Skill 发现/按需加载，以及上下文整理/压缩；
+- Test Artifact 一等业务对象：Case Tree / Node / Revision / Operation / Diff / Undo / 乐观锁（[13](13_TEST_ARTIFACT_CASE_TREE_DESIGN.md)）；
+- Artifact 读写 Tool 与 Tool Policy：Approval 绑定动作风险，而不是固定 Workflow gate（[14](14_ARTIFACT_TOOL_AND_AGENT_PROTOCOL.md)）；
+- 受控 Skill 发现/按需加载（Skill = 领域知识 + 行为规则，不是 phase 状态机），以及上下文整理/压缩；
+- Chat + MindMap + Diff 工作台，AI 与人工修改同一 Artifact（[15](15_CHAT_MINDMAP_DIFF_PRODUCT_DESIGN.md)）；
 - 启动预检、可观察诊断、故障测试和版本门禁。
 
 不是 V2：
-- 测试用例生成/覆盖/代码生成、失败根因分析、造数和缺陷描述的新增或改造；
+- 把固定 case_generation Workflow 重新作为新 Agent 的执行主链；确定性能力迁移为 Tool/Service，流程编排退役（[11](11_V2_DIRECTION_ADR.md) / [16](16_LEGACY_WORKFLOW_MIGRATION_PLAN.md)）；
+- 把 AgentArtifact 当作长期编辑的 TestArtifact；前者保留为执行产物/历史兼容（[13 §10](13_TEST_ARTIFACT_CASE_TREE_DESIGN.md#10-与现有-agentartifact-的关系)）；
+- API 测试执行、失败根因分析、测试造数、缺陷辅助等更高级测试领域（归 V3，复用同一 Conversation + Agent Loop + Tools + Artifact 模型，不再各建 Workflow Runtime）；
 - 任意 Shell/SQL/URL/宿主文件工具、自动下载扩展、npm 插件体系、TUI；
 - 完整复刻 Pi 的会话树、分支、多模态、OAuth 登录、全部 Provider、多 Agent。
-这些非基础能力不因为 Pi 存在就自动纳入；测试业务转 V3，其余留后续独立决策。
 
 ## 2. 源码基线与复用决策
 
@@ -63,16 +70,16 @@ TestMind 已有但不等于完整对话内核：
 | V2-P02 | 文本 + 工具调用 + 流式模型适配 | P01 | 阶段验收通过，见 V2-P02_ACCEPTANCE.md |
 | V2-P03 | 纯 Python Agent Loop 与执行器 | P01、P02 | 阶段验收通过，见 V2-P03_ACCEPTANCE.md |
 | V2-P04 | 无项目会话、Turn 持久化、并发/幂等迁移 | P01、P03 | 阶段验收通过，见 V2-P04_ACCEPTANCE.md |
-| V2-P05 | Worker 分发、租约、取消和消息排队 | P03、P04 | 待实施 |
-| V2-P06 | 对话 API + 悬浮前端 + SSE | P02、P04、P05 | 待实施 |
-| V2-P07 | 通用 Skill 加载与选择 | P03、P06 | 待实施 |
-| V2-P08 | 上下文预算、摘要和安全恢复 | P04、P07 | 待实施 |
-| V2-P09 | 人工门禁、隔离与故障加固 | P05～P08 | 待实施 |
-| V2-P10 | 真实环境验证、回归和 V2 验收 | P01～P09 | 待实施 |
+| V2-P05 | Conversation Runtime 收敛：Worker/租约/取消/队列，Workflow 退役 | P03、P04 | 待实施 |
+| V2-P06 | Conversation API + SSE + 基础持续聊天工作台 | P02、P04、P05 | 待实施 |
+| V2-P07 | Test Artifact Core：Case Tree / Node / Revision / Operation / Diff / Undo / 乐观锁 | P04、P06 | 待实施 |
+| V2-P08 | Artifact Tools + Test Design Skill：read/add/update/delete/move/validate/coverage | P07 | 待实施 |
+| V2-P09 | Chat + MindMap + Diff 协作工作台 | P06、P07、P08 | 待实施 |
+| V2-P10 | Context / Compaction / Approval / Conflict / Recovery / E2E | P05～P09 | 待实施 |
 
-里程碑 A：P03 后，Fake 模型能多轮聊天并调用无副作用工具。
-里程碑 B：P06 后，浏览器能正常聊天、展示真实消息、刷新恢复，不需要任何测试文档。
-里程碑 C：P10 后，基础架构验收；届时才启动 V3.1 用例生成接入。
+里程碑 A：P03 后，Fake 模型能多轮聊天并调用无副作用工具（已完成）。
+里程碑 B：P06 后，浏览器能持续聊天、流式展示、刷新恢复，不需要任何测试文档。
+里程碑 C：P10 后，V2 的对话式 Test Artifact 闭环通过真实 E2E 验收；届时 V3 开始接入 API 测试等更高级测试能力。
 里程碑不是版本完成状态，不承诺未验证工期。
 
 ### 代码目录（V2-R01 结构整理后，当前后端事实）
@@ -181,111 +188,47 @@ P02 已按 [集中续做提示词](prompts/V2-P02_CONTINUATION_CLAUDE_PROMPT.md)
 验收：无项目聊天、旧会话兼容、owner 隔离、双连接并发、重试幂等、消息恢复、失败事务回滚、临时库 migration upgrade/downgrade。
 真实 MySQL 只在 P10 明确授权测试库验证。注意 database.py 导入当前可能执行建库，不能把导入当作只读检查。
 
-### V2-P05 — Worker、租约、取消和排队
+### V2-P05 ～ V2-P10（2026-09-04 新路线，任务书见 12）
 
-范围：workers/agent_worker.py、agent_run_service.py、conversation 持久化运行桥接及针对性测试。
+> P05～P10 的详细范围、目录、验收一律以 [12_POST_P04_DEVELOPMENT_PLAN.md](12_POST_P04_DEVELOPMENT_PLAN.md) 为准；Legacy Workflow 退役步骤见 [16_LEGACY_WORKFLOW_MIGRATION_PLAN.md](16_LEGACY_WORKFLOW_MIGRATION_PLAN.md)。本小节只保留阶段定位与实施边界，不再展开旧 P05～P10 任务卡，避免新旧两套路线并存。原“P07 通用 Skill 加载 / P08 上下文压缩 / P09 人工门禁”等旧规划不再作为本阶段标题。
 
-内容：
-- 一个 Worker 入口按 workflow_code 分发 ConversationRunner 和旧 Workflow Runner；不要建立两个都抢所有 queued 行的 Worker；
-- 运行时禁止在 FastAPI --reload startup 隐式启动常驻 Worker；
-- 心跳不再只依赖步骤完成：独立轻量机制、短事务和独立 DB Session，长模型调用不应被误判；
-- 抢占租约/执行代次（fencing token）与条件写入，失去租约的执行器不能继续落消息或产生后续副作用；
-- 默认一个会话一个活跃 Turn，新消息可显式 follow_up 入队；当前 Run 失败/中断后后续队列暂停，给用户恢复/取消选择；
-- abort 传递到模型流与合作式工具；不可中止的外部副作用必须如实标注，不把数据库 cancelled 等同于物理回滚；
-- 进程崩溃标记 interrupted；不自动重放未知是否成功的调用；
-- 暴露安全的 Worker 健康状态，队列无人消费时前端能解释。
+#### V2-P05 — Conversation Runtime 收敛 + Legacy Workflow 退役
 
-验收：两个 Worker 竞争、长调用 heartbeat、取消、过期 Worker 写入被拒、进程中断、队列排序、旧任务分发不回归。
-首期不实现自动抢占式 steer 修改正在执行的工具；Pi 的 steer 也不等于回滚已经发生的动作。
+起点现状（2026-09-04 源码审计，供实施对账）：
+- `agents/conversation/` 已有 contracts/messages/events/loop/tool_executor/policy/budget/tool_validation，纯 Python/Fake 范围验收过，但没有任何 Worker/Router/Service 在生产调用 `run_agent_loop`；当前**不存在 ConversationRunner**；
+- `conversation_service` 能持久化 conversation Turn 为 queued Run，但 Worker claim 查询目前按 `workflow_code != "conversation"` 主动跳过，这些 Run 停在 queued；
+- 真正被接入的仍是旧执行核：`agents/runtime/runner.py` 的 AgentRunner + `agents/skills/case_generation/`（next_step / execute_step、phase/gate），由 `agent_worker` CLI 与 `/agent/runs/case-generation` 路由驱动，逐 step 写 AgentStep/Event/Artifact/Approval；会话 `mode=legacy_workflow`；
+- `agent_artifact` 是整棵 JSON payload + 整数 version 的浅版本（update_payload 原地覆盖），没有 Revision/Diff/Undo，也不存在 TestArtifact/ArtifactNode/ArtifactRevision/artifact_operation；
+- 前端 test-agent 悬浮台仍“每次发送都无条件创建 case_generation Run”，无 conversation 入口、无脑图/Diff 视图；
+- Alembic 已有 0002（agent 平台表）/ 0003（conversation 持久化：mode、project_id 可空、序号游标、active_slot）。
 
-### V2-P06 — 真正的对话 API 与悬浮前端
+实施要点：
+1. 先按 [16 §4 Step 1](16_LEGACY_WORKFLOW_MIGRATION_PLAN.md#4-p05-执行步骤) 做 Dependency Audit（CaseGenerationWorkflow / AgentRunner / workflow_code / case_generation / legacy_workflow / next_step / execute_step），列 API / Worker / 前端 / tests / DB 历史行的调用方，审计前不物理删除；
+2. 新增 ConversationRunner：从 Repository 重建 Context → 构造 RuntimeContext → `run_agent_loop()` → 持久化最终 Message/Event/Run status；不自行决定测试业务步骤；
+3. Worker 主分发只服务新 Conversation 主路径；旧 case_generation 迁到 `legacy/` 兼容区或确认无调用后删除；禁止新 Artifact Tool 内部整链调用 CaseGenerationWorkflow；
+4. 复用 Worker 现有 lease/heartbeat/fencing/claim 资产，补齐 conversation 取消、follow_up、同会话单活跃 Turn。
 
-范围：新增 conversation_router.py / conversation_service.py；前端 API 与现有 test-agent 组件，保持原登录流程。
+验收见 [12 §3](12_POST_P04_DEVELOPMENT_PLAN.md#3-v2-p05--conversation-runtime-收敛与-workflow-退役)：Fake Provider 经 Worker 连续 3 Turn、长调用 heartbeat 不丢 lease、cancel 终止当前 Turn、follow-up 保序、新对话不引用 case_generation、Workflow 隔离/删除后 P01～P04 回归通过。
 
-拟定 API（最终 DTO 在任务实施时固化，不声称已经存在）：
-- POST /agent/conversations：登录用户创建，可无 project_id；
-- POST /agent/conversations/{id}/turns：content、client_request_id、可选 skill_code、queue_mode，返回 202 + run_id + user_message_id；
-- GET /agent/conversations/{id}：快照和当前 Turn；
-- GET /agent/conversations/{id}/messages?after_sequence=...；
-- GET /agent/conversations/{id}/events?after_sequence=...：SSE；
-- POST /agent/conversation-runs/{id}/cancel；
-- GET /agent/conversation-capabilities：当前模型/工具能力及 Worker 可用性，不含密钥。
-既有 /agent/sessions 和 /runs/case-generation 保留，不静默改变旧调用方语义。
+#### V2-P06 — Conversation API、SSE 与基础持续聊天工作台
 
-内容：
-- 普通对话使用独立 agent_chat 场景或明确选定的会话模型；复用配置中心，不能暗用 requirement_to_function_case 或第一个模型；
-- 配置未就绪在启动前返回明确提示，不先等范围审批；启用聊天入口不自动初始化真实 Key；
-- 登录即可聊天；前端“发送”只提交 Turn，不再先 appendMessage 再无条件 createCaseRun；
-- 助手回复由模型生成并持久化；进度与错误是独立 UI，不伪装成模型答复；
-- SSE 用可携带现有 Bearer 的 fetch 流或明确鉴权方案，不把 Token 放 URL；
-- FastAPI 从数据库事件日志转发 Worker 事件；序号去重、断线续传、终态快照恢复，不能仅用进程内队列；
-- Markdown 禁止危险 HTML，流式末尾按稳定 message_id 合并；最小化继续执行，失败后仍可发新消息；
-- 未完成 P07 前不展示可用的测试 Skill，旧生成入口仅兼容保留。
+新增 conversation_router / conversation_service 的对话入口：`POST /agent/conversations`、`POST /agent/conversations/{id}/turns`、messages、events(SSE)、cancel 等；浏览器真正持续聊天、流式、刷新恢复；前端“发送”改为提交 Turn，不再先 appendMessage 再无条件 createCaseRun；Artifact 聚焦端点（`.../artifacts/{id}/focus`）首期可延到 P07。详细 API 建议与 UI 首期、验收见 [12 §4](12_POST_P04_DEVELOPMENT_PLAN.md#4-v2-p06--conversation-apisse-与基础工作台)。
 
-验收：浏览器至少两轮聊天、0 业务写入、无来源也成功、刷新恢复、取消、重复提交、SSE 重连、错误后再聊、跨用户访问拒绝。
-先 Fake HTTP+Worker，再授权真实模型；不可把 Fake 演示冒充正式配置验证。
+#### V2-P07 — Test Artifact Core
 
-### V2-P07 — Skill 加载与调用选择
+TestArtifact 提升为 V2 一等业务对象（取代“一次 Run 生成整棵用例 JSON”）：ArtifactNode 树（root/group/test_point/test_case）、ArtifactRevision、ArtifactOperation（add/update/delete/move/restore）、结构化 Diff、Undo、`expected_revision` 乐观并发。脑图只是视图不是底层存储；Agent 与人工写操作必须走同一 Artifact Application Service。AgentArtifact 保留为执行产物/兼容，不作为长期编辑对象。数据模型与最小验收见 [13_TEST_ARTIFACT_CASE_TREE_DESIGN.md](13_TEST_ARTIFACT_CASE_TREE_DESIGN.md) 与 [12 §5](12_POST_P04_DEVELOPMENT_PLAN.md#5-v2-p07--test-artifact-core)。
 
-参考：Pi harness/skills.ts、coding-agent/core/agent-session.ts 的 Skill 调用展开。
+#### V2-P08 — Artifact Tools 与 Test Design Skill
 
-新增：conversation/skills/loader.py、catalog.py、resolver.py；受控资源目录；合成 notes_summary Skill 和 loader 测试。
+Agent 改为动态调用 Tool 修改 Artifact，而不是 Workflow 固定顺序：read（get_current_artifact / read_artifact_outline / read_artifact_nodes / search_artifact / get_artifact_diff / read_requirement）、write（add/update/delete/move/batch_apply_artifact_operations）、quality（validate_test_artifact / find_duplicate_cases / analyze_test_coverage —— 是能力、不是必经流程）。所有写 Tool 遵守 Tool Contract：身份由 RuntimeContext 注入、携带 `expected_revision`、返回 applied revision + machine-readable diff、写 audit、遵守 Tool Policy。Skill 改为领域知识 + 行为规则（skills/test-design/SKILL.md），不含固定 phase；通用 Skill 加载/注入基础若前序阶段未落地，随本阶段一并提供。工具合同、行为规则与 8 类对话验收见 [14_ARTIFACT_TOOL_AND_AGENT_PROTOCOL.md](14_ARTIFACT_TOOL_AND_AGENT_PROTOCOL.md) 与 [12 §6](12_POST_P04_DEVELOPMENT_PLAN.md#6-v2-p08--artifact-tools-与-test-design-skill)。
 
-内容：
-- Skill 是任务说明/资源，不要求每个 Skill 都实现 Python Workflow；
-- 只读取显式配置的审核目录；name/description/版本/hash、文件大小、重复名和 frontmatter 错误有诊断；
-- 支持显式 /skill:name 与模型调用 load_skill(name)；只按名称取注册资源，不接受任意 path；
-- 模型只先看到 Skill 摘要，需要时加载正文；参考资源须限制在该 Skill 根目录内，解析真实路径防穿越/链接逃逸；
-- Skill 不能扩大工具权限：配置允许集合 ∩ 用户权限 ∩ 本次会话策略；
-- 不自动执行 Skill scripts、不扫描 .claude 或实习目录、不安装第三方包；
-- 使用实际 YAML 安全解析器前检查现有依赖；必要新增需授权并固定版本，不手写宽松 YAML 解析冒充兼容。
+#### V2-P09 — Chat + MindMap + Diff 协作工作台
 
-验收：无需 Skill 的聊天、显式/按需加载、未知 Skill 澄清、摘要 Skill、多轮保留、恶意说明不越权；V2 默认 catalog 无测试领域 Skill。
-V3 再将旧 case_generation 包装为独立业务能力。
+实现“一边对话、一边看到 AI 对 Artifact 的实际修改”：Chat / MindMap / Diff / History / Undo 读取同一 Revision；人工在脑图编辑同样产生 ArtifactOperation 与 Revision；AI 下一轮读取最新版本；大范围删除展示 impact preview 并按动作风险进入 Approval。产品体验与验收见 [15_CHAT_MINDMAP_DIFF_PRODUCT_DESIGN.md](15_CHAT_MINDMAP_DIFF_PRODUCT_DESIGN.md) 与 [12 §7](12_POST_P04_DEVELOPMENT_PLAN.md#7-v2-p09--chat--mindmap--diff-协作工作台)。
 
-### V2-P08 — 上下文预算、摘要与会话恢复
+#### V2-P10 — Context / Compaction / Approval / Recovery / E2E
 
-参考：Pi compaction.ts、SessionManager 的上下文构建。
-
-内容：
-- 区分展示历史与提交模型的工作上下文；保留原始消息，不为压缩删除历史；
-- 先确定性整理：去 UI-only 事件、压缩过长工具结果、保留 system 策略与完整工具对；
-- 达到上下文阈值后生成摘要记录（模型/版本、输入范围、hash、usage、保留尾部），摘要是派生信息不是系统指令；
-- 不截断 tool_call/tool_result 配对，不合并其他用户/项目上下文；
-- 摘要失败可退回安全窗口或明确 context_limit，不无限重试/重复计费；
-- 摘要和普通模型调用共用 Run 预算；压缩中取消要取消流、保留原上下文并停止发布迟到摘要；
-- 活跃 Run 不允许切换项目；空项目会话绑定项目时仅允许 owner 明确操作，并验证权限；
-- 本版线性会话即可，Pi tree/branch 导航不在完成条件内。
-
-验收：超长合成对话、工具对不丢、摘要失败/取消、重启重建、脱敏、不同会话隔离、摘要不改变审批记录。
-
-### V2-P09 — 人工门禁与故障加固
-
-参考：Pi beforeToolCall/afterToolCall/shouldStopAfterTurn；权限和多用户安全采用 TestMind 自身策略。
-
-内容：
-- 通用 approval_request 合同含操作名、参数 hash、run/tool_call_id、有效期和解析结果；
-- 仅用户鉴权端点能批准，模型和 Skill 不持有“自我批准”工具；
-- 用内存假副作用工具验证待审批/拒绝/过期/幂等，仍不接测试保存或外部写入；
-- 审批恢复重新校验参数、权限和当前 Run，失败不能静默落写；
-- 对取消/断流/权限变更/重连/消息重复/中断恢复做故障注入；
-- 清理已知敏感键并测试嵌套结构；不以关键词脱敏宣称所有 Secret 安全；
-- 审计记录工具、版本、预算、事件与安全错误，不记录隐藏思维链；Provider 的隐藏 reasoning 不是前端事件。
-
-验收：未审批零副作用、模型伪造 approval 无效、租约丢失不执行、参数变化需重新审批、跨用户/项目拒绝、费用尝试计数无遗漏。
-
-### V2-P10 — 基础版本验收和可重复启动
-
-内容：
-- 完成 [验收清单](03_ACCEPTANCE_CHECKLIST.md)，对照上游关键行为而非目录相似度；
-- 新增明确的本地启动说明/脚本：FastAPI、Worker、前端三个进程与配置预检；不再让用户靠猜启动缺失服务；
-- 隔离 Fake 端到端验证后，单独授权测试 MySQL + 小额真实模型测试，记录实际 Provider、模型、版本、调用次数、延迟、错误；
-- 同一合成脚本覆盖普通聊天→工具→Skill→解释结果→失败后继续；不需要任何测试用例表有数据；
-- 仅此发布任务做一次受影响 V1/旧 Agent 综合回归；
-- feature flag 保留可回退入口。回退代码不等于降级数据库，带新数据的迁移回退须预检；
-- 记录上游适配清单、已知差异和未实现项，完成后才允许 V3 业务接入。
-
-未获得真实环境授权时，可交付“隔离验收通过”，但 P10 真实环境项保持未完成，不使用 unlimited 重试等待。
+把闭环加固成可长期工作的 Agent：模型每轮不整棵塞入 Artifact（元数据 + 相关节点 + 最近 Diff，不足再 read/search/compaction）；原始历史保留、摘要不删除历史；Approval 由固定 gate 改为按 Action Risk 的 Tool Policy（read→allow、add/update 小批量→allow、批量删除/覆盖→approval、写正式项目→approval）；恢复与故障注入覆盖 Provider 断流 / Worker 崩溃 / Revision 冲突 / Tool timeout / Approval 后恢复 / Cancel / SSE 重连 / Artifact 已写入但 final response 失败等，任何情况下不得把“聊天失败”误报成“Artifact 写入被回滚”；最后按 [12 §8 E2E 故事](12_POST_P04_DEVELOPMENT_PLAN.md#8-v2-p10--contextapprovalrecovery-与完整验收) 组织真实闭环验收，并完成真实 MySQL + 小额真实模型验证与可重复启动、受影响旧功能回归。真实环境项仍按授权执行。
 
 ## 5. 技术选型与实现约束
 
@@ -301,11 +244,12 @@ V3 再将旧 case_generation 包装为独立业务能力。
 | 旧计划事项 | 新去向 | 当前处理 |
 |---|---|---|
 | 旧 T01～T04 Gateway/模型/Worker | V2 复用输入 | 审计并补缺口，不重复搭同名基础设施 |
-| 旧 T05～T08 用例工具/Workflow/审批 UI | V3.1 | 代码保留，V2 新聊天不自动调用 |
-| 旧 T09 用例影子评测 | V3.1 业务验收 | 不用替代 V2 基础行为评测 |
-| 旧 V2.2 根因分析 | V3.2 | 待 V2 通过 |
-| 旧 V2.3 测试数据、缺陷描述 | V3.3 / V3.4 | 待对应业务权限方案 |
+| 旧 case_generation Workflow（AgentRunner / next_step / execute_step / phase/gate） | V2-P05 退役或隔离 | 按 [16](16_LEGACY_WORKFLOW_MIGRATION_PLAN.md)：A 类确定性能力（load_requirement/validate/deduplicate/coverage/save 等）→ Tool / Domain Service（P07/P08），B 类测试方法 → skills/test-design（P08），C 类编排 → 删除 |
+| 旧 T05～T08 用例工具与审批 UI | 能力并入 V2 | Tool/Service 复用；不再作为独立 V3.1 桥接任务 |
+| 旧 T09 用例影子评测 | V2 test-design Skill 质量门禁（P08/P10） | 基础用例/测试点生成现在是 V2 纵向闭环的验收内容 |
+| 旧 V2.2 根因分析 | V3.2 Failure RCA | 复用 Conversation + Agent Loop + Tools + Artifact |
+| 旧 V2.3 测试数据、缺陷描述 | V3.3 Test Data / V3.4 Defect | 复用同上 |
 | 通用安全、会话隔离、预算 | V2 必须 | 不因业务后移而延期 |
-| 测试数据写入安全、结果质量评测 | V3 对应任务 | 使用具体业务门禁 |
+| API 测试执行、CI 集成等 | V3.1 / V3.5 等高级测试能力 | V2-P10 后按新 V3 路线规划 |
 
-旧记录和提示词见 [归档说明](../archive/PRE_PI_V2_2026-09-03/ARCHIVE_NOTICE.md)，新业务路线见 [V3 主计划](../V3/01_TEST_CAPABILITY_PLAN.md)。
+旧记录和提示词见 [归档说明](../archive/PRE_PI_V2_2026-09-03/ARCHIVE_NOTICE.md)，V2-P05～P10 新路线见 [12_POST_P04_DEVELOPMENT_PLAN.md](12_POST_P04_DEVELOPMENT_PLAN.md)，更高级测试能力路线见 [V3 主计划](../V3/01_TEST_CAPABILITY_PLAN.md)。

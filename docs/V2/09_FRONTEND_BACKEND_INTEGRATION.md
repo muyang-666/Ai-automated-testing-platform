@@ -9,8 +9,11 @@
 | 层次 | 环境 | 验证重点 |
 |---|---|---|
 | P01～P03 | 纯 Python + Fake Provider/Tool | 文本/工具循环、事件顺序、预算和取消 |
-| P04～P05 | 临时 SQLite，外键 ON，真实 Repository/Worker | 幂等、串行、租约、持久化 |
-| P06～P09 | 独立开发入口 + Fake 模型 + 实际 HTTP/SSE/Worker | 真聊天、流、重连、Skill、摘要、权限 |
+| P04～P05 | 临时 SQLite，外键 ON，真实 Repository/Worker | 幂等、串行、租约、持久化、Conversation 主路径接通与 Workflow 退役 |
+| P06 | 独立开发入口 + Fake 模型 + 实际 HTTP/SSE/Worker | 持续聊天、流、重连、Tool activity |
+| P07 | 同左 + Artifact Domain | 建 Artifact、Revision/Diff/Undo、conflict（确定性测试） |
+| P08 | 同左 + Fake Provider 对话 | Agent 动态 read/add/edit/delete/move、8 类对话场景 |
+| P09 | 同左 + 前端脑图/Diff | 同一 Artifact、Diff/Undo、刷新恢复、双浏览器冲突 |
 | P10 | 经授权的测试 MySQL + 小额真实模型 | DDL/并发/供应商协议及真实延迟 |
 | P10 | 现有回归套件 | 旧业务与新入口兼容 |
 
@@ -39,12 +42,14 @@ D:\pi 只读参考，不需要 npm install，不增加第四个 Node 后端服�
 
 - 登录后无项目/无来源直接聊天，第二轮引用第一轮；
 - 文本→一个纯工具→解释结果；普通回复不走 JSON 产物校验；
-- 显式/按需 Skill 加载，不启动 case_generation；
-- 浏览器最小化/刷新/网络重连后消息 ID、游标和终态一致；
-- 模型空内容/截断/超时后明确诊断，Session 不关闭；
+- 创建/打开 TestArtifact → “先列测试点”→ Agent 动态调用 Tool → 脑图实时出现节点 → Chat 给出解释；
+- “锁定这里补边界”→ Diff 只影响该分支；“第二个不要”→ 删除上一轮新增的第二个节点；
+- 人工在脑图编辑一条用例 → 生成新 Revision → Agent 下一轮读取最新版；
+- 浏览器最小化/刷新/网络重连后消息 ID、游标、Artifact 与 Revision 一致；
+- 模型空内容/截断/超时后明确诊断，Conversation 不关闭；
 - Worker 不在线有预检提示，长模型调用不被误判失活；
 - 取消、进程中断和重新发送不会重放已确认动作；
-- 两个用户之间消息、工具结果、摘要完全隔离。
+- 两个用户之间消息、工具结果、Artifact、摘要完全隔离。
 
 每个故事记录真实命令、输入类型、运行环境、HTTP/事件结果和数据库副作用；不要写主观“看起来成功”。
 

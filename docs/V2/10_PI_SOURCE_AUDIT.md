@@ -4,6 +4,7 @@
 > 上游目录：D:\pi；origin：https://github.com/earendil-works/pi.git。
 > 参考 commit：f41f80466e30f21cdcd4d52aba4a2c2cb6ee3cc6，标题：fix(coding-agent): update interactive mode test fixture。
 > 状态：P01 当前范围合同已翻译与轻适配，并通过 Codex 阶段复审（实际 90 项测试通过）；未安装 Pi npm 依赖、未运行上游测试。
+> 2026-09-04：阶段语义已按 [新路线](12_POST_P04_DEVELOPMENT_PLAN.md) 重排（P07=Test Artifact、P08=Artifact Tools + Test Design Skill、P10=Context/Approval/Recovery），下表“任务”列引用新阶段；本文件继续负责 Agent Core 的 Pi 对照，Artifact/MindMap/Diff 属 TestMind 自研业务层，不硬找 Pi 一一对应。
 
 ## 1. 固定版本的方法
 
@@ -27,10 +28,10 @@ git -C D:\pi show f41f80466e30f21cdcd4d52aba4a2c2cb6ee3cc6:packages/agent/test/a
 | [agent/src/types.ts](https://github.com/earendil-works/pi/blob/f41f80466e30f21cdcd4d52aba4a2c2cb6ee3cc6/packages/agent/src/types.ts) | AgentContext、AgentTool、AgentEvent、before/afterToolCall、prepareNextTurn、shouldStopAfterTurn | conversation/contracts.py、events.py、policy.py | P01/P03 |
 | [agent/src/agent.ts](https://github.com/earendil-works/pi/blob/f41f80466e30f21cdcd4d52aba4a2c2cb6ee3cc6/packages/agent/src/agent.ts) | prompt、continue、steer、followUp、abort、waitForIdle；活跃调用与队列区分，reset 不能污染运行中 transcript | 对话实例、取消令牌、显式 follow_up；steer 首期不开放 | P03/P05 |
 | [agent/src/agent-loop.ts](https://github.com/earendil-works/pi/blob/f41f80466e30f21cdcd4d52aba4a2c2cb6ee3cc6/packages/agent/src/agent-loop.ts) | runLoop、streamAssistantResponse、prepareToolCall、executePreparedToolCall；工具结果回到下一轮 | 有界 loop + executor；不带 ORM | P03 |
-| [agent/src/harness/skills.ts](https://github.com/earendil-works/pi/blob/f41f80466e30f21cdcd4d52aba4a2c2cb6ee3cc6/packages/agent/src/harness/skills.ts) | loadSkills/loadSourcedSkills、formatSkillInvocation、frontmatter 和诊断 | 审核目录 catalog、load_skill 工具、按需注入 | P07 |
-| [agent/src/harness/compaction/compaction.ts](https://github.com/earendil-works/pi/blob/f41f80466e30f21cdcd4d52aba4a2c2cb6ee3cc6/packages/agent/src/harness/compaction/compaction.ts) | estimateContextTokens、findCutPoint、prepareCompaction、compact；摘要与保留尾部 | context_policy.py、compaction.py；保留历史 | P08 |
-| [coding-agent/core/agent-session.ts](https://github.com/earendil-works/pi/blob/f41f80466e30f21cdcd4d52aba4a2c2cb6ee3cc6/packages/coding-agent/src/core/agent-session.ts) | 高层 prompt/Skill 调用、事件订阅、重试/压缩/abort 协调；不是 Agent Loop 本身 | conversation_service + 持久化 Runner | P04～P08 |
-| [coding-agent/core/session-manager.ts](https://github.com/earendil-works/pi/blob/f41f80466e30f21cdcd4d52aba4a2c2cb6ee3cc6/packages/coding-agent/src/core/session-manager.ts) | SessionEntry、parentId、compaction entries、buildSessionContext、appendMessage、版本化会话文件 | MySQL Repository + schema_version；首期线性历史 | P04/P08 |
+| [agent/src/harness/skills.ts](https://github.com/earendil-works/pi/blob/f41f80466e30f21cdcd4d52aba4a2c2cb6ee3cc6/packages/agent/src/harness/skills.ts) | loadSkills/loadSourcedSkills、formatSkillInvocation、frontmatter 和诊断 | 审核目录 catalog、load_skill 工具、按需注入；Skill=领域知识+行为规则 | P08（test-design） |
+| [agent/src/harness/compaction/compaction.ts](https://github.com/earendil-works/pi/blob/f41f80466e30f21cdcd4d52aba4a2c2cb6ee3cc6/packages/agent/src/harness/compaction/compaction.ts) | estimateContextTokens、findCutPoint、prepareCompaction、compact；摘要与保留尾部 | context_policy.py、compaction.py；保留历史 | P10（Context） |
+| [coding-agent/core/agent-session.ts](https://github.com/earendil-works/pi/blob/f41f80466e30f21cdcd4d52aba4a2c2cb6ee3cc6/packages/coding-agent/src/core/agent-session.ts) | 高层 prompt/Skill 调用、事件订阅、重试/压缩/abort 协调；不是 Agent Loop 本身 | conversation_service + ConversationRunner | P04（持久化）/P06（Runner 接线） |
+| [coding-agent/core/session-manager.ts](https://github.com/earendil-works/pi/blob/f41f80466e30f21cdcd4d52aba4a2c2cb6ee3cc6/packages/coding-agent/src/core/session-manager.ts) | SessionEntry、parentId、compaction entries、buildSessionContext、appendMessage、版本化会话文件 | MySQL Repository + schema_version；首期线性历史 | P04/P10 |
 | [agent/src/index.ts](https://github.com/earendil-works/pi/blob/f41f80466e30f21cdcd4d52aba4a2c2cb6ee3cc6/packages/agent/src/index.ts) | 导出 core、harness、skills、compaction、session 等，说明当前分层不只在 coding-agent 包中 | 明确依赖方向，禁止工具层反向引用前端 | P01 |
 | [LICENSE](https://github.com/earendil-works/pi/blob/f41f80466e30f21cdcd4d52aba4a2c2cb6ee3cc6/LICENSE) | MIT，Copyright (c) 2025 Mario Zechner | 翻译上游代码时保留声明并记录来源 | 全部 |
 
@@ -66,7 +67,7 @@ Pi 的基本闭环允许模型不调用工具而直接回复；工具调用后�
 | reset / prompt during processing | API 返回明确忙碌/队列语义，不破坏 transcript |
 | shouldStopAfterTurn / terminating tool results | 明确预算和等待边界，不重复催促工具形成无限循环 |
 
-测试目录已确认另有 skills.test.ts、sdk-skills.test.ts、agent-session-compaction.test.ts、agent-session-concurrent.test.ts。P07/P08 实施时还需阅读这些文件的具体测试正文；目录存在不等于已验证内容。
+测试目录已确认另有 skills.test.ts、sdk-skills.test.ts、agent-session-compaction.test.ts、agent-session-concurrent.test.ts。P08（Skill）/P10（Context）实施时还需阅读这些文件的具体测试正文；目录存在不等于已验证内容。
 
 ## 5. 移植记录与许可证
 
@@ -200,7 +201,7 @@ Python 额外门禁为项目既定安全适配：严格终态 JSON、固定错�
 | AbortSignal | asyncio.Event + monotonic deadline | 异步策略/工具可协作取消；同步 handler 只能调用前后检查，不能物理抢占 |
 | 上游无本项目四项统一硬限制 | AgentLoopLimits / AgentLoopBudget | max_turns/model_calls/tool_calls/deadline；P02 AttemptBudget 单独计物理请求 |
 
-默认策略在 P09 前阻止 `requires_approval`、`required_permission` 和非只读工具，不把模型请求当成授权。取消/截止会为批次中剩余工具建立关联的“未执行”结果，保证之后可识别每个 call_id；这是为持久恢复做的 Python 适配。
+默认策略阻止 `requires_approval`、`required_permission` 和非只读工具，不把模型请求当成授权；Approval 按动作风险接入（P10，不再以“P09 固定门禁”表述）。取消/截止会为批次中剩余工具建立关联的“未执行”结果，保证之后可识别每个 call_id；这是为持久恢复做的 Python 适配。
 
 验收见 [P03 验收记录](reviews/V2-P03_ACCEPTANCE.md)：P03 30 项、P02 54 项、P01 90 项、旧 Provider/Gateway 55 项、ToolRegistry 4 项分别通过。没有真实模型/数据库/业务工具调用；Calculator/Echo 都是内存测试夹具。改编代码保留 MIT 与 Copyright (c) 2025 Mario Zechner 说明。
 
@@ -210,7 +211,7 @@ Python 额外门禁为项目既定安全适配：严格终态 JSON、固定错�
 |---|---|---|
 | SessionMessageEntry 保存完整 AgentMessage | AgentMessage.content_json 保存 P01 消息，另存 message_id/schema_version/timestamp_ms | 关系表便于 owner、Run、幂等与游标查询；恢复仍经 P01 parse_message |
 | appendMessage 追加并推进 leaf | 数据库 next_message_sequence 原子分配后 INSERT | P04 只做线性历史；不复制树 leaf/parentId |
-| buildSessionContext 按路径重建消息 | restore_conversation_messages 按 sequence_no 重建 | compaction/branch summary 留 P08；损坏版本或 ID 不静默跳过 |
+| buildSessionContext 按路径重建消息 | restore_conversation_messages 按 sequence_no 重建 | compaction 留 P10；损坏版本或 ID 不静默跳过 |
 | Session header version | 每条消息 schema_version + session.mode | 兼容旧平台表；既有 session 回填 legacy_workflow |
 | 本地 JSONL 会话文件 | SQLAlchemy AgentSession/Run/Message + Alembic 0003 | TestMind 已是多用户 Web 平台，需要事务、并发约束和 owner 隔离 |
 

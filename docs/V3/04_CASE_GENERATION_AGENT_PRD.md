@@ -1,23 +1,8 @@
-# V3.1 用例生成 Skill PRD
+# 用例生成已进入 V2（本文件不再定义 V3.1 范围）
 
-> 测试能力从旧 V2.1 后移到 V3.1。依赖新的 V2 通用对话 Agent；旧 Workflow 是复用资产。
+2026-09-04 起，基础测试设计与用例生成/协作编辑是 V2 对话式 Test Agent 的纵向闭环，不再作为 V3.1“第一次接入”的内容。
 
-## 核心流程
-
-1. 用户先与 Agent 讨论测试重点，普通讨论不创建生成任务。
-2. 明确要求生成时，定位授权项目和需求/接口来源，缺少信息只追问必要内容。
-3. 启动 case_generation Skill，展示范围和覆盖计划供修改。
-4. 运行现有候选生成、校验、去重、覆盖、必要修正。
-5. Artifact 展示候选、条款关联、假设和警告；聊天可以解释结果。
-6. 修改需求或要求局部补充时，明确目标产物与 revision，不覆盖旧审批依据。
-7. 用户勾选并确认保存，后端重新检查来源和权限；保存结果可查证。
-
-## 失败与会话
-
-生成失败只影响当前业务 Run，不关闭聊天；用户可以问原因、补充信息、明确重试。不能自动反复重建 Run 消耗模型费用。
-模型聊天文本不是候选结果；业务候选仍需 Schema 校验，不因“能聊天”放松保存约束。
-
-## 验收
-
-以 [V3 清单](03_ACCEPTANCE_CHECKLIST.md)为准。
-详细旧交互设想与当时假设见 [原 PRD 归档](../archive/PRE_PI_V2_2026-09-03/04_CASE_GENERATION_AGENT_PRD.md)，其旧版本编号和“当前状态”不作为新版本事实。
+- V2 产品与开发：`../V2/04_CONVERSATIONAL_TEST_AGENT_PRD.md`、[V2 P05～P10 新路线](../V2/12_POST_P04_DEVELOPMENT_PLAN.md)、[Test Artifact 设计](../V2/13_TEST_ARTIFACT_CASE_TREE_DESIGN.md)。
+- 旧固定 case_generation Workflow 退役：[V2 Legacy 迁移计划](../V2/16_LEGACY_WORKFLOW_MIGRATION_PLAN.md)。
+- V3 现在转向更高级测试能力，见 [V3 主计划](01_TEST_CAPABILITY_PLAN.md)。
+- 旧原文及历史任务定义保留在 [归档 PRD](../archive/PRE_PI_V2_2026-09-03/04_CASE_GENERATION_AGENT_PRD.md)，其旧版本编号和“当前状态”不作为新版本事实。

@@ -1,6 +1,6 @@
-# V2 Pi 架构 Python 实现验收清单
+# V2 对话式 Test Agent 验收清单
 
-> P01～P04 已在各自声明范围通过 Codex 验收；P05～P10 未验收。旧清单和历史测试记录保留。
+> P01～P04 已在各自声明范围通过 Codex 验收。P05 起按 [P05～P10 新路线](12_POST_P04_DEVELOPMENT_PLAN.md) 验收（2026-09-04 调整：P07=P07 Artifact Core、P08=P08 Artifact Tools、P09=P09 Chat+MindMap+Diff，不再是旧“Skill / 上下文 / 人工门禁”标题）。旧清单和历史测试记录保留。
 
 ## P01 合同
 
@@ -45,49 +45,57 @@
 - [x] 刷新/重建 Session 能恢复消息和完整工具调用对。（P01 parse_message 复验）
 - [x] 外键开启的 SQLite 迁移测试通过；有 conversation 数据时 downgrade 明确拒绝。
 
-## P05 Worker / 控制
-- [ ] 一个分发入口分别运行 conversation 与旧 Workflow，无互相抢错任务。
-- [ ] 长模型调用期间仍有心跳；过期执行器写入被 fencing 拒绝。
-- [ ] cancel 可关闭模型连接，未完成外部动作状态如实显示。
-- [ ] follow_up 保序且不并行写同一会话；失败后队列暂停。
-- [ ] 中断不自动重放不确定副作用；Worker 未启动时清晰提示。
+## P05 Conversation Runtime 收敛 + Workflow 退役
+- [ ] Conversation queued Run 被 Worker 消费（不再跳过、不再永远 queued）；同会话一个活跃 Turn。
+- [ ] lease / heartbeat：长模型调用不丢 lease；过期执行器写入被 fencing 拒绝。
+- [ ] cancel 可终止当前 Turn；follow_up 保序且不并行写同一会话；失败/中断后队列暂停。
+- [ ] 中断不自动重放不确定副作用；Worker 未启动时前端可解释。
+- [ ] 新 Conversation 主路径（Turn → ConversationRunner → Agent Loop）不经过 case_generation / next_step / execute_step。
+- [ ] Dependency Audit 完成：旧 Workflow 已隔离到 legacy 或删除；P01～P04 回归通过。
 
-## P06 真正的聊天 UI
-- [ ] 登录后不选项目也可连续聊天至少三轮；回复来自模型而非前端状态模板。
+## P06 Conversation API + SSE + 基础工作台
+- [ ] 浏览器持续聊天至少三轮，回复来自模型而非前端状态模板；前端“发送”只提交 Turn，不再无条件 createCaseRun。
 - [ ] 开始前检查 agent_chat 模型与 Worker 状态，不引用用例场景。
 - [ ] SSE Bearer 鉴权、游标重连、增量去重、快照恢复正确。
-- [ ] 模型 Key 不进入 URL/前端；Markdown 不执行危险 HTML。
-- [ ] 最小化/最大化/拖动/缩放仍可用；失败后可继续发消息。
-- [ ] 会话 owner 隔离；游客/跨用户不能读消息或事件。
-- [ ] 未把每次发送硬编码成 case_generation。
+- [ ] 模型 Key 不进入 URL/前端；Markdown 不执行危险 HTML；刷新恢复与失败后可继续发消息。
+- [ ] Tool activity 独立展示（不是伪装的模型答复）；会话 owner 隔离，跨用户不能读消息/事件。
+- [ ] Fake Provider 经 Worker 完成连续 3 Turn；refresh 后能回答“我刚才最开始给你的数字”类引用问题。
 
-## P07 Skill
-- [ ] 显式与按需加载通用 Skill；普通聊天无需先选 Skill。
-- [ ] 白名单资源根、重复名、frontmatter、hash/版本、大小限制通过测试。
-- [ ] 路径穿越/链接逃逸/恶意脚本不能触达宿主资源。
-- [ ] Skill 不扩张工具权限，不默认加载用例生成/造数等业务能力。
+## Artifact 验收域（P07 Test Artifact Core）
+- [ ] Artifact 可独立创建；Tree 可读取；add/update/delete/move node 生效。
+- [ ] 每个逻辑写操作产生 Revision（线性连续），并产出结构化 Diff（add/update/delete/move）。
+- [ ] Undo（撤销上一 Revision / 恢复到 N）后 UI 与 DB 一致，历史不物理抹除。
+- [ ] stale revision 写入返回 409 / revision_conflict，不静默覆盖人工修改。
+- [ ] Batch operation 原子（全成功才 commit）；project/user owner 隔离。
+- [ ] Artifact Domain 全部可脱离 LLM 用确定性测试验收（构造 20 节点、移动、删除、diff、undo）。
 
-## P08 上下文
-- [ ] 原始历史保留，工作上下文有预算，工具调用对不被拆散。
-- [ ] 摘要带来源范围、版本、usage，不升级为系统指令。
-- [ ] 摘要失败/取消可恢复，迟到摘要不覆盖新会话状态。
-- [ ] 跨用户/项目上下文不混合。
+## Conversational Editing 验收域（P08 Artifact Tools + Test Design Skill）
+- [ ] 从空 Artifact：先生成测试点，再展开其中几个为详细用例。
+- [ ] 不生成测试点也能直接补用例；修改指定节点只影响该节点。
+- [ ] “第二个不要”类多轮指代，可结合 Message + 最近 Diff 正确定位并删除。
+- [ ] 人工修改 Artifact 后，Agent 下一轮读到的是最新 Revision，而不是缓存旧版。
+- [ ] coverage / dedup 是可调用能力而非必经步骤：仅改一条预期时不会强制跑 coverage。
+- [ ] Agent 不做无关重写（改 TC003 预期时不会重写整个登录模块；不擅自改分类/重命名）。
+- [ ] 8 类对话场景（12 §6）用 Fake Provider 验收通过；写 Tool 契约（expected_revision / audit / Tool Policy）有效。
 
-## P09 门禁与恢复
-- [ ] 假副作用工具未审批零动作；仅真实用户决议能批准。
-- [ ] 审批绑定参数 hash/run/tool_call，权限变化重新校验。
-- [ ] 拒绝/过期/取消/重复请求和失租约场景无重复副作用。
-- [ ] 数据与提示词注入不能获取未授权工具、凭证或后台身份。
-- [ ] 日志只包含安全诊断与可观察事件，不保存隐藏思维链。
+## UI 验收域（P09 Chat + MindMap + Diff 工作台）
+- [ ] Chat 与 MindMap 展示同一 Artifact；AI 添加节点无需刷新即出现。
+- [ ] AI 修改后同时产出：Chat 解释 + Changes/Diff 卡 + 脑图更新，三者来自同一 Revision。
+- [ ] 人工在脑图/inspector 编辑同样产生 ArtifactOperation → Revision → MindMap 更新。
+- [ ] Diff 视图支持 added / updated / deleted / moved。
+- [ ] 大范围操作（如删除整分支 43 条）展示 impact preview 并可进入 Approval。
+- [ ] 200+ 节点基本交互可用；两个浏览器同时编辑产生 revision conflict 而非静默覆盖。
 
-## P10 发布证据
-- [ ] 固定上游提交与移植差异表；改编代码许可证保留。
-- [ ] Fake HTTP + Worker + 前端完整基础闭环证据。
-- [ ] 获得授权后在测试 MySQL 验证迁移/并发/恢复，不以 SQLite 代替。
-- [ ] 获得授权后小额真实模型验证普通聊天、工具调用和流式协议，记录实际结果。
-- [ ] 一次版本级受影响旧功能回归，失败和未运行项如实记录。
-- [ ] 三服务启动、预检、停止与回滚操作可复现。
-- [ ] V2 不依赖任何测试用例、接口文档或缺陷业务数据即可验收。
+## P10 Context / Approval / Recovery / E2E
+- [ ] 模型输入不整棵塞 Artifact：System + Skill + 摘要 + 最近消息 + 元数据 + 相关节点 + 最近 Diff；不足时 Agent 自调 read/search。
+- [ ] 原始消息与工具对保留，compaction 只压缩工作上下文，不删除历史、不拆散 tool_call/tool_result。
+- [ ] Approval 按动作风险而非固定 gate：read→allow；add/update 小批量→allow；批量删除/覆盖→approval；写正式项目→approval。审批重新校验参数 hash / revision / 权限 / lease。
+- [ ] 恢复与故障注入：Provider 断流 / Worker 崩溃 / Revision 冲突 / Tool timeout / Approval 后恢复 / Cancel / SSE 重连 / Context summary 失败 / Artifact 已写入但 final response 失败；聊天失败不被误报成 Artifact 回滚。
+- [ ] 最终 E2E 故事（12 §8：创建 → 列测试点 → 脑图展示 → 展开局部 → “第二个不要” → 补边界 → Diff → Undo → Refresh 恢复）真实跑通。
+- [ ] 获得授权后在测试 MySQL 验证迁移/并发/恢复；小额真实模型验证聊天、工具、流式，记录实际结果。
+- [ ] 一次版本级受影响 V1/旧 Agent 回归；失败与未运行项如实记录。
+- [ ] 三服务启动、预检、停止与回滚可复现；feature flag 可回退。
 
-## 业务门禁归属
-用例生成效果、覆盖质量、RCA 证据、测试数据写入和缺陷草稿验收移至 [V3 清单](../V3/03_ACCEPTANCE_CHECKLIST.md)。
+## 高级测试能力门禁归属
+基础测试设计 / 测试点 / 用例协作编辑现在是 V2 纵向闭环的一部分，其验收在上述 Artifact / Conversational Editing / UI / E2E 域中。
+API 测试执行、失败根因、造数与缺陷辅助等更高级测试领域的效果与安全门禁移至 [V3 清单](../V3/03_ACCEPTANCE_CHECKLIST.md)。
