@@ -95,13 +95,21 @@ def test_terminal_run_releases_active_slot_for_next_turn(db_session):
     assert second.user_message.sequence_no == 2 and second.run.active_slot == 1
 
 
-def test_legacy_worker_selector_cannot_claim_conversation_before_p05(db_session):
+def test_worker_selector_claims_conversation_queued_run_after_p05(db_session):
+    """P05-C：claim 不再排除 conversation；分发由 Worker 按 workflow_code 决定。
+
+    旧行为（P05 前：selector/claim 显式跳过 conversation queued 行）已随
+    P05-C 移除，历史断言随特性更新。
+    """
     seed_user(db_session, USER_A, "user-a")
     session = conversation(db_session)
     submitted = submit(db_session, session.id)
-    assert agent_run_service.next_queued_run_id(db_session) is None
+    assert submitted.run.status == "queued"
+    assert agent_run_service.next_queued_run_id(db_session) == submitted.run.id
     assert agent_run_service.claim_queued_run(
-        db_session, submitted.run.id, "legacy-worker", datetime.utcnow()) is False
+        db_session, submitted.run.id, "worker-x", datetime.utcnow()) is True
+    db_session.commit()
+    assert db_session.get(AgentRun, submitted.run.id).status == "running"
 
 
 def test_failure_after_message_flush_rolls_back_message_and_run(db_session, monkeypatch):

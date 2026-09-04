@@ -46,12 +46,12 @@
 - [x] 外键开启的 SQLite 迁移测试通过；有 conversation 数据时 downgrade 明确拒绝。
 
 ## P05 Conversation Runtime 收敛 + Workflow 退役
-> 2026-09-04 P05-B：ConversationRunner（最小生产执行桥）已实现并通过测试（runner 8 项 + P01 90 + P03 30 + P04 11 + 全后端 539 回归）。本阶段门禁暂不勾选：Worker 分发/claim/lease/heartbeat/fencing/follow-up 未接入，勾选项需端到端成立。
-- [ ] Conversation queued Run 被 Worker 消费（不再跳过、不再永远 queued）；同会话一个活跃 Turn。
+> 2026-09-04 P05-B/C：ConversationRunner 已实现；Worker claim 已支持 conversation 并按其 workflow_code 分发（conversation→ConversationRunner / legacy→AgentRunner）。heartbeat/fencing/stale recovery/follow-up 仍未实现（P05-D/E），对应项不勾选。
+- [x] Conversation queued Run 被 Worker 消费（不再跳过、不再永远 queued）；同会话一个活跃 Turn（active_slot 约束不变）。（P05-C Worker E2E：submit→claim→ConversationRunner→succeeded）
 - [ ] lease / heartbeat：长模型调用不丢 lease；过期执行器写入被 fencing 拒绝。
 - [ ] cancel 可终止当前 Turn；follow_up 保序且不并行写同一会话；失败/中断后队列暂停。
 - [ ] 中断不自动重放不确定副作用；Worker 未启动时前端可解释。
-- [ ] 新 Conversation 主路径（Turn → ConversationRunner → Agent Loop）不经过 case_generation / next_step / execute_step。
+- [x] 新 Conversation 主路径（Turn → ConversationRunner → Agent Loop）不经过 case_generation / next_step / execute_step。（dispatch 路由测试 + legacy spy 断言）
 - [ ] Dependency Audit 完成：旧 Workflow 已隔离到 legacy 或删除；P01～P04 回归通过。
 
 ## P06 Conversation API + SSE + 基础工作台

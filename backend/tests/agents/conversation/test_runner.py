@@ -269,6 +269,60 @@ def test_cancel_event_before_run_marks_run_cancelled_without_model_call(db_sessi
     assert event_types(db_session, first.run.id) == ["run_started", "run_cancelled"]
 
 
+# ---------------------------------------------------------------- 事务边界（P05-C 最小修复验证）
+
+def test_no_active_db_transaction_during_model_wait(db_session):
+    """LLM 网络等待期间 DB Session 不得持有 active transaction。
+
+    共享 StaticPool 单连接：若 Runner 在读校验后未 rollback 就进入 run_agent_loop，
+    gateway 内用另一 Session 发起查询会触发 "cannot start a transaction
+    within a transaction" / database locked；探测成功即证明事务已释放。
+    """
+    from sqlalchemy import text as sql_text
+    from app.core.database import SessionLocal
+
+    seed_user(db_session)
+    chat = conversation(db_session)
+    first = submit(db_session, chat.id, content="hello", key="tx")
+
+    probe = {"result": None, "error": None}
+
+    class ProbingGateway(FakeGateway):
+        def stream(self, snapshot, request, *, context, control, limits=None):
+            @asynccontextmanager
+            async def managed():
+                async def events():
+                    try:
+                        with SessionLocal() as probe_session:
+                            probe_session.execute(sql_text("SELECT 1")).scalar()
+                        probe["result"] = "ok"
+                    except Exception as exc:  # pragma: no cover - 只在回归时出现
+                        probe["result"] = "blocked"
+                        probe["error"] = type(exc).__name__
+                    final = assistant(TextContent(text="hi")).model_copy(
+                        deep=True, update={"message_id": context.message_id, "timestamp": context.timestamp})
+                    partial = final.model_copy(deep=True, update={"content": [], "stop_reason": "pending"})
+                    yield AssistantStartEvent(partial=partial)
+                    yield AssistantDoneEvent(reason="stop", message=final)
+                yield events()
+            return managed()
+
+    gateway = ProbingGateway([assistant(TextContent(text="hi"))])
+    runner = ConversationRunner(
+        gateway=gateway,
+        snapshot=ProviderSnapshot("openai_compatible", "fake", "https://fake.invalid",
+                                  "key", "fake-model", max_tokens=20),
+        tool_registry=ToolRegistry(),
+        system_prompt="be helpful",
+        provider_attempt_budget=AttemptBudget(limit=20),
+        id_factory=iter(f"t{i}" for i in range(1, 500)).__next__,
+        timestamp_factory=lambda: 10,
+    )
+    outcome = run_async(runner.run(db_session, first.run.id))
+    assert outcome.status == "succeeded", f"outcome={outcome!r} probe={probe}"
+    assert probe["result"] == "ok", f"模型等待期间仍持有 DB 事务: {probe}"
+
+
 # ---------------------------------------------------------------- 状态与身份边界
 
 def test_terminal_run_is_not_startable(db_session):

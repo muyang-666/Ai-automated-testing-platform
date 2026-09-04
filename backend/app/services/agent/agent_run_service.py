@@ -222,10 +222,13 @@ STALE_ERROR_CODE = "agent_worker_heartbeat_timeout"
 
 
 def next_queued_run_id(db: Session) -> int | None:
-    """旧 Workflow Worker 的最早 queued Run；P05 前跳过 conversation。"""
+    """最早的可执行 queued Run（conversation 与 legacy Workflow 统一排队，P05-C）。
+
+    分发由 Worker 按 workflow_code 决定，不在 claim 层区分类型。
+    """
     row = (
         db.query(AgentRun.id)
-        .filter(AgentRun.status == "queued", AgentRun.workflow_code != "conversation")
+        .filter(AgentRun.status == "queued")
         .order_by(AgentRun.id.asc())
         .first()
     )
@@ -233,16 +236,17 @@ def next_queued_run_id(db: Session) -> int | None:
 
 
 def claim_queued_run(db: Session, run_id: int, worker_id: str, now: datetime) -> bool:
-    """原子抢占：只有 status='queued' 的行会被更新。
+    """原子抢占：只有 status='queued' 的行会被更新（conversation 与 legacy 通用）。
 
     条件 UPDATE 保证两个 Worker 看到同一候选时只有一个成功（rowcount==1）。
     抢占成功后调用方应立即 commit，释放抢占事务，再进入 Runtime。
     只能抢占 queued；cancelled/waiting_approval/终态不会被抢占。
+    active_slot 语义：conversation 同会话最多一个 queued/running 的
+    active_slot=1 Run 由 P04 的 UQ(session_id, active_slot) 约束保证，claim 不绕过它。
     """
     result = db.execute(
         update(AgentRun)
-        .where(AgentRun.id == run_id, AgentRun.status == "queued",
-               AgentRun.workflow_code != "conversation")
+        .where(AgentRun.id == run_id, AgentRun.status == "queued")
         .values(
             status="running",
             worker_id=worker_id,

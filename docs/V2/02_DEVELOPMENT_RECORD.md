@@ -504,3 +504,45 @@ run_agent_loop() / loop.py + tool_executor/policy/budget # 已实现，无生产
 - AgentLoop 执行事件逐条落库与 SSE 推送（P06）；
 - stopped / waiting 终态的会话级语义（工具显式终止、审批等待恢复；P10 Approval 相关）；
 - 模型 Provider snapshot/配置来源（Runner 已注入；由 Worker/配置中心在 P05-C/P06 提供）。
+
+## 2.19 2026-09-04 — V2-P05-C：Worker Dispatch + Conversation Run Claim（已实现并测试）
+
+- 授权范围：Worker 分发 + conversation claim；不实现 P05-D heartbeat/fencing/stale recovery，不实现 P05-E follow-up；不删除 legacy Workflow；不改 frontend / Alembic / DB schema / V3。
+
+### Claim 修改（backend/app/services/agent/agent_run_service.py）
+
+- `next_queued_run_id()` / `claim_queued_run()`：去掉 `workflow_code != "conversation"` 过滤，conversation 与 legacy 共用同一 queued 队列（按 id 升序）；claim 语义不变（原子条件 UPDATE，queued→running + worker_id + heartbeat_at + started_at，调用方立即 commit）。active_slot 语义由 P04 的 UQ(session_id, active_slot) 约束保证，claim 不绕过。
+- 测试更新：conversation_persistence 的"P05 前 selector 跳过 conversation"旧断言随特性改为"P05-C 后 selector/claim 可领取 conversation queued Run"。
+
+### Worker Dispatch（backend/app/workers/agent_worker.py）
+
+- `AgentWorker.__init__` 新增可选 `conversation_runner_factory`（缺省 None → conversation Run 报 agent_unknown_workflow 落 failed，安全失败）。
+- `_run_once()` claim 后按 `run.workflow_code == "conversation"` 分发：conversation → `_run_conversation()`（`asyncio.run(conversation_runner.run(db, run_id))`，同步 Worker 内每 Run 独立事件循环）；其余 → 既有 `runtime_factory(on_step_boundary)` 的 legacy AgentRunner 路径（行为不变）。
+- Worker 异常边界与 legacy 同一策略：Runner 外部 unexpected exception → rollback → 仅当 Run 仍 running 时 `_mark_failed(agent_runtime_error)`（幂等，不重复 finalize 已终态 Run）。ConversationRunner 内部执行期异常自行收敛为 failed outcome，Worker 不重复处理。
+
+### queued→running ownership（结论）
+
+- **claim = queued→running + worker ownership**（status/worker_id/heartbeat_at/started_at，不写任何事件）——legacy 与 conversation 统一；
+- **Runner = 生命周期事件与终态**：ConversationRunner `_start_run()` 对 running 不再 transition，只写一次 `run_started`（claim 不产生事件 → 每个 Run run_started 恰好一个）；run_succeeded/failed/cancelled 由 Runner 收尾。legacy AgentRunner 行为未改动（其 queued→running 分支只服务直调场景，claim 后为 running 不重复事件）。
+
+### Provider / ToolRegistry 注入来源（真实实现）
+
+- worker main() 复用同一 `build_default_tool_registry()`；conversation runner factory 注入：统一 `LLMGateway()` + 由 Settings（LLM_PROVIDER / LLM_BASE_URL / LLM_API_KEY / LLM_MODEL）构造的 `ProviderSnapshot`；不 hardcode Key。
+- 已知 transitional 限制（记录）：conversation 当前与 legacy 共用默认 ToolRegistry（含 T05 九个用例工具，只读或需审批者会被默认 Policy 拦截）；conversation 工具白名单与模型场景绑定（agent_chat 场景/配置中心）属 P06，本轮不做。
+
+### Transaction boundary
+
+- Worker 在 claim 后立即 commit，进入 Runner 前无 claim 事务；ConversationRunner 网络等待期间无 DB 事务（start 短事务 commit → restore/assert 只读后显式 `db.rollback()` → run_agent_loop → 收尾两段提交）。新增 P05-C 最小修复：`_assert_history_ends_with_current_user_message()` 后再 `db.rollback()`，避免进入 await 前 autobegin 悬挂读事务；用共享单连接 SQLite 探测测试验证模型等待期间另一 Session 可正常查询。
+
+### 测试（实际命令与结果，backend，项目 venv）
+
+- 新增 `tests/workers/test_agent_worker_conversation.py`（8 项）：Worker claim+执行 conversation E2E（submit→run_once→succeeded+assistant 入库+run_started 唯一+流期间无 DB 事务）；dispatch 路由 conversation→ConversationRunner / legacy→AgentRunner（spy）；无 queued → idle；runner unexpected exception → failed 且 Worker 存活、单一 finalize；未配置 conversation factory 安全失败；claim service 不再排除 conversation；conversation+legacy 同一队列按 id 排序。
+- runner 回归 `tests/agents/conversation/test_runner.py` 9 项（含新"模型等待期无 active transaction"探测）。
+- 回归：`pytest tests/workers tests/agents tests/conversation_persistence tests/api tests/services` 通过；P01（confcutdir）90、P03（confcutdir）30。
+- 全后端：`pytest tests -q --ignore=tests/conversation/test_isolation.py` → 548 passed；isolation 单独 3 passed。
+
+### Deferred（未实现，留给后续）
+
+- P05-D：heartbeat / lease refresh / fencing / stale recovery / long-LLM protection；Worker cancel 状态传播。
+- P05-E：follow-up queue / failed-head handling / conversation continuation semantics。
+- 其他：同步 Worker 内 asyncio.run 的异步化候选（P05-D 评估）；conversation 工具白名单与模型场景绑定（P06）；conversation AgentLoop 执行事件逐条落库与 SSE（P06）。

@@ -1,19 +1,23 @@
 """TestMind Agent Worker：最小、可测试、数据库驱动的后台执行器。
 
-- run_once()：抢占一个 queued Run（原子条件 UPDATE）并交给 AgentRunner 推进；
+- run_once()：抢占一个 queued Run（原子条件 UPDATE，conversation 与 legacy 统一）
+  并按 workflow_code 分发：conversation → ConversationRunner，其余 → AgentRunner；
 - run_loop()：轮询循环，支持 stop_requested / max_iterations（测试注入）；
 - recover_stale_runs()：把心跳超时的 running Run 置为 interrupted；
 - 不嵌入 FastAPI startup、不自动启动、不自动重排 interrupted、不调用真实 LLM；
 - 每次 run_once 都关闭数据库 Session；不把 ORM 对象跨 Session 使用；
-- runtime 通过 runtime_factory(on_step_boundary) 构造，Worker 借此在每个步骤边界
-  做 owner-only heartbeat（best-effort，不基于其返回分支）。
+- legacy runtime 通过 runtime_factory(on_step_boundary) 构造，Worker 借此在每个
+  步骤边界做 owner-only heartbeat（best-effort，不基于其返回分支）；
+- conversation runner 通过 conversation_runner_factory 构造（P05-C；heartbeat 属
+  P05-D，本阶段 conversation 不提供 step 边界心跳）。
 """
 
+import asyncio
 import os
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Callable
+from typing import Any, Callable
 
 from app.agents.runtime.errors import UnknownSkillError
 from app.models.agent.agent_run import AgentRun
@@ -37,6 +41,7 @@ class AgentWorker:
         sleeper: Callable[[float], None] | None = None,
         poll_interval_seconds: float = 1.0,
         stale_after_seconds: float = 300.0,
+        conversation_runner_factory: Callable[[], Any] | None = None,
     ):
         if poll_interval_seconds <= 0:
             raise ValueError("poll_interval_seconds 必须 > 0")
@@ -44,6 +49,7 @@ class AgentWorker:
             raise ValueError("stale_after_seconds 必须 >= 0")
         self._session_factory = session_factory
         self._runtime_factory = runtime_factory
+        self._conversation_runner_factory = conversation_runner_factory
         self.worker_id = worker_id
         self._now = now_provider or datetime.utcnow
         self._sleeper = sleeper or time.sleep
@@ -76,6 +82,10 @@ class AgentWorker:
             # 防御：抢占后状态被外部修改
             return WorkerRunResult(action="contended", run_id=run_id)
 
+        # P05-C dispatch：conversation → ConversationRunner；其余 → legacy AgentRunner
+        if run.workflow_code == "conversation":
+            return self._run_conversation(db, run_id)
+
         def step_hook(current_run: AgentRun) -> None:
             # best-effort：心跳随 Runner 的 commit 一起持久化，返回值不做控制流
             agent_run_service.heartbeat(db, current_run.id, self.worker_id, self._now())
@@ -96,6 +106,34 @@ class AgentWorker:
                 self._mark_failed(db, run_id, "agent_runtime_error", (str(e) or type(e).__name__)[:500])
             return WorkerRunResult(action="failed", run_id=run_id, final_status="failed")
 
+        fresh = db.query(AgentRun).get(run_id)
+        return WorkerRunResult(
+            action="completed",
+            run_id=run_id,
+            final_status=fresh.status if fresh else None,
+        )
+
+    def _run_conversation(self, db, run_id: int) -> WorkerRunResult:
+        """conversation Run：ConversationRunner.run()（async）执行并自行 finalize。
+
+        Runner 内部已把执行期异常收敛为 failed outcome；Worker 只兜底 Runner 之外
+        （claim 后、finalize 阶段）的 unexpected exception，且仅在 Run 仍为 running 时
+        标记 failed（幂等/单一 ownership：不重复 finalize 已终态的 Run）。
+        """
+        if self._conversation_runner_factory is None:
+            db.rollback()
+            self._mark_failed(db, run_id, "agent_unknown_workflow", "未配置 conversation runner")
+            return WorkerRunResult(action="failed", run_id=run_id, final_status="failed")
+        try:
+            runner = self._conversation_runner_factory()
+            # P05-C：同步 Worker 内为单次 Run 建独立事件循环；循环/async 化属后续阶段
+            asyncio.run(runner.run(db, run_id))
+        except Exception as e:
+            db.rollback()
+            fresh = db.query(AgentRun).get(run_id)
+            if fresh is not None and fresh.status == "running":
+                self._mark_failed(db, run_id, "agent_runtime_error", (str(e) or type(e).__name__)[:500])
+            return WorkerRunResult(action="failed", run_id=run_id, final_status="failed")
         fresh = db.query(AgentRun).get(run_id)
         return WorkerRunResult(
             action="completed",
@@ -196,7 +234,10 @@ def main(argv=None) -> None:
         raise SystemExit("--stale-after 必须 >= 0")
 
     from app.agents.bootstrap import build_default_skill_registry, build_default_tool_registry
+    from app.agents.conversation.runner import ConversationRunner
+    from app.agents.providers.streaming import ProviderSnapshot
     from app.agents.runtime.runner import AgentRunner
+    from app.core.config import settings
     from app.core.database import SessionLocal
     from app.services.llm.llm_gateway import LLMGateway
 
@@ -211,12 +252,32 @@ def main(argv=None) -> None:
     def runtime_factory(on_step_boundary):
         return AgentRunner(skill_registry, tool_registry, on_step_boundary=on_step_boundary)
 
+    # conversation 的执行依赖来源（P05-C 最小装配）：统一 LLMGateway + 当前环境快照。
+    # 模型场景绑定/配置中心属于 P06；默认 env 为空/ mock 时会在首个 conversation Run
+    # 预检失败并以固定错误落 failed，不会静默调用真实 Key。
+    conversation_gateway = LLMGateway()
+    conversation_snapshot = ProviderSnapshot(
+        provider_type=settings.LLM_PROVIDER,
+        name=settings.LLM_PROVIDER,
+        base_url=settings.LLM_BASE_URL or "",
+        api_key=settings.LLM_API_KEY or "",
+        model_name=settings.LLM_MODEL or "",
+    )
+
+    def conversation_runner_factory():
+        return ConversationRunner(
+            gateway=conversation_gateway,
+            snapshot=conversation_snapshot,
+            tool_registry=tool_registry,
+        )
+
     worker = AgentWorker(
         session_factory=SessionLocal,
         runtime_factory=runtime_factory,
         worker_id=worker_id,
         poll_interval_seconds=args.poll_interval,
         stale_after_seconds=args.stale_after,
+        conversation_runner_factory=conversation_runner_factory,
     )
 
     recovered = worker.recover_stale_runs()

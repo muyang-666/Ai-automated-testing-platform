@@ -57,6 +57,7 @@ class ConversationRunOutcome:
     tool_calls: int = 0
     turns: int = 0
     error_code: str | None = None
+    error_type: str | None = None  # 仅异常类型名（不含消息内容），供诊断/审计
     persisted_message_ids: tuple[str, ...] = ()
     # 本轮 AgentLoop 产生的事件快照（供测试与未来 SSE 通道；本轮不落库为逐条事件行）
     loop_events: tuple[Any, ...] = ()
@@ -95,6 +96,9 @@ class ConversationRunner:
         try:
             restored = self._restore(db, session_id, actor_user_id, run)
             self._assert_history_ends_with_current_user_message(db, run, restored)
+            # P05-C：上面两次只读查询已 autobegin；进入 await run_agent_loop 前
+            # 显式结束读事务，确保 LLM 网络等待期间 DB Session 无 active transaction。
+            db.rollback()
 
             context = AgentLoopContext(
                 system_prompt=self.system_prompt,
@@ -299,6 +303,6 @@ class ConversationRunner:
             raise AgentError("Runner 失败收尾失败（原始异常类型："
                              f"{error_type}）", error_code="runner_finalize_error") from None
         return ConversationRunOutcome(
-            status="failed", error_code=error_code,
+            status="failed", error_code=error_code, error_type=error_type,
             model_calls=0, tool_calls=0, turns=0,
         )
