@@ -2,7 +2,7 @@
 
 > 更新：2026-09-04。旧路线记录已原文归档，不删除其中最新修复与测试证据。
 > 当前状态：V2-R01 结构整理已完成；V2-P01～P04 已分别通过各自声明范围验收（P01 见 2.10、P02 见 2.14、P03 见 2.15、P04 见 2.16）。
-> 2026-09-04：P05 起按 [P05～P10 新路线](12_POST_P04_DEVELOPMENT_PLAN.md) 实施，尚未开始；P05～P10 阶段主题已改为 Conversation Runtime 收敛 / Conversation API / Test Artifact Core / Artifact Tools / Chat+MindMap+Diff / Context+Approval+Recovery（不再沿用“Skill / 上下文 / 人工门禁”旧标题）。
+> 2026-09-04：P05 起按 [01_DEVELOPMENT_PLAN.md](01_DEVELOPMENT_PLAN.md)（V2-P05～P10 任务卡）实施，尚未开始；P05～P10 阶段主题已改为 Conversation Runtime 收敛 / Conversation API / Test Artifact Core / Artifact Tools / Chat+MindMap+Diff / Context+Approval+Recovery（不再沿用“Skill / 上下文 / 人工门禁”旧标题）。
 
 ## 1. 当前任务状态
 
@@ -13,7 +13,7 @@
 | V2-P02 | 流式 Provider | 部分实现，审查未通过，待集中修正 | Codex 复跑 24 项通过，合成反例确认基础缺口，见 2.13 |
 | V2-P03 | Agent Loop / Tool Executor | 阶段验收通过（纯 Python/Fake 范围） | P03 30 项；P02 54、P01 90、旧 Provider/Gateway 55、ToolRegistry 4 项回归，见 2.15 |
 | V2-P04 | 会话存储与迁移 | 阶段验收通过（临时 SQLite/真实事务范围） | P04 20 项；P01 90、P02 54、P03 30、旧平台 100 项回归，见 2.16 |
-| V2-P05 | Conversation Runtime 收敛 + Workflow 退役 | 待实施 | 按 [12](12_POST_P04_DEVELOPMENT_PLAN.md) |
+| V2-P05 | Conversation Runtime 收敛 + Workflow 退役 | 待实施 | 按 [01](01_DEVELOPMENT_PLAN.md) |
 | V2-P06 | Conversation API + SSE + 基础工作台 | 待实施 | 同上 |
 | V2-P07 | Test Artifact Core | 待实施 | 同上 |
 | V2-P08 | Artifact Tools + Test Design Skill | 待实施 | 同上 |
@@ -215,7 +215,7 @@ V2-R01 之上仍保留他人/本轮的未提交改动（旧 Agent 空响应可�
   - `backend/app/agents/conversation/contracts.py`（新增）：ConversationTurn / ModelTurn 最小纯元数据；
   - `backend/app/agents/conversation/tool_validation.py`（新增）：参数纯校验入口与 ToolResultMessage 纯构造；
   - `backend/tests/conversation/`（新增 6 个文件）：消息、事件、工具校验、合成样例、隔离子进程测试与共享合成样例模块。
-- Pi 对应与必要差异（详见 10_PI_SOURCE_AUDIT.md 第 8 节）：AssistantMessageEvent 9 种、AgentEvent 10 种；done.reason 仅 stop/length/toolUse/deferred、error.reason 仅 error/aborted 且与助手消息 stop_reason 一致；thinking_* 不入当前合同；参数分片只作字符串不补齐；事件外壳另带 schema_version/session_id/run_id/message_id/tool_call_id/sequence_no（只校验不分配）；参数校验按既有 ToolRegistry 查询并走输入模型严格校验，不复制 Pi TypeBox 转换。
+- Pi 对应与必要差异（详见 references/PI_SOURCE_AUDIT.md 第 8 节）：AssistantMessageEvent 9 种、AgentEvent 10 种；done.reason 仅 stop/length/toolUse/deferred、error.reason 仅 error/aborted 且与助手消息 stop_reason 一致；thinking_* 不入当前合同；参数分片只作字符串不补齐；事件外壳另带 schema_version/session_id/run_id/message_id/tool_call_id/sequence_no（只校验不分配）；参数校验按既有 ToolRegistry 查询并走输入模型严格校验，不复制 Pi TypeBox 转换。
 - 已知修复：`_ensure_json_safe` 原先放行 tuple，现只接受 list（JSON 数组）；报告/测试中的共享 meta 不再混用 message_id（测试均显式逐条构造）。
 - 实际命令与结果（backend，隔离运行，禁用自动插件 + confcutdir 排除父级数据库 conftest）：
   ```text

@@ -1,6 +1,6 @@
 # V1 / 01 — 需求规格
 
-> 历史文档：记录 V1 功能范围。V2 需求以 `../V2/01_AGENT_DEVELOPMENT_PLAN.md` 为准。
+> 历史文档：记录 V1 功能范围。V2 需求以 `../V2/01_DEVELOPMENT_PLAN.md` 为准。
 
 ## 项目名称
 

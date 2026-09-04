@@ -1,6 +1,6 @@
 # V2 核心对象：从 Workflow 到对话 Agent
 
-> 配合 [主计划](01_AGENT_DEVELOPMENT_PLAN.md) 按任务学习，不要求先学完所有概念。
+> 配合 [主计划](../01_DEVELOPMENT_PLAN.md) 按任务学习，不要求先学完所有概念。
 
 | 对象 | 直观理解 | TestMind 的含义 |
 |---|---|---|

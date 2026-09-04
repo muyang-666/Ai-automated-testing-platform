@@ -11,7 +11,7 @@
 | V3.4 Defect | 待实施 | 无新的缺陷 Skill |
 | V3.5 Execution / CI | 待规划 | V1 执行与报告 |
 
-旧的固定 case_generation Workflow 及其用例资产不再作为 V3.1 的接入对象：其退役/能力抽取按 [V2 Legacy 迁移](../V2/16_LEGACY_WORKFLOW_MIGRATION_PLAN.md) 处理；历史代码是否可复用由 V2 P07/P08 抽取工具时审计，不自动继承“新内核已接通”状态。
+旧的固定 case_generation Workflow 及其用例资产不再作为 V3.1 的接入对象：其退役/能力抽取按 [V2 开发计划 V2-P05](../V2/01_DEVELOPMENT_PLAN.md#v2-p05--conversation-runtime-收敛--legacy-workflow-退役) 处理；历史代码是否可复用由 V2 P07/P08 抽取工具时审计，不自动继承“新内核已接通”状态。
 
 历史证据在 [旧开发记录](../archive/PRE_PI_V2_2026-09-03/02_DEVELOPMENT_RECORD.md)。其空响应/场景绑定/外键问题是当前复用风险，不因任务后移而标记解决。
 

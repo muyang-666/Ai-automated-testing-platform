@@ -4,7 +4,7 @@
 > 上游目录：D:\pi；origin：https://github.com/earendil-works/pi.git。
 > 参考 commit：f41f80466e30f21cdcd4d52aba4a2c2cb6ee3cc6，标题：fix(coding-agent): update interactive mode test fixture。
 > 状态：P01 当前范围合同已翻译与轻适配，并通过 Codex 阶段复审（实际 90 项测试通过）；未安装 Pi npm 依赖、未运行上游测试。
-> 2026-09-04：阶段语义已按 [新路线](12_POST_P04_DEVELOPMENT_PLAN.md) 重排（P07=Test Artifact、P08=Artifact Tools + Test Design Skill、P10=Context/Approval/Recovery），下表“任务”列引用新阶段；本文件继续负责 Agent Core 的 Pi 对照，Artifact/MindMap/Diff 属 TestMind 自研业务层，不硬找 Pi 一一对应。
+> 2026-09-04：阶段语义已按 [新路线](../01_DEVELOPMENT_PLAN.md) 重排（P07=Test Artifact、P08=Artifact Tools + Test Design Skill、P10=Context/Approval/Recovery），下表“任务”列引用新阶段；本文件继续负责 Agent Core 的 Pi 对照，Artifact/MindMap/Diff 属 TestMind 自研业务层，不硬找 Pi 一一对应。
 
 ## 1. 固定版本的方法
 
@@ -129,7 +129,7 @@ P01-03 只读复核：上一节 content 默认 [] 的差异现已收尾。Deferr
 
 第 8 节为实施者提交的映射与测试记录，不代表通过验收。Codex 实际反例表明：事件内部字段/嵌套关联校验不完整；参数入口未强制 strict、错误摘要可回显自定义校验器中的输入；无效输入模型不能安全失败；隔离测试缺少禁止尝试记录与负向自检。
 
-Pi streamAssistantResponse 的 message_update 使用同一个助手快照；runLoop 的 turn_end 携带当轮助手消息与工具结果，下一次模型响应另有 turn_start/turn_end。当前合成正例与这些产生点有差异，需按源代码纠正，不增加独立历史扫描器。详见 [P01 审查证据](reviews/V2-P01_REVIEW.md)。
+Pi streamAssistantResponse 的 message_update 使用同一个助手快照；runLoop 的 turn_end 携带当轮助手消息与工具结果，下一次模型响应另有 turn_start/turn_end。当前合成正例与这些产生点有差异，需按源代码纠正，不增加独立历史扫描器。详见 [P01 审查证据](../reviews/V2-P01_REVIEW.md)。
 
 ## 10. V2-P01 集中修正映射（2026-09-03，79 条通过，待 Codex 复审）
 
@@ -155,7 +155,7 @@ Pi streamAssistantResponse 的 message_update 使用同一个助手快照；runL
 
 ## 12. P01 最终复审（2026-09-03）
 
-Codex 已核对第 10 节当前实现与回归，并实际运行完整 P01 套件：90 passed in 5.41s。当前约定的合同/纯校验范围验收通过，见 [验收证据](reviews/V2-P01_ACCEPTANCE.md)。历史章节中的“待修/待复审”描述对应当时快照；后续 Provider 聚合、错误协议诊断与实际执行仍须在相应阶段验证，不以本次合同验收宣称完整 Pi 兼容。
+Codex 已核对第 10 节当前实现与回归，并实际运行完整 P01 套件：90 passed in 5.41s。当前约定的合同/纯校验范围验收通过，见 [验收证据](../reviews/V2-P01_ACCEPTANCE.md)。历史章节中的“待修/待复审”描述对应当时快照；后续 Provider 聚合、错误协议诊断与实际执行仍须在相应阶段验证，不以本次合同验收宣称完整 Pi 兼容。
 
 ## 13. V2-P02 流式 Provider 映射（2026-09-03，部分实现并测试，未验收）
 
@@ -185,7 +185,7 @@ Codex 已核对第 10 节当前实现与回归，并实际运行完整 P01 套�
 
 Python 额外门禁为项目既定安全适配：严格终态 JSON、固定错误文案、不保存隐藏 thinking、显式资源限额、无环境凭证回落、响应 ID 与请求跟踪 ID 分离。没有复制 Pi 的兼容供应商全集、价格表、deferred/pause/server tools 或 Agent Loop。
 
-最终证据：P02 54 项、P01 90 项、旧 Provider/Gateway 55 项分别通过，见 [P02 验收记录](reviews/V2-P02_ACCEPTANCE.md)。未调用真实供应商；线上兼容性留 P10。改编模块保留 MIT 与 Copyright (c) 2025 Mario Zechner 说明。
+最终证据：P02 54 项、P01 90 项、旧 Provider/Gateway 55 项分别通过，见 [P02 验收记录](../reviews/V2-P02_ACCEPTANCE.md)。未调用真实供应商；线上兼容性留 P10。改编模块保留 MIT 与 Copyright (c) 2025 Mario Zechner 说明。
 
 ## 15. V2-P03 Agent Loop 与工具执行映射（2026-09-04）
 
@@ -203,7 +203,7 @@ Python 额外门禁为项目既定安全适配：严格终态 JSON、固定错�
 
 默认策略阻止 `requires_approval`、`required_permission` 和非只读工具，不把模型请求当成授权；Approval 按动作风险接入（P10，不再以“P09 固定门禁”表述）。取消/截止会为批次中剩余工具建立关联的“未执行”结果，保证之后可识别每个 call_id；这是为持久恢复做的 Python 适配。
 
-验收见 [P03 验收记录](reviews/V2-P03_ACCEPTANCE.md)：P03 30 项、P02 54 项、P01 90 项、旧 Provider/Gateway 55 项、ToolRegistry 4 项分别通过。没有真实模型/数据库/业务工具调用；Calculator/Echo 都是内存测试夹具。改编代码保留 MIT 与 Copyright (c) 2025 Mario Zechner 说明。
+验收见 [P03 验收记录](../reviews/V2-P03_ACCEPTANCE.md)：P03 30 项、P02 54 项、P01 90 项、旧 Provider/Gateway 55 项、ToolRegistry 4 项分别通过。没有真实模型/数据库/业务工具调用；Calculator/Echo 都是内存测试夹具。改编代码保留 MIT 与 Copyright (c) 2025 Mario Zechner 说明。
 
 ## 16. V2-P04 会话持久化与恢复映射（2026-09-04）
 
@@ -219,4 +219,4 @@ Python 额外门禁为项目既定安全适配：严格终态 JSON、固定错�
 
 旧 Workflow 行为保持：旧会话 mode=legacy_workflow 且 project_id 必填；旧发消息/用例生成入口拒绝 conversation；项目读者不能读取别人的 conversation Run；P05 前旧 Worker 不抢 conversation queued 行。
 
-迁移 head 为 `0003_conversation_persistence`，down_revision=`0002_agent_platform_tables`。升级回填旧模式/游标，head 重叠结构需核验；有 conversation/版本化消息数据时 downgrade 拒绝有损转换。验收见 [P04 验收记录](reviews/V2-P04_ACCEPTANCE.md)。仅使用临时 SQLite，未验证真实 MySQL；不声称兼容 Pi 分支树。
+迁移 head 为 `0003_conversation_persistence`，down_revision=`0002_agent_platform_tables`。升级回填旧模式/游标，head 重叠结构需核验；有 conversation/版本化消息数据时 downgrade 拒绝有损转换。验收见 [P04 验收记录](../reviews/V2-P04_ACCEPTANCE.md)。仅使用临时 SQLite，未验证真实 MySQL；不声称兼容 Pi 分支树。

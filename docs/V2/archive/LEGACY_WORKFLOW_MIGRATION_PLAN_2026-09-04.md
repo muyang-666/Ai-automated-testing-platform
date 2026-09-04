@@ -1,6 +1,7 @@
-# Legacy Workflow 退役与迁移计划
+# Legacy Workflow 退役与迁移计划（历史档案，2026-09-04）
 
-> 目标：删除固定 Workflow 对新 Test Agent 的架构影响，同时避免一次性删除旧代码导致 V1 或历史数据不可用。
+> 本文件是 V2-P05 的临时实施计划档案。其有效内容（依赖审计、A/B/C 内容分类、legacy 兼容、数据库与测试迁移节奏、完成定义）已并入 [开发计划 V2-P05](../01_DEVELOPMENT_PLAN.md#v2-p05--conversation-runtime-收敛--legacy-workflow-退役)；P05 执行时以开发计划为准，本档案仅保留当时的完整推导与细节。
+> 原目标：删除固定 Workflow 对新 Test Agent 的架构影响，同时避免一次性删除旧代码导致 V1 或历史数据不可用。
 
 # 1. 当前问题
 

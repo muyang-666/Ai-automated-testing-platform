@@ -1,10 +1,10 @@
 # V2 对话式 Test Agent 验收清单
 
-> P01～P04 已在各自声明范围通过 Codex 验收。P05 起按 [P05～P10 新路线](12_POST_P04_DEVELOPMENT_PLAN.md) 验收（2026-09-04 调整：P07=P07 Artifact Core、P08=P08 Artifact Tools、P09=P09 Chat+MindMap+Diff，不再是旧“Skill / 上下文 / 人工门禁”标题）。旧清单和历史测试记录保留。
+> P01～P04 已在各自声明范围通过 Codex 验收。P05 起按 [01_DEVELOPMENT_PLAN.md](01_DEVELOPMENT_PLAN.md)（V2-P05～P10 任务卡）验收（2026-09-04 调整：P07=P07 Artifact Core、P08=P08 Artifact Tools、P09=P09 Chat+MindMap+Diff，不再是旧“Skill / 上下文 / 人工门禁”标题）。旧清单和历史测试记录保留。
 
 ## P01 合同
 
-本阶段按 [P01 阶段收尾任务](prompts/V2-P01_STAGE_COMPLETION_CLAUDE_PROMPT.md)统一实现与测试；不再仅凭语法检查判定。配对在 P01 验证数据构造关联，真实执行顺序与零副作用在 P03 验证，不把两者混算。
+本阶段按 P01 阶段收尾任务提示词（V2-P01_STAGE_COMPLETION_CLAUDE_PROMPT.md，历史文件未随当前目录保留）统一实现与测试；不再仅凭语法检查判定。配对在 P01 验证数据构造关联，真实执行顺序与零副作用在 P03 验证，不把两者混算。
 
 - [x] 普通文本、助手工具调用、工具结果和 UI 事件明确区分。（源码与 90 项阶段测试核实）
 - [x] 消息 ID / call_id / schema_version 往返与配对正确。（常规关联及合法早期空调用 ID 形状已验证）
@@ -59,7 +59,9 @@
 - [ ] SSE Bearer 鉴权、游标重连、增量去重、快照恢复正确。
 - [ ] 模型 Key 不进入 URL/前端；Markdown 不执行危险 HTML；刷新恢复与失败后可继续发消息。
 - [ ] Tool activity 独立展示（不是伪装的模型答复）；会话 owner 隔离，跨用户不能读消息/事件。
+- [ ] 文本→一个纯工具→自然语言解释结果的链路真实走通；模型空内容/截断/超时给出明确诊断，Conversation 不关闭。
 - [ ] Fake Provider 经 Worker 完成连续 3 Turn；refresh 后能回答“我刚才最开始给你的数字”类引用问题。
+- [ ] 消息、工具结果、Artifact 与摘要跨用户完全隔离（含两个用户并行编辑不同 Artifact）。
 
 ## Artifact 验收域（P07 Test Artifact Core）
 - [ ] Artifact 可独立创建；Tree 可读取；add/update/delete/move node 生效。
@@ -76,7 +78,7 @@
 - [ ] 人工修改 Artifact 后，Agent 下一轮读到的是最新 Revision，而不是缓存旧版。
 - [ ] coverage / dedup 是可调用能力而非必经步骤：仅改一条预期时不会强制跑 coverage。
 - [ ] Agent 不做无关重写（改 TC003 预期时不会重写整个登录模块；不擅自改分类/重命名）。
-- [ ] 8 类对话场景（12 §6）用 Fake Provider 验收通过；写 Tool 契约（expected_revision / audit / Tool Policy）有效。
+- [ ] 8 类对话场景（01 V2-P08）用 Fake Provider 验收通过；写 Tool 契约（expected_revision / audit / Tool Policy）有效。
 
 ## UI 验收域（P09 Chat + MindMap + Diff 工作台）
 - [ ] Chat 与 MindMap 展示同一 Artifact；AI 添加节点无需刷新即出现。
@@ -91,7 +93,7 @@
 - [ ] 原始消息与工具对保留，compaction 只压缩工作上下文，不删除历史、不拆散 tool_call/tool_result。
 - [ ] Approval 按动作风险而非固定 gate：read→allow；add/update 小批量→allow；批量删除/覆盖→approval；写正式项目→approval。审批重新校验参数 hash / revision / 权限 / lease。
 - [ ] 恢复与故障注入：Provider 断流 / Worker 崩溃 / Revision 冲突 / Tool timeout / Approval 后恢复 / Cancel / SSE 重连 / Context summary 失败 / Artifact 已写入但 final response 失败；聊天失败不被误报成 Artifact 回滚。
-- [ ] 最终 E2E 故事（12 §8：创建 → 列测试点 → 脑图展示 → 展开局部 → “第二个不要” → 补边界 → Diff → Undo → Refresh 恢复）真实跑通。
+- [ ] 最终 E2E 故事（01 V2-P10：创建 → 列测试点 → 脑图展示 → 展开局部 → “第二个不要” → 补边界 → Diff → Undo → Refresh 恢复）真实跑通。
 - [ ] 获得授权后在测试 MySQL 验证迁移/并发/恢复；小额真实模型验证聊天、工具、流式，记录实际结果。
 - [ ] 一次版本级受影响 V1/旧 Agent 回归；失败与未运行项如实记录。
 - [ ] 三服务启动、预检、停止与回滚可复现；feature flag 可回退。

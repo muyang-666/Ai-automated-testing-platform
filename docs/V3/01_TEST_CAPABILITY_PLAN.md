@@ -1,7 +1,7 @@
 # V3 高级测试能力开发计划
 
 > 前置：V2-P10（对话式 Test Artifact 闭环）通过，或用户明确授权有边界的隔离试验。默认不在 V2 基础开发期间并行扩展业务。
-> 2026-09-04 调整：基础测试设计与用例协作编辑已经进入 V2（P07 Test Artifact、P08 Artifact Tools + Test Design Skill，见 [V2 新路线](../V2/12_POST_P04_DEVELOPMENT_PLAN.md)），V3 不再承担“第一次接入用例生成”。
+> 2026-09-04 调整：基础测试设计与用例协作编辑已经进入 V2（P07 Test Artifact、P08 Artifact Tools + Test Design Skill，见 [V2 开发主计划](../V2/01_DEVELOPMENT_PLAN.md)），V3 不再承担“第一次接入用例生成”。
 > 本文件为新版本任务，旧编号只用于历史溯源，不重置已实现代码。
 
 ## 1. 版本与复用基础
@@ -20,7 +20,7 @@
 
 ## 2. 不再属于 V3 的内容
 
-基础测试点 / 测试用例的生成、局部修正、查重、覆盖与人工协作编辑已在 V2 完成（Test Artifact + Artifact Tools + Test Design Skill）。旧的固定 case_generation Workflow 退役计划见 [V2 Legacy 迁移](../V2/16_LEGACY_WORKFLOW_MIGRATION_PLAN.md)。
+基础测试点 / 测试用例的生成、局部修正、查重、覆盖与人工协作编辑已在 V2 完成（Test Artifact + Artifact Tools + Test Design Skill）。旧的固定 case_generation Workflow 退役计划见 [V2 开发计划 V2-P05](../V2/01_DEVELOPMENT_PLAN.md#v2-p05--conversation-runtime-收敛--legacy-workflow-退役)。
 
 ## 3. V3.1 API Testing Agent
 
