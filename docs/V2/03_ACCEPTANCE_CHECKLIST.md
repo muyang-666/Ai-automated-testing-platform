@@ -61,7 +61,7 @@
 - [ ] Tool activity 独立展示（不是伪装的模型答复）；会话 owner 隔离，跨用户不能读消息/事件。
 - [ ] 文本→一个纯工具→自然语言解释结果的链路真实走通；模型空内容/截断/超时给出明确诊断，Conversation 不关闭。
 - [ ] Fake Provider 经 Worker 完成连续 3 Turn；refresh 后能回答“我刚才最开始给你的数字”类引用问题。
-- [ ] 消息、工具结果、Artifact 与摘要跨用户完全隔离（含两个用户并行编辑不同 Artifact）。
+- [ ] 消息、工具结果与摘要跨用户完全隔离（Artifact 的跨用户与并发编辑隔离在 P07 Artifact 域 / P09 UI 域验收，P06 不实现完整 Artifact）。
 
 ## Artifact 验收域（P07 Test Artifact Core）
 - [ ] Artifact 可独立创建；Tree 可读取；add/update/delete/move node 生效。

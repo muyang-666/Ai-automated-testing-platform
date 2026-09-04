@@ -369,3 +369,88 @@ V2-R01 之上仍保留他人/本轮的未提交改动（旧 Agent 空响应可�
 - `0003` 回填旧行为、核验 create_all 重叠 head、拒绝部分结构；downgrade 发现 conversation/版本化消息数据时拒绝有损降级。user_message_id 不建反向 FK，避免与 message.run_id 构成迁移环，归属由同事务服务校验。
 - 最终实际结果：P04 `20 passed, 14 warnings in 9.35s`；P01 `90 passed in 9.82s`；P02 `54 passed, 13 warnings in 7.35s`；P03 `30 passed, 13 warnings in 3.93s`；旧 Service/API/Model/Worker `100 passed, 151 warnings in 10.98s`。各组分列。
 - 全部数据库验证使用临时/内存 SQLite；未读取或连接真实 MySQL。结论：P04 在声明范围验收通过，见 [P04 验收记录](reviews/V2-P04_ACCEPTANCE.md)。P05 尚未开始。
+
+## 2.17 2026-09-04 — V2-P05-A：Dependency Audit 与阶段边界校正（只读审计 + 文档）
+
+- 授权范围：只做 Dependency Audit、核对 conversation 路径事实、最小修正 01/03 阶段边界；**不实现** ConversationRunner，不改 Worker 执行逻辑，不删除 Workflow，不开始 P06/P07/P08。未修改业务代码；未连接/修改真实数据库（仅读代码与 migration 定义）；本轮无 pytest 运行（无业务代码变更，见"验证"）。
+
+### 六项代码事实核验（以代码为准，2026-09-04）
+
+1. `submit_conversation_turn()`（backend/app/services/agent/conversation_service.py:78）会创建 `workflow_code="conversation"` 的 queued AgentRun：内部调用 `agent_run_service.create_run(db, session, "conversation", …, active_slot=1)`（同文件约 108 行），用户消息 + Run + 幂等键同事务。
+2. Worker 的 queued 查询仍显式排除 conversation：`agent_run_service.next_queued_run_id / claim_queued_run` 均带 `AgentRun.workflow_code != "conversation"`（backend/app/services/agent/agent_run_service.py:228、245，注释"P05 前跳过 conversation"）。
+3. `AgentWorker` 仍固定构建 `AgentRunner`：`worker main()` 的 `runtime_factory(on_step_boundary)` 返回 `AgentRunner(skill_registry, tool_registry, …)`（backend/app/workers/agent_worker.py:211-216），`run_once()` 在 83 行调用该 runtime。
+4. 当前仍不存在 `ConversationRunner`：backend 全量搜索 0 命中。
+5. `run_agent_loop()` 尚无生产调用方：仅 conversation/loop.py（定义）与 tests/agent_loop/* 出现；无 Worker/Router/Service 引用。
+6. 持久化函数已具备：`persist_conversation_messages()`（conversation_service.py:139，拒绝重复写入用户首消息，校验 run 属于该 conversation 会话）与 `restore_conversation_messages()`（conversation_service.py:168）均已存在并带 owner 校验。
+
+### Legacy 真实调用链（当前唯一被接入的执行路径）
+
+```text
+V1 前端 test-agent 悬浮台
+  → api.createAgentSession / appendAgentMessage / createAgentRun（api/agent.js:5/17/29 → POST /agent/sessions、/agent/sessions/{id}/messages、POST /agent/runs/case-generation）
+  → AgentRouter（backend/app/routers/agent/agent_router.py：mode=legacy_workflow + project_id 强制校验，如 271/291 行；284 行创建 queued Run）
+  → agent_worker CLI（worker main()：SkillRegistry + ToolRegistry + LLMGateway）
+  → AgentRunner（agents/runtime/runner.py：按 run.workflow_code 解析 Skill，循环 next_step/execute_step）
+  → CaseGenerationWorkflow（agents/skills/case_generation/workflow.py：load_source → … → scope_gate/coverage_gate/save_gate）
+  → 逐 step 写 AgentStep/AgentEvent/AgentArtifact/AgentApproval；会话 mode=legacy_workflow
+```
+
+前端事实：`useAgentSession.js` 每次发送先 `createAgentSession`（134 行）→ `appendAgentMessage`（159 行）→ `createAgentRun`（163 行，无条件 case_generation），随后 poll Run/Events/Steps/Artifacts/Approvals（38-39、53-66 行）。即前端仍全链路依赖 legacy Workflow；无 conversation 端点调用、无脑图/Diff 组件。
+
+### Conversation 真实调用链（当前断点）
+
+```text
+（尚无 HTTP 入口：不存在 /agent/conversations 路由）
+conversation_service.submit_conversation_turn()          # 已实现，只被 tests/conversation_persistence 与 api 测试驱动
+  → queued AgentRun（workflow_code="conversation", active_slot=1）
+  → Worker claim 显式跳过 → Run 永久 queued             # P05 待接通的断点
+run_agent_loop() / loop.py + tool_executor/policy/budget # 已实现，无生产调用方
+```
+
+### Backend 审计清单（标识符 → 位置 → 角色）
+
+- `CaseGenerationWorkflow`：agents/skills/case_generation/{workflow.py（定义）,definition.py（build_case_generation_skill）,__init__.py}；tests/agents/skills/case_generation/*（定义/流程测试）。
+- `AgentRunner`：agents/runtime/runner.py（定义）；workers/agent_worker.py:199-212（唯一生产构造点）；runtime/__init__.py 提示显式导入。
+- `next_step/execute_step`：agents/runtime/contracts.py（AgentWorkflow 协议）、agents/runtime/runner.py（驱动）、agents/skills/case_generation/workflow.py（实现）；tests 的 Fake workflow 亦使用。
+- `workflow_code`：models/agent/agent_run.py（列 + uq + active_slot check 约束）；alembic 0002（建列）/0003（conversation 约束）；agent_run_service（create/claim/transition 校验）；router/schema 各层。
+- `legacy_workflow`：models/agent/agent_session.py（mode 默认值 + ck 约束 mode IN ('legacy_workflow','conversation') + ck mode='conversation' OR project_id IS NOT NULL）；alembic 0003；agent_session_service（默认值）；agent_router（mode 门禁）；schemas/agent/{api,platform}.py。
+- `case_generation`（业务字符串/路由）：agents/bootstrap.py（build_default_skill_registry 注册 case_generation Skill）；routers/agent/agent_router.py（POST /runs/case-generation、save-candidates 等）；workers/agent_worker.py；models/agent_run 注释；schemas。
+- 注意：backend/app/services/function_case_generation_service.py、api_document_generation_service.py 与 routers/function_case_router.py、api_document_router.py 是 V1 一代同步生成服务（无 AgentRun/workflow_code），不属于 Agent Platform legacy Workflow 链路（仅文件名含 case_generation，勿混入迁移范围）。
+- AgentArtifact/AgentApproval 使用方（legacy 侧）：agents/runtime/errors.py、routers/agent/agent_router.py、schemas/agent/platform.py、services/agent_save_service.py（连同 models/ 与两个 platform service）。
+- tests 依赖 legacy runtime：tests/agents/test_agent_runtime.py、test_agent_runtime_heartbeat.py、tests/workers/test_agent_worker.py、tests/agents/skills/case_generation/*、tests/api/test_agent_api.py（HTTP 全生命周期）。conversation 侧测试：tests/conversation/*、tests/agent_loop/*、tests/conversation_persistence/*、tests/providers_streaming/*。
+- Run 状态机原语已具备（agent_run_service：transition_status / save_output_json / mark_finished_at / heartbeat / mark_interrupted；start_step/finish_step/append_event 为 legacy step 驱动专用，P05-B 需评估哪些仅用于 step 模型）。
+
+### Database / migration 事实（只读）
+
+- agent_sessions.mode：default legacy_workflow；CK mode IN ('legacy_workflow','conversation')；CK conversation 允许 project_id NULL 而 legacy_workflow 必填（models/agent/agent_session.py:12-13,20）。
+- agent_runs.workflow_code：NOT NULL，值 case_generation / conversation；CK active_slot 仅 conversation；UQ (session_id, workflow_code, idempotency_key)。
+- alembic 0002：agent 平台表 + workflow_code；0003：mode/project_id nullable/序号游标/active_slot/user_message_id，downgrade 对存在 conversation 数据拒绝。历史行兼容意义：既有行保持 legacy_workflow + project_id 必填约束不变；迁移不得让无项目 conversation 行破坏旧约束。
+
+### Legacy 内容 A/B/C 分类（本轮只识别、不迁移、不删除）
+
+- A. Deterministic capability（未来 → Tool / Domain Service，P07/P08；本轮不迁移）：load_source / load_project_context / load_existing_cases（context tools：agents/tools/ 下 test_case_context/validation 等）、validate（agents/tools/ 校验工具 + validators/）、deduplicate、compute_coverage、save（agent_save_service + 候选保存链路）。
+- B. Test knowledge / Prompt knowledge（未来 → skills/test-design/SKILL.md，P08；本轮不创建）：agents/skills/case_generation/ 下的测试点分析、边界/状态分析、用例修正 prompt 与 workflow.py 内的阶段指导文本。
+- C. Orchestration（未来退役）：runtime/contracts.py 的 AgentWorkflow(next_step/execute_step) 协议、runtime/runner.py、workflow.py 的 phase 图与 repair loop、scope_gate/coverage_gate/save_gate、case_generation 的 Skill 注册（bootstrap.py:62）。本轮全部保留。
+
+### 阶段边界文档修正（问题 A/B/C，最小修改）
+
+- 01_DEVELOPMENT_PLAN.md V2-P05 Scope #6："停止新建 legacy_workflow 行"改为"新的 V2 Conversation 路径不得新建 legacy_workflow；仍被旧兼容入口使用的 legacy Workflow 在 P06 替换旧前端之前允许继续创建"，避免破坏 V1/legacy 页面（问题 C）。
+- 01_DEVELOPMENT_PLAN.md V2-P05 Scope #8：测试迁移标注为"最终退役清单，随 legacy 下线执行；legacy 存活期内保留既有测试，P05 不删除测试"。
+- 01_DEVELOPMENT_PLAN.md V2-P05 Acceptance：完成定义拆为"P05 只验收 Runtime 收敛相关项（queued Run 消费、Runner→Loop、lease/heartbeat/fencing、cancel、follow-up、legacy 隔离、P01～P04 回归、Runner 不决定业务步骤）"+"仅属架构约束、随 P07/P08/P09 落地的项（Artifact 编辑/P07、Coverage-Dedup-Validation Tool 与 Skill 无 phase/P08、UI 不展示 phase/P09）"，不再作为 P05 功能验收（问题 A）。
+- 03_ACCEPTANCE_CHECKLIST.md P06 最后一条："两个用户并行编辑不同 Artifact"类 Artifact 验收移出 P06，改为注明 Artifact 跨用户/并发隔离在 P07 Artifact 域 / P09 UI 域验收（问题 B）。
+
+### P05-B 实现建议（本轮未实现，供下轮决策）
+
+最小代码改动范围建议：
+
+1. 新增 `backend/app/agents/conversation/runner.py`：ConversationRunner，职责 5 步——restore Conversation messages（复用 conversation_service.restore_conversation_messages）→ 构建 Context/RuntimeContext（对接 loop.py 现有接口）→ 调用 `run_agent_loop()` → persist 新 Message（persist_conversation_messages）与事件 → finalize AgentRun（复用 agent_run_service transition_status/mark_finished_at，需确认其对 conversation Run 的校验是否齐全）。不得出现 next_step/execute_step/phase/CaseGenerationWorkflow/业务决策。
+2. `backend/app/services/agent/agent_run_service.py`：放开/改造 claim 语义——conversation queued Run 允许被 Worker 抢占（去掉 228/245 的 `!= "conversation"` 过滤，或提供 conversation 专用 claim 入口）；沿用 lease/heartbeat/fencing 原语。
+3. `backend/app/workers/agent_worker.py`：run_once 按 workflow_code 分发——`conversation` → ConversationRunner；其余（case_generation 等）→ 现有 AgentRunner legacy 路径（runtime_factory 保持）。先保持 legacy 行为不回归。
+4. 前端/路由本轮不动；P06 才替换前端发送路径。
+
+风险提示（记录，不处理）：agent_run_service 的 step 专用函数（start_step/finish_step/append_event 等）围绕 AgentStep 语义设计；conversation 的 Run 需要的是"消息/事件持久化 + 终态"而非 step 推进；P05-B 落地时应以 conversation_service 的持久化函数为准，避免把 ConversationRunner 做成 AgentRunner 的 step 变体。
+
+### 验证
+
+- 无业务代码改动 → 未运行 pytest（不能把未运行测试写成通过）。
+- 文档静态检查：01/03 修改仅调整文案与验收归属，未新增/删除被引用的标题锚点；docs/V2 链接扫描此前已通过（本次无新文件链接）。

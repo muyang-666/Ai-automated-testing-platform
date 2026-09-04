@@ -230,9 +230,9 @@ P02 已按集中续做提示词完成修正，并通过阶段验收（Fake 流�
 3. **Worker**：保留并完成 queued Run 抢占、lease、heartbeat（独立轻量机制 + 短事务 + 独立 DB Session，长模型调用不误判）、fencing token 条件写入（失去租约的执行器不能继续落消息或产生副作用）、cancellation / interrupted、同会话一个 active Turn、follow-up 队列（当前 Run 失败/中断后后续队列暂停，给用户恢复/取消选择）。
 4. **Runner**：新增 ConversationRunner，职责仅 4 步：从 Repository 重建会话 Context → 构造 RuntimeContext → 调用 `run_agent_loop()` → 持久化最终 Message / Event / Run status；**不自己决定测试业务步骤**。
 5. **Workflow 处理**：新代码禁止 `if workflow_code == "case_generation"` 进入 Conversation 路径。旧 case_generation 二选一：仍被 V1 依赖 → 迁移到 legacy/compat 区域（明确标记 deprecated、not used by V2 conversation），只服务旧入口；确认无调用方 → 删除。不允许为了兼容把它挂在新 Worker 主分发路径。
-6. **历史入口与数据库**：V1 页面若仍依赖旧 `/runs/case-generation`，Option A 短期保留 legacy 兼容 / Option B 仅当前端、API、数据迁移、测试全部满足时直接下线。mode/workflow_code 字段 P05 保留、停止新建 legacy_workflow 行；新 Test Agent 数据从 P07 起使用 conversation + TestArtifact + ArtifactRevision；P10 统计真实 legacy 调用后决定是否删除 legacy Runner/数据只读保留。“删除 Python Workflow 类”与“删数据库历史字段”不强绑定为同一提交。
+6. **历史入口与数据库**：V1 页面若仍依赖旧 `/runs/case-generation`，Option A 短期保留 legacy 兼容 / Option B 仅当前端、API、数据迁移、测试全部满足时直接下线。mode/workflow_code 字段 P05 保留；**新的 V2 Conversation 路径不得新建 legacy_workflow，仍被旧兼容入口（/agent/runs/case-generation、V1 前端）使用的 legacy Workflow 在 P06 替换旧前端之前允许继续创建**，不因本表述破坏 V1/legacy 页面。新 Test Agent 数据从 P07 起使用 conversation + TestArtifact + ArtifactRevision；P10 统计真实 legacy 调用后决定是否删除 legacy Runner/数据只读保留。“删除 Python Workflow 类”与“删数据库历史字段”不强绑定为同一提交。
 7. **Approval 迁移**：scope_gate / coverage_gate / save_gate 不再作为固定流程阶段，改由 Tool Policy 按动作风险裁决（见 05 §12）。
-8. **测试迁移**：workflow orchestration tests → 删除；domain algorithm tests → 移到 Tool/Service tests；prompt quality tests → Skill/Eval tests；legacy endpoint tests → compat tests（若仍保留）。
+8. **测试迁移（最终退役清单，随 legacy 下线执行；legacy 存活期内保留既有测试，P05 不删除测试）**：workflow orchestration tests → 删除；domain algorithm tests → 移到 Tool/Service tests；prompt quality tests → Skill/Eval tests；legacy endpoint tests → compat tests（若仍保留）。
 9. **目录目标**（05 §13 同）：`agents/conversation/{loop,runner,context,tool_executor,...}`、`agents/legacy/case_generation/`（可选临时兼容）、`test_artifacts/` 业务域目录从 P07 开始。
 
 #### Acceptance
@@ -240,9 +240,11 @@ P02 已按集中续做提示词完成修正，并通过阶段验收（Fake 流�
 - Fake Provider 可以通过 Worker 完成 3 个连续 Turn；conversation queued Run 被消费而非永远排队；
 - 长模型调用 heartbeat 不丢 lease；过期执行器写入被 fencing 拒绝；cancel 能终止当前 Turn；
 - Follow-up 顺序稳定且不并行写同一会话；失败/中断后队列暂停；
-- 新对话不引用 case_generation Workflow；Dependency Audit 结果有记录；
-- Workflow 删除/隔离后 P01～P04 回归通过（conversation 90 + P02 54 + P03 30 + 旧平台回归）；
-- 完成定义：新 Conversation 无 Workflow 路由；测试设计能力只经 Agent Loop + Tools；Skill 不含 phase 状态机；Artifact 修改独立于 Run phase；Tool Executor 是模型动作统一门禁；Coverage/Dedup/Validation 可被单独调用；UI 不展示 Workflow phase；旧调用方已删除或明确隔离。
+- 新 Conversation 路径（Turn → ConversationRunner → Agent Loop）不经过 case_generation / next_step / execute_step；Dependency Audit 结果有记录；
+- ConversationRunner 只做“重建上下文 → run_agent_loop → 持久化”，不自己决定测试业务步骤；
+- Workflow 隔离后 P01～P04 回归通过（conversation 90 + P02 54 + P03 30 + 旧平台回归；legacy 存活期测试保留）。
+
+> **P05 验收边界**：以下能力只有 P07/P08/P09 才能真正完成，**不属于 P05 功能验收**，作为长期架构约束随各阶段落地——Artifact 修改能力 / TestArtifact 编辑行为、Artifact 写操作独立于 Run phase（P07 Revision 机制落地后成立）；Coverage/Dedup/Validation Artifact Tools 可单独调用、测试设计只经 Agent Loop + Tools、Skill 不含 phase 状态机（P08）；UI 不展示 Workflow phase（P09）。Tool Executor 是模型动作统一门禁由 P03 已提供，扩展到 Artifact Tools 属 P08。旧调用方“已删除或明确隔离”从 P05 的依赖审计与隔离开始，P06 替换旧前端、P10 统计后收尾。
 
 #### Non-goals / Stop boundary
 
