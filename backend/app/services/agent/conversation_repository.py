@@ -47,7 +47,15 @@ def find_active_conversation_run(db: Session, session_id: int) -> AgentRun | Non
     )).scalar_one_or_none()
 
 
-def list_message_rows(db: Session, session_id: int) -> list[AgentMessage]:
-    return list(db.execute(select(AgentMessage).where(
-        AgentMessage.session_id == session_id,
-    ).order_by(AgentMessage.sequence_no.asc())).scalars())
+def list_message_rows(db: Session, session_id: int,
+                      until_sequence_no: int | None = None) -> list[AgentMessage]:
+    """会话消息（按 sequence_no 升序）；可截断到某 Turn 的用户消息序号之前（含）。
+
+    P05-E run-bounded restore：执行中的 Turn A 只能看到截至自己 user message 的历史，
+    后续 follow-up（seq 更大）即使已入库也不可见。
+    """
+    statement = select(AgentMessage).where(AgentMessage.session_id == session_id)
+    if until_sequence_no is not None:
+        statement = statement.where(AgentMessage.sequence_no <= until_sequence_no)
+    statement = statement.order_by(AgentMessage.sequence_no.asc())
+    return list(db.execute(statement).scalars())

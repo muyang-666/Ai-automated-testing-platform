@@ -21,7 +21,7 @@ from typing import Any, Callable
 
 from app.agents.runtime.errors import UnknownSkillError
 from app.models.agent.agent_run import AgentRun
-from app.services.agent import agent_run_service
+from app.services.agent import agent_run_service, conversation_service
 
 
 @dataclass
@@ -94,7 +94,9 @@ class AgentWorker:
 
         # P05-C/D dispatch：conversation → ConversationRunner；其余 → legacy AgentRunner
         if run.workflow_code == "conversation":
-            return self._run_conversation(db, run_id, execution_token)
+            result = self._run_conversation(db, run_id, execution_token)
+            self._promote_conversation_queue_after_terminal(db, run_id)
+            return result
 
         def step_hook(current_run: AgentRun) -> None:
             # best-effort fenced 心跳：随 Runner 的 commit 一起持久化，
@@ -222,9 +224,29 @@ class AgentWorker:
                 return "cancelled"
             if run.status in {"succeeded", "failed", "interrupted"}:
                 return "finalized"
-            return "lost"  # 仍 running 但 worker/token 不匹配 → ownership 被替换
+            # 仍 running：MySQL 在心跳值不变时 rowcount 可能为 0，需重新匹配
+            # worker/token 判定——三者仍匹配视为 ownership 有效（preflight B）。
+            if run.worker_id == self.worker_id and run.execution_token == execution_token:
+                session.commit()  # 以复核结果作为本 tick 的 heartbeat 续期
+                return "ok"
+            return "lost"  # running 但 worker/token 不匹配 → ownership 被替换
         finally:
             session.close()
+
+    def _promote_conversation_queue_after_terminal(self, db, run_id: int) -> None:
+        """P05-E：conversation head 终态后推进队列。
+
+        succeeded / cancelled → promote 下一个 queued follow-up（原子、跳过
+        cancelled 的 follow-up）；failed / interrupted → pause（不 promote），
+        P06 前端用 conversation_queue_state 展示 paused。
+        """
+        run = db.query(AgentRun).get(run_id)
+        if run is None or run.workflow_code != "conversation":
+            return
+        if run.status not in {"succeeded", "cancelled"}:
+            return  # failed/interrupted = pause queue
+        if conversation_service.promote_next_conversation_run(db, run.session_id) is not None:
+            db.commit()
 
     def _mark_failed(self, db, run_id: int, error_code: str, message: str) -> None:
         run = db.query(AgentRun).get(run_id)
@@ -285,6 +307,7 @@ class AgentWorker:
                     agent_run_service.STALE_ERROR_CODE,
                     f"Worker 心跳超时（超过 {self.stale_after_seconds} 秒），任务被中断。",
                     now,
+                    stale_before=stale_before,
                 ):
                     run = db.query(AgentRun).get(run_id)
                     if run:

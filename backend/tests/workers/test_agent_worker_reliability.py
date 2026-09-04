@@ -150,6 +150,27 @@ def events_for(db, run_id):
         AgentEvent.run_id == run_id).order_by(AgentEvent.sequence_no.asc()).all()]
 
 
+def test_mark_interrupted_toctou_respects_fresh_heartbeat(db_session):
+    """P05-E preflight A：find stale 之后若 heartbeat 已刷新，mark 不得误中断。"""
+    seed_user(db_session)
+    chat = conversation(db_session)
+    sub = submit(db_session, chat.id, key="toctou")
+    run_id = sub.run.id
+    token = agent_run_service.claim_queued_run(db_session, run_id, WORKER_A,
+                                               datetime.utcnow() - timedelta(seconds=100))
+    db_session.commit()
+    # 执行中 heartbeat 已刷新（stale_before 之前）
+    agent_run_service.heartbeat(db_session, run_id, WORKER_A, datetime.utcnow(),
+                                execution_token=token)
+    db_session.commit()
+    stale_before = datetime.utcnow() - timedelta(seconds=STALE_AFTER)
+    assert agent_run_service.mark_interrupted(
+        db_session, run_id, "agent_worker_heartbeat_timeout", "stale",
+        datetime.utcnow(), stale_before=stale_before) is False
+    db_session.rollback()
+    assert db_session.get(AgentRun, run_id).status == "running"
+
+
 # ---------------------------------------------------------------- A. Claim token
 
 def test_claim_token_starts_at_one_and_increments_after_reacquisition(db_session):

@@ -222,13 +222,17 @@ STALE_ERROR_CODE = "agent_worker_heartbeat_timeout"
 
 
 def next_queued_run_id(db: Session) -> int | None:
-    """最早的可执行 queued Run（conversation 与 legacy Workflow 统一排队，P05-C）。
+    """最早的可执行 queued Run（conversation 与 legacy 统一排队，P05-C/E）。
 
-    分发由 Worker 按 workflow_code 决定，不在 claim 层区分类型。
+    P05-E：conversation 只认 active_slot=1 的 head；active_slot=NULL 的 queued
+    follow-up 不可执行，且不得阻塞其它 Session 的候选（直接过滤掉）。
     """
     row = (
         db.query(AgentRun.id)
-        .filter(AgentRun.status == "queued")
+        .filter(
+            AgentRun.status == "queued",
+            or_(AgentRun.workflow_code != "conversation", AgentRun.active_slot == 1),
+        )
         .order_by(AgentRun.id.asc())
         .first()
     )
@@ -236,17 +240,20 @@ def next_queued_run_id(db: Session) -> int | None:
 
 
 def claim_queued_run(db: Session, run_id: int, worker_id: str, now: datetime) -> int | None:
-    """原子抢占：只有 status='queued' 的行会被更新（conversation 与 legacy 通用）。
+    """原子抢占：只有 status='queued' 且可执行的行会被更新。
 
+    P05-E：conversation 行必须 active_slot=1（head）才能 claim；active_slot=NULL
+    的 queued follow-up 只能被 promote_next_conversation_run 提升后才能执行。
     成功时同步获得执行代次 execution_token（单调递增：NULL→1，已有→+1），
     返回该 token；竞争失败返回 None。调用方应立即 commit 释放抢占事务。
-    只抢占 queued；cancelled/waiting_approval/终态不可抢占。
-    active_slot 语义：conversation 同会话最多一个 active_slot=1 Run 由
-    P04 的 UQ(session_id, active_slot) 保证，claim 不绕过。
     """
     result = db.execute(
         update(AgentRun)
-        .where(AgentRun.id == run_id, AgentRun.status == "queued")
+        .where(
+            AgentRun.id == run_id,
+            AgentRun.status == "queued",
+            or_(AgentRun.workflow_code != "conversation", AgentRun.active_slot == 1),
+        )
         .values(
             status="running",
             worker_id=worker_id,
@@ -332,14 +339,24 @@ def mark_interrupted(
     error_code: str,
     error_message: str,
     now: datetime,
+    stale_before: datetime | None = None,
 ) -> bool:
     """stale running → interrupted（条件 UPDATE，避免与并发恢复竞争）。
 
+    P05-E preflight A（TOCTOU 修复）：提供 stale_before 时，UPDATE 本身重新包含
+    stale 条件（heartbeat 超时 或 无心跳但 started_at 超时），杜绝
+    "find stale → 中间 heartbeat 已刷新 → 只按 status=running 误中断"。
     保留 worker_id 供排查（统一策略：不清理）；不自动重排 queued。
     """
+    conditions = [AgentRun.id == run_id, AgentRun.status == "running"]
+    if stale_before is not None:
+        conditions.append(or_(
+            AgentRun.heartbeat_at < stale_before,
+            and_(AgentRun.heartbeat_at.is_(None), AgentRun.started_at < stale_before),
+        ))
     result = db.execute(
         update(AgentRun)
-        .where(AgentRun.id == run_id, AgentRun.status == "running")
+        .where(*conditions)
         .values(
             status="interrupted",
             active_slot=None,

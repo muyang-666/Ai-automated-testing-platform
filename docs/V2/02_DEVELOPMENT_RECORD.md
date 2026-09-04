@@ -596,3 +596,45 @@ run_agent_loop() / loop.py + tool_executor/policy/budget # 已实现，无生产
 
 - P05-E：follow-up queue / failed-head handling / continuation ordering / steering / interrupt user message。
 - 其他：cancel 的 SSE/前端表达（P06）；conversation 工具白名单与模型场景绑定（P06）。
+
+## 2.21 2026-09-04 — V2-P05-E：Conversation Follow-up Queue 与连续 Turn 调度（已实现并测试，P05 complete）
+
+- 授权范围：follow-up 队列与连续 Turn 调度；不做 steer/SSE/前端/Artifact/Skill/compaction/新 Approval；不删 legacy。
+
+### P05-D preflight（本轮修复）
+
+- A（stale TOCTOU）：`mark_interrupted` 增加可选 `stale_before`——提供时 UPDATE 自身重新包含 stale 条件（heartbeat 超时或 null-heartbeat+started 超时），杜绝 find→mark 窗口内被新心跳的误中断；Worker recover 传入 stale_before。回归测试：fresh heartbeat 后 mark 返回 False、Run 保持 running。
+- B（MySQL rowcount=0）：ownership probe 在 heartbeat rowcount=0 后重新 SELECT——若 status=running 且 worker_id/execution_token 仍匹配则视为 ok（并以复核作为续期），不再误判 lost。
+
+### Follow-up 持久化与 active_slot 语义
+
+- `submit_conversation_turn(queue_mode="reject"|"follow_up")`：默认 reject 保持 P04 409 语义；follow_up 在 head 运行时保存 UserMessage + queued AgentRun（active_slot=NULL）。幂等合同不变（同 key 同内容 replay、不同内容 conflict）。
+- active_slot 最终语义：**head（可执行）= active_slot=1**（queued/running 均持槽）；**queued follow-up = active_slot=NULL**；终态（transition_status 对 conversation）自动清槽；UQ(session_id, active_slot) 保证同会话最多一个 active。
+
+### Promotion（原子）
+
+- `conversation_service.promote_next_conversation_run(session_id)`：pause 守卫（最新终结 head ∈ {failed,interrupted} → 返回 None，不提升）→ 选最早 queued follow-up → 条件 UPDATE active_slot: NULL→1（同候选并发只有先到者满足条件；不同候选并发由 UQ 裁决，IntegrityError 回滚返回 None）→ 返回 promoted run id。
+- Worker：conversation 执行终态 succeeded/cancelled 后调用 promote（failed/interrupted 不调用=暂停）；queued follow-up 被用户 cancel（queued→cancelled）后 promotion 自动跳过。
+
+### Run-bounded Context Restore
+
+- `restore_conversation_messages(..., until_sequence_no=)` + 新逻辑顺序恢复：每条消息按**所属 Turn 的用户消息序号（owner sequence）**归组，只保留 owner <= 当前 Run 用户序号的行，并按 (owner, sequence_no) 排序。因此：A 执行期间已入库的 B/C 用户消息不会泄漏给 A；A 的助手消息即使晚于 B/C 用户消息落库（sequence 更大），A 与后续 B/C 仍按逻辑 Turn 顺序看到完整上下文。
+- ConversationRunner 以本 Run `user_message_id` 的 sequence_no 为上界调用 bounded restore。
+
+### queue_state（派生，无新 DB status）
+
+- `conversation_queue_state(session_id)` → {state: idle|executable|paused, head_status, queued_follow_ups}：无 head 且最新终结 head failed/interrupted 且有 follow-up → paused；P06 前端直接消费。
+
+### 语义汇总（终态队列）
+
+- succeeded → promote next；cancelled（含执行中用户取消）→ promote next；failed/interrupted → pause（不 promote，P06 解释）；queued follow-up cancel → promotion 跳过。
+
+### 测试（实际命令与结果，backend，项目 venv）
+
+- 新增 `tests/conversation_persistence/test_conversation_followup.py`（11 项）：head running 时 follow-up 持久化且不可 claim/不阻塞全局候选；B/C 顺序稳定；promotion 只提升最早一个且逐级推进；不同 Conversation 互不阻塞；failed/interrupted pause（服务与 Worker 两层）；cancelled head promote；queued follow-up cancel 跳过；幂等 replay/conflict；run-bounded restore A 不见 B（服务层）；并发 promotion 最终唯一 active_slot；Worker E2E（A 慢执行期间提交 B/C → A 成功后 B、C 顺序执行、消息与上下文顺序正确、不并行）。
+- `tests/workers/test_agent_worker_reliability.py` 增 TOCTOU 回归（8 项）。
+- 全后端：`pytest tests -q --ignore=tests/conversation/test_isolation.py` → **567 passed**；isolation 单独 3 passed。
+
+### Deferred
+
+- P06：HTTP/SSE/前端表达（含 paused/executable 展示、取消 UI）、conversation 工具白名单与模型场景绑定；legacy 入口替换收尾（AgentRunner/CaseGenerationWorkflow/legacy API 保留 compat）。P05 范围全部完成。

@@ -103,7 +103,8 @@ class ConversationRunner:
 
         loop_events: list[Any] = []
         try:
-            restored = self._restore(db, session_id, actor_user_id, run)
+            restored = self._restore(db, session_id, actor_user_id, run,
+                                       until_sequence_no=self._current_user_sequence(db, run))
             self._assert_history_ends_with_current_user_message(db, run, restored)
             # P05-C：上面两次只读查询已 autobegin；进入 await run_agent_loop 前
             # 显式结束读事务，确保 LLM 网络等待期间 DB Session 无 active transaction。
@@ -210,10 +211,24 @@ class ConversationRunner:
         agent_run_service.append_event(db, run.session_id, run.id, EVENT_RUN_STARTED)
         db.commit()
 
+    def _current_user_sequence(self, db: Session, run: AgentRun) -> int:
+        """本 Run 用户消息的 sequence_no，作为 run-bounded restore 的上界。
+
+        P05-E：A 执行期间 B/C 已入库（seq 更大），A 只能看到 <= 自己的历史；
+        提升后的 B 再以 B 的 user sequence 为上界，从而看到 A 的完整结果 + B。
+        """
+        sequence = db.execute(
+            select(AgentMessage.sequence_no).where(AgentMessage.id == run.user_message_id)
+        ).scalar_one_or_none()
+        if sequence is None:
+            raise AgentError("首条用户消息记录缺失", error_code="agent_run_data_invalid")
+        return int(sequence)
+
     def _restore(self, db: Session, session_id: int, actor_user_id: int,
-                 run: AgentRun) -> list[Message]:
+                 run: AgentRun, *, until_sequence_no: int | None = None) -> list[Message]:
         restored = conversation_service.restore_conversation_messages(
-            db, session_id=session_id, requester_user_id=actor_user_id)
+            db, session_id=session_id, requester_user_id=actor_user_id,
+            until_sequence_no=until_sequence_no)
         # restore 是只读查询；立即结束读事务，确保模型等待期间无悬挂 DB 事务。
         db.rollback()
         return restored

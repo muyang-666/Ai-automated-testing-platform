@@ -4,6 +4,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Callable
 
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session
 
@@ -77,9 +78,20 @@ def _existing_submission(db: Session, run: AgentRun, request_hash: str) -> Conve
 
 def submit_conversation_turn(db: Session, *, session_id: int, requester_user_id: int,
                              content: str, client_request_id: str,
+                             queue_mode: str = "reject",
                              message_id_factory: Callable[[], str] | None = None,
                              timestamp_ms_factory: Callable[[], int] | None = None) -> ConversationTurnSubmission:
-    """Atomically save user message, queued Run and the idempotency key."""
+    """Atomically save user message, queued Run and the idempotency key.
+
+    queue_mode（P05-E）：
+    - reject（默认，P04 语义）：会话已有活跃 Turn 时抛 conversation_conflict；
+    - follow_up：活跃 Turn 存在时把新消息保存为 queued follow-up
+      （UserMessage + AgentRun，active_slot=NULL），等当前 head 终态后由
+      promote_next_conversation_run 原子提升。
+    幂等合同不变：同 key 同内容 → replay；同 key 不同内容 → conflict。
+    """
+    if queue_mode not in {"reject", "follow_up"}:
+        raise ConversationDataError("queue_mode 必须是 reject 或 follow_up")
     if not isinstance(content, str) or not content.strip() or len(content) > 8000:
         raise ConversationDataError("消息内容无效")
     if not isinstance(client_request_id, str) or not client_request_id.strip() or len(client_request_id) > 128:
@@ -94,13 +106,18 @@ def submit_conversation_turn(db: Session, *, session_id: int, requester_user_id:
             existing = conversation_repository.find_idempotent_run(db, session.id, key)
             if existing is not None:
                 return _existing_submission(db, existing, request_hash)
-            if conversation_repository.find_active_conversation_run(db, session.id) is not None:
+            active = conversation_repository.find_active_conversation_run(db, session.id)
+            if active is not None:
                 # Another transaction may have committed between the first
                 # idempotency lookup and the active-slot lookup.
                 existing = conversation_repository.find_idempotent_run(db, session.id, key)
                 if existing is not None:
                     return _existing_submission(db, existing, request_hash)
-                raise ConversationConflict("会话已有正在处理的 Turn")
+                if queue_mode == "reject":
+                    raise ConversationConflict("会话已有正在处理的 Turn")
+                # follow_up：head 运行期间入队，active_slot 留空，等待原子提升
+                return _persist_follow_up(db, session, requester_user_id, content, key,
+                                          request_hash, make_id, make_timestamp)
 
             message = UserMessage(message_id=make_id(), timestamp=make_timestamp(),
                                   role="user", content=content)
@@ -136,6 +153,125 @@ def submit_conversation_turn(db: Session, *, session_id: int, requester_user_id:
     raise ConversationConflict("并发提交冲突，请重试")  # pragma: no cover
 
 
+def _persist_follow_up(db: Session, session: AgentSession, requester_user_id: int,
+                       content: str, key: str, request_hash: str,
+                       make_id: Callable[[], str],
+                       make_timestamp: Callable[[], int]) -> ConversationTurnSubmission:
+    """follow_up 路径：UserMessage + queued Run（active_slot=NULL）同事务落库。"""
+    message = UserMessage(message_id=make_id(), timestamp=make_timestamp(),
+                          role="user", content=content)
+    sequence = conversation_repository.allocate_sequence(db, session.id, "next_message_sequence")
+    row = AgentMessage(session_id=session.id, run_id=None,
+        message_id=message.message_id, schema_version=message.schema_version,
+        timestamp_ms=message.timestamp, role=message.role, message_type="text",
+        content=content, content_json=message.model_dump(mode="json"), sequence_no=sequence)
+    db.add(row)
+    db.flush()
+    run = agent_run_service.create_run(db, session, "conversation", requester_user_id,
+        session.project_id, input_json={"content": content}, idempotency_key=key,
+        user_message_id=row.id, active_slot=None)  # queued follow-up：不可执行
+    row.run_id = run.id
+    db.flush()
+    db.commit()
+    return ConversationTurnSubmission(run=run, user_message=row, replayed=False)
+
+
+def promote_next_conversation_run(db: Session, session_id: int) -> int | None:
+    """原子提升最早 queued follow-up 为可执行 head（active_slot: NULL → 1）。
+
+    并发裁决：UQ(session_id, active_slot) 保证同会话最多一个 active_slot=1；
+    两个并发 promotion 命中同候选时只有先到者满足 active_slot IS NULL 条件；
+    命中不同候选时后到者触发唯一约束 → 回滚返回 None（调用方可重试）。
+    """
+    # Pause 语义：最新一个已终结的 head 若为 failed/interrupted，后续 follow-up
+    # 不提升（pause），等 P06 UI 向用户解释；succeeded/cancelled 则继续。
+    latest_terminal = db.execute(
+        select(AgentRun.status)
+        .where(
+            AgentRun.session_id == session_id,
+            AgentRun.workflow_code == "conversation",
+            AgentRun.status.in_(["succeeded", "failed", "cancelled", "interrupted"]),
+        )
+        .order_by(AgentRun.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if latest_terminal in {"failed", "interrupted"}:
+        return None
+
+    candidate = db.execute(
+        select(AgentRun.id)
+        .where(
+            AgentRun.session_id == session_id,
+            AgentRun.workflow_code == "conversation",
+            AgentRun.status == "queued",
+            AgentRun.active_slot.is_(None),
+        )
+        .order_by(AgentRun.id.asc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if candidate is None:
+        return None
+    try:
+        result = db.execute(
+            update(AgentRun)
+            .where(AgentRun.id == candidate,
+                   AgentRun.status == "queued",
+                   AgentRun.active_slot.is_(None))
+            .values(active_slot=1)
+            .execution_options(synchronize_session=False)
+        )
+        return candidate if result.rowcount == 1 else None
+    except IntegrityError:
+        db.rollback()
+        return None
+
+
+def conversation_queue_state(db: Session, session_id: int) -> dict:
+    """派生队列状态（P06 前端展示用，不新增 DB status）。
+
+    state：executable（head 可执行/执行中）/ paused（最近 head 失败或中断且仍有
+    follow-up）/ idle（无 head）；另给 head_status 与 queued_follow_ups 计数。
+    """
+    from sqlalchemy import func as sa_func
+    head = db.execute(
+        select(AgentRun).where(
+            AgentRun.session_id == session_id,
+            AgentRun.workflow_code == "conversation",
+            AgentRun.active_slot == 1,
+        )
+    ).scalar_one_or_none()
+    queued_follow_ups = db.execute(
+        select(sa_func.count()).select_from(AgentRun).where(
+            AgentRun.session_id == session_id,
+            AgentRun.workflow_code == "conversation",
+            AgentRun.status == "queued",
+            AgentRun.active_slot.is_(None),
+        )
+    ).scalar_one() or 0
+    latest_terminal = db.execute(
+        select(AgentRun.status)
+        .where(
+            AgentRun.session_id == session_id,
+            AgentRun.workflow_code == "conversation",
+            AgentRun.status.in_(["succeeded", "failed", "cancelled", "interrupted"]),
+        )
+        .order_by(AgentRun.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if head is None:
+        # 无 head：最新终结的 head 失败/中断且有 follow-up → paused；否则 idle
+        state = ("paused" if latest_terminal in {"failed", "interrupted"}
+                 and queued_follow_ups else "idle")
+        return {"state": state, "head_status": latest_terminal,
+                "queued_follow_ups": queued_follow_ups}
+    if head.status in {"failed", "interrupted"}:
+        state = "paused" if queued_follow_ups else "idle"
+    else:
+        state = "executable"
+    return {"state": state, "head_status": head.status,
+            "queued_follow_ups": queued_follow_ups}
+
+
 def persist_conversation_messages(db: Session, *, session_id: int,
                                   requester_user_id: int, run_id: int,
                                   messages: list[Message]) -> list[AgentMessage]:
@@ -166,10 +302,23 @@ def persist_conversation_messages(db: Session, *, session_id: int,
 
 
 def restore_conversation_messages(db: Session, *, session_id: int,
-                                  requester_user_id: int) -> list[Message]:
+                                  requester_user_id: int,
+                                  until_sequence_no: int | None = None) -> list[Message]:
+    """恢复历史消息（P05-E run-bounded）。
+
+    默认（until_sequence_no=None）：按 sequence_no 全量升序（P04 语义）。
+    提供 until_sequence_no 时：当前 Run 只能看到"自己 Turn 及其之前 Turn"产出的
+    消息——每条消息按其所属 Turn 的用户消息序号（owner sequence）归组，只保留
+    owner <= until 的行，并按 (owner, sequence_no) 逻辑排序。这样 A 执行期间
+    已入库的 B/C 用户消息（seq 更大）不会泄漏给 A，而 A 的助手消息即使晚于
+    B/C 的用户消息落库（seq 更大），也因其 owner(1) <= A 的直到序号而被 A 看到。
+    """
     _owned_conversation(db, session_id, requester_user_id, require_active=False)
+    rows = conversation_repository.list_message_rows(db, session_id)
+    if until_sequence_no is not None:
+        rows = _visible_rows_by_turn(db, session_id, rows, until_sequence_no)
     restored: list[Message] = []
-    for row in conversation_repository.list_message_rows(db, session_id):
+    for row in rows:
         if not isinstance(row.content_json, dict):
             raise ConversationDataError("会话消息缺少版本化内容")
         try:
@@ -180,3 +329,36 @@ def restore_conversation_messages(db: Session, *, session_id: int,
             raise ConversationDataError("会话消息标识或版本不一致")
         restored.append(message)
     return restored
+
+
+def _visible_rows_by_turn(db: Session, session_id: int, rows: list,
+                          until_sequence_no: int) -> list:
+    """按消息所属 Turn（user message sequence）过滤并逻辑排序（见 restore 注释）。"""
+    user_seq_by_row_id = {row.id: row.sequence_no for row in rows if row.role == "user"}
+    run_ids = {row.run_id for row in rows if row.run_id is not None}
+    user_seq_by_run_id: dict[int, int] = {}
+    if run_ids:
+        run_rows = db.execute(
+            select(AgentRun.id, AgentRun.user_message_id).where(AgentRun.id.in_(run_ids))
+        ).all()
+        msg_rows = db.execute(
+            select(AgentMessage.id, AgentMessage.sequence_no).where(
+                AgentMessage.id.in_([row.user_message_id for row in run_rows
+                                     if row.user_message_id is not None]))
+        ).all()
+        seq_by_message_id = {row_id: seq for row_id, seq in msg_rows}
+        user_seq_by_run_id = {run_id: seq_by_message_id[user_message_id]
+                              for run_id, user_message_id in run_rows
+                              if user_message_id in seq_by_message_id}
+    visible = []
+    for row in rows:
+        if row.role == "user":
+            owner = user_seq_by_row_id.get(row.id, row.sequence_no)
+        else:
+            owner = user_seq_by_run_id.get(row.run_id)
+            if owner is None:
+                continue  # 孤儿/旧数据：不进入 run-bounded 上下文
+        if owner <= until_sequence_no:
+            visible.append((owner, row.sequence_no, row))
+    visible.sort(key=lambda item: (item[0], item[1]))
+    return [row for _, _, row in visible]

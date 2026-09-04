@@ -46,14 +46,14 @@
 - [x] 外键开启的 SQLite 迁移测试通过；有 conversation 数据时 downgrade 明确拒绝。
 
 ## P05 Conversation Runtime 收敛 + Workflow 退役
-> 2026-09-04 P05-B/C/D：ConversationRunner 已实现；Worker claim 统一并带 execution_token（fencing）；conversation 执行期由 ownership control loop 做 fenced heartbeat / stale 检测 / cancel 传播 / ownership lost 保护。follow-up 仍未实现（P05-E），对应项不勾选。
+> 2026-09-04 P05-B/C/D/E：P05 全部验收项达成 → **P05 complete**。ConversationRunner、统一 claim+fencing（execution_token）、ownership control（heartbeat/stale/cancel/ownership lost）、follow-up 队列与原子提升（active_slot=head）均已实现并测试（全后端 567 + isolation 3）。
 - [x] Conversation queued Run 被 Worker 消费（不再跳过、不再永远 queued）；同会话一个活跃 Turn（active_slot 约束不变）。（P05-C Worker E2E：submit→claim→ConversationRunner→succeeded）
 - [x] lease / heartbeat / fencing：长模型调用期间 heartbeat 持续刷新（control loop，独立 Session 短事务）；过期/旧 token 执行器写入被拒（fenced heartbeat + 终态前 ownership 复核）；执行中被替换的旧 Worker 不 finalize、不写消息。
-- [x] cancel 可终止当前 Turn（DB cancel → Worker control 观察 → cancel_event → AgentLoop abort → Run cancelled，run_cancelled 事件恰好一次）。
-- [ ] follow_up 保序且不并行写同一会话；失败/中断后队列暂停。（P05-E，未实现）
-- [ ] 中断不自动重放不确定副作用；Worker 未启动时前端可解释。
+- [x] cancel 可终止当前 Turn（DB cancel → Worker control 观察 → cancel_event → AgentLoop abort → Run cancelled，run_cancelled 事件恰好一次）；cancelled 后队列继续（promote next）。
+- [x] follow_up 保序且不并行写同一会话（active_slot=head 单槽 + UQ 裁决）；succeeded/cancelled → promote next；failed/interrupted → 队列暂停（paused，不 promote）。
+- [x] 中断（stale→interrupted）不自动重放不确定副作用、不自动 requeue（TOCTOU 修复后 mark 带 stale 条件）；Worker 未启动的前端解释属 P06 UI。
 - [x] 新 Conversation 主路径（Turn → ConversationRunner → Agent Loop）不经过 case_generation / next_step / execute_step。（dispatch 路由测试 + legacy spy 断言）
-- [ ] Dependency Audit 完成：旧 Workflow 已隔离到 legacy 或删除；P01～P04 回归通过。
+- [x] Dependency Audit 完成（P05-A 记录）；新 Conversation 主路径与 legacy 在 Worker 层隔离（dispatch 分流），legacy 链路回归通过；目录级 legacy 收尾（删除/兼容区整理）留 P06。
 
 ## P06 Conversation API + SSE + 基础工作台
 - [ ] 浏览器持续聊天至少三轮，回复来自模型而非前端状态模板；前端“发送”只提交 Turn，不再无条件 createCaseRun。
