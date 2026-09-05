@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as conversationApi from "./conversationApi";
 import { runErrorMessage } from "./conversationErrors.js";
 import {
-  canSendMessage, conversationState, mergeRenamedConversation, stopTargetRun,
+  canSendMessage, conversationState, createUnsavedConversation, isUnsavedConversation,
+  mergeConversationSummaries, renameActiveConversation, renameConversationSummaries,
+  shouldAdoptInitialConversation, stopTargetRun, UNSAVED_CONVERSATION_ID,
 } from "./chatState.js";
 import { buildConversationTurns, extractText } from "./turnModel.js";
 
@@ -49,7 +51,7 @@ export default function useConversationChat(userId) {
   const [phase, setPhase] = useState("idle"); // idle/queued/running/paused/failed/interrupted/cancelled
   const [error, setError] = useState("");
   const [runError, setRunError] = useState("");
-  const [busy, setBusy] = useState(false); // 仅“新建对话”等操作锁，不拦截发送
+  const [busy, setBusy] = useState(false); // 仅锁住“草稿首次落库”，不拦截已存在会话的 follow-up
   const [capabilities, setCapabilities] = useState(null);
   const [connectionError, setConnectionError] = useState("");
   const lastEventSequence = useRef(0);
@@ -60,6 +62,7 @@ export default function useConversationChat(userId) {
   const refreshTimer = useRef(null);
   const committedIds = useRef(new Set());
   const pendingText = useRef(new Map());
+  const draftCreation = useRef(null);
 
   const resolveOwnerForRun = (runId, msgs) => {
     if (runId != null) {
@@ -120,6 +123,29 @@ export default function useConversationChat(userId) {
     clearTimeout(refreshTimer.current);
     refreshTimer.current = null;
   }, []);
+
+  const openUnsavedConversation = useCallback(() => {
+    if (draftCreation.current) return;
+    stopAll();
+    activeId.current = null;
+    lastEventSequence.current = 0;
+    committedIds.current = new Set();
+    pendingText.current = new Map();
+    messagesRef.current = [];
+    allEventsRef.current = [];
+    toolOwnersRef.current = new Map();
+    setToolOwners(new Map());
+    setActive(createUnsavedConversation());
+    setError("");
+    setRunError("");
+    setStreaming("");
+    setMessages([]);
+    setActivity([]);
+    setAllEvents([]);
+    setConnectionError("");
+    setSnapshot(null);
+    setPhase("idle");
+  }, [stopAll]);
 
   const connectEvents = useCallback((conversationId) => {
     stopStream.current?.();
@@ -217,29 +243,45 @@ export default function useConversationChat(userId) {
     }
   }, [refresh, connectEvents, stopAll]);
 
-  const newConversation = useCallback(async () => {
-    setBusy(true);
-    try {
-      const created = await conversationApi.createConversation({ title: "新对话", project_id: null });
-      const list = await conversationApi.listConversations();
-      setConversations(list.data);
-      await openConversation(created.data);
-    } catch (err) {
-      setError(String(err?.response?.data?.detail || err.message));
-    } finally {
-      setBusy(false);
-    }
-  }, [openConversation]);
+  // “新对话”只是本地草稿；首次真正发送时才创建服务端 Conversation。
+  const newConversation = useCallback(() => {
+    openUnsavedConversation();
+  }, [openUnsavedConversation]);
 
-  // 重命名成功后同时更新 conversations list 与 active conversation：
-  // sidebar、打开着的 header title 保持一致，不能只改列表。
+  const persistUnsavedConversation = useCallback(() => {
+    if (draftCreation.current) return draftCreation.current;
+    const scope = generation.current;
+    setBusy(true);
+    const pending = conversationApi.createConversation({ title: "新对话", project_id: null })
+      .then((created) => {
+        if (scope !== generation.current) return null;
+        const conversation = created.data;
+        activeId.current = conversation.id;
+        setActive(conversation);
+        setConversations((current) => [
+          conversation,
+          ...current.filter((item) => item.id !== conversation.id),
+        ]);
+        connectEvents(conversation.id);
+        return conversation;
+      })
+      .finally(() => {
+        if (draftCreation.current === pending) draftCreation.current = null;
+        setBusy(false);
+      });
+    draftCreation.current = pending;
+    return pending;
+  }, [connectEvents]);
+
+  // 重命名可能晚于“本地草稿 → 持久化会话”的状态切换完成。
+  // 必须用 functional update 读取最新状态，禁止闭包里的旧 active 把会话回滚成草稿。
   const applyRenameTitle = useCallback((conversationId, title) => {
-    const next = mergeRenamedConversation({ conversations, active, conversationId, title });
-    setConversations(next.conversations);
-    setActive(next.active);
-  }, [conversations, active]);
+    setConversations((current) => renameConversationSummaries(current, conversationId, title));
+    setActive((current) => renameActiveConversation(current, conversationId, title));
+  }, []);
 
   const setTitle = useCallback(async (conversationId, rawTitle) => {
+    if (conversationId === UNSAVED_CONVERSATION_ID) return;
     const title = String(rawTitle || "").replace(/\s+/g, " ").trim();
     if (!title || title.length > 200) return;
     try {
@@ -275,10 +317,11 @@ export default function useConversationChat(userId) {
         setError(String(err?.response?.data?.detail || err.message));
       }
     }
-  }, [snapshot, active?.id, refresh]);
+  }, [snapshot, active, refresh]);
 
   useEffect(() => {
     let disposed = false;
+    const loadGeneration = generation.current;
     (async () => {
       try {
         const [caps, list] = await Promise.all([
@@ -286,17 +329,25 @@ export default function useConversationChat(userId) {
         ]);
         if (disposed) return;
         setCapabilities(caps.data);
+        // 用户可能已在首次请求返回前点击“新对话”并发送。
+        // 此时只合并历史列表，绝不能用旧响应切走当前草稿或中止首次提交。
+        if (!shouldAdoptInitialConversation(loadGeneration, generation.current)) {
+          setConversations((current) => mergeConversationSummaries(current, list.data));
+          return;
+        }
         setConversations(list.data);
         if (list.data.length) await openConversation(list.data[0]);
+        else openUnsavedConversation();
       } catch (err) {
         if (!disposed) setError(String(err?.message || "对话加载失败"));
       }
     })();
     return () => { disposed = true; activeId.current = null; stopAll(); };
-  }, [userId, openConversation, stopAll]);
+  }, [userId, openConversation, openUnsavedConversation, stopAll]);
 
   useEffect(() => {
-    if (!active || (!["queued", "running"].includes(phase) && !connectionError)) return undefined;
+    if (!active || isUnsavedConversation(active)
+      || (!["queued", "running"].includes(phase) && !connectionError)) return undefined;
     let disposed = false;
     let timer;
     const poll = async () => {
@@ -332,25 +383,27 @@ export default function useConversationChat(userId) {
     setRunError("");
     const scope = generation.current;
     try {
+      const target = isUnsavedConversation(active) ? await persistUnsavedConversation() : active;
+      if (!target || scope !== generation.current) return;
       // queue_mode=follow_up：A running 时提交 B 会入队，不在 UI 层猜测状态；
       // 顶部 phase 由下方 refresh（snapshot）派生，B 的 queued 由 turnModel 显示。
-      await conversationApi.submitTurn(active.id, {
+      await conversationApi.submitTurn(target.id, {
         content: text.trim(),
         client_request_id: uid(),
         queue_mode: "follow_up",
       });
       if (scope !== generation.current) return;
-      const result = await refresh(active.id);
+      const result = await refresh(target.id);
       const firstUser = result?.msgs?.find((m) => m.role === "user");
       const isFirstUserMessage = (result?.msgs?.filter((m) => m.role === "user").length ?? 0) === 1;
-      if ((!active.title || active.title === "新对话") && isFirstUserMessage) {
-        void renameIfNeeded(active.id, firstUser ? extractText(firstUser.content) : text);
+      if ((!target.title || target.title === "新对话") && isFirstUserMessage) {
+        void renameIfNeeded(target.id, firstUser ? extractText(firstUser.content) : text);
       }
     } catch (err) {
       if (scope === generation.current) setError(String(err?.response?.data?.detail || err.message));
     }
     // 注意：这里不设 busy——网络请求在途时依然允许继续输入/发送 follow-up。
-  }, [active, phase, capabilities?.model_ready, refresh, renameIfNeeded]);
+  }, [active, phase, capabilities?.model_ready, persistUnsavedConversation, refresh, renameIfNeeded]);
 
   return {
     turns,

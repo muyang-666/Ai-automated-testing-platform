@@ -15,6 +15,7 @@ const TURN_BADGE = {
 // 文本一律经 React 文本节点输出 → 原始 HTML 仅作文本显示，无法注入。
 function InlineSegments({ segments }) {
   return segments.map((seg, index) => {
+    if (seg.type === "break") return <br key={index} />;
     if (seg.type === "bold") return <strong key={index}>{seg.text}</strong>;
     if (seg.type === "code") return <code className="v2-md-code" key={index}>{seg.text}</code>;
     return <span key={index}>{seg.text}</span>;
@@ -24,6 +25,27 @@ function InlineSegments({ segments }) {
 function MarkdownBlock({ block }) {
   if (block.type === "code") {
     return <pre className="v2-md-pre"><code>{block.text}</code></pre>;
+  }
+  if (block.type === "heading") {
+    const Heading = `h${block.level}`;
+    return <Heading className={`v2-md-heading v2-md-h${block.level}`}><InlineSegments segments={block.children} /></Heading>;
+  }
+  if (block.type === "divider") return <hr className="v2-md-divider" />;
+  if (block.type === "table") {
+    return (
+      <div className="v2-md-table-wrap" tabIndex={0} role="region" aria-label="Markdown 表格">
+        <table className="v2-md-table">
+          <thead><tr>{block.headers.map((cell, index) => (
+            <th key={index} data-align={block.align[index]}><InlineSegments segments={cell} /></th>
+          ))}</tr></thead>
+          <tbody>{block.rows.map((row, rowIndex) => (
+            <tr key={rowIndex}>{row.map((cell, cellIndex) => (
+              <td key={cellIndex} data-align={block.align[cellIndex]}><InlineSegments segments={cell} /></td>
+            ))}</tr>
+          ))}</tbody>
+        </table>
+      </div>
+    );
   }
   if (block.type === "list") {
     const items = block.items.map((item, i) => (

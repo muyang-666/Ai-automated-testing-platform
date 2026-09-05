@@ -2,12 +2,15 @@ import { useEffect, useRef, useState } from "react";
 import useConversationChat from "./useConversationChat";
 import ChatTimeline from "./ChatTimeline.jsx";
 import ChatComposer from "./ChatComposer.jsx";
+import { AddIcon, HistoryIcon, MaximizeIcon, MinimizeIcon, RestoreIcon } from "./ChatIcons.jsx";
 import "./v2Chat.css";
 
 const PHASE_TEXT = { running: "回答中…", queued: "排队中…", paused: "已暂停", failed: "失败",
   interrupted: "已中断", cancelled: "已取消", idle: "空闲" };
 const DEFAULT_LAYOUT = { width: 880, height: 640 };
 const MIN_SIZE = { width: 440, height: 380 };
+const LAUNCHER_SIZE = 56;
+const LAUNCHER_INSET = 14;
 
 function storageKey(userId) {
   return `testmind:v2-chat-window:${userId || "anonymous"}`;
@@ -30,9 +33,18 @@ function fit(size, position) {
 
 function fitLauncher(position) {
   return {
-    left: Math.max(12, Math.min(position?.left ?? window.innerWidth - 208, window.innerWidth - 196)),
-    top: Math.max(12, Math.min(position?.top ?? window.innerHeight - 76, window.innerHeight - 58)),
+    left: Math.max(12, Math.min(position?.left ?? window.innerWidth - LAUNCHER_SIZE - 24,
+      window.innerWidth - LAUNCHER_SIZE - 12)),
+    top: Math.max(12, Math.min(position?.top ?? window.innerHeight - LAUNCHER_SIZE - 24,
+      window.innerHeight - LAUNCHER_SIZE - 12)),
   };
+}
+
+function launcherAtPanelCorner(bounds) {
+  return fitLauncher({
+    left: bounds.right - LAUNCHER_SIZE - LAUNCHER_INSET,
+    top: bounds.bottom - LAUNCHER_SIZE - LAUNCHER_INSET,
+  });
 }
 
 function readLayout(userId) {
@@ -55,6 +67,8 @@ export default function V2ChatPanel({ currentUser }) {
   const [draft, setDraft] = useState("");
   const [sendNonce, setSendNonce] = useState(0);
   const [layout, setLayout] = useState(() => readLayout(currentUser?.id));
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [focusNonce, setFocusNonce] = useState(0);
   const panelRef = useRef(null);
   const dragRef = useRef(null);
   const launcherDragRef = useRef(null);
@@ -121,7 +135,9 @@ export default function V2ChatPanel({ currentUser }) {
 
   const launcherDragStart = (event) => {
     if (event.button !== 0) return;
+    event.preventDefault();
     launcherDragRef.current = {
+      pointerId: event.pointerId,
       x: event.clientX, y: event.clientY,
       left: layout.launcherLeft, top: layout.launcherTop, moved: false,
     };
@@ -130,7 +146,8 @@ export default function V2ChatPanel({ currentUser }) {
 
   const launcherDragMove = (event) => {
     const drag = launcherDragRef.current;
-    if (!drag) return;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
     const dx = event.clientX - drag.x;
     const dy = event.clientY - drag.y;
     if (Math.abs(dx) + Math.abs(dy) > 4) drag.moved = true;
@@ -140,9 +157,14 @@ export default function V2ChatPanel({ currentUser }) {
     }));
   };
 
-  const launcherDragEnd = () => {
-    suppressLauncherClick.current = Boolean(launcherDragRef.current?.moved);
+  const launcherDragEnd = (event) => {
+    const drag = launcherDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    suppressLauncherClick.current = Boolean(drag.moved);
     launcherDragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
   };
 
   const submit = () => {
@@ -154,9 +176,24 @@ export default function V2ChatPanel({ currentUser }) {
   };
 
   const handleRenameTitle = () => {
-    if (!chat.active) return;
+    if (!chat.active || chat.active.isUnsaved) return;
     const next = window.prompt("重命名对话", chat.active.title || "");
     if (next && next.trim()) void chat.setTitle(chat.active.id, next.trim());
+  };
+
+  const minimizeToPanelCorner = () => {
+    const bounds = panelRef.current?.getBoundingClientRect() || {
+      left: layout.mode === "maximized" ? 12 : shown.left,
+      top: layout.mode === "maximized" ? 12 : shown.top,
+      right: layout.mode === "maximized" ? window.innerWidth - 12 : shown.left + shown.width,
+      bottom: layout.mode === "maximized" ? window.innerHeight - 12 : shown.top + shown.height,
+    };
+    const launcher = launcherAtPanelCorner(bounds);
+    setHistoryOpen(false);
+    setLayout((current) => ({
+      ...current, mode: "minimized",
+      launcherLeft: launcher.left, launcherTop: launcher.top,
+    }));
   };
 
   if (layout.mode === "minimized") {
@@ -168,16 +205,15 @@ export default function V2ChatPanel({ currentUser }) {
         onClick={() => {
           if (suppressLauncherClick.current) { suppressLauncherClick.current = false; return; }
           setLayout((current) => ({ ...current, mode: "normal", ...fit(current, current) }));
-        }}>
-        <span className="v2chat-brand-mark">AI</span>
-        <span><strong>TestMind Agent</strong>
-          <small>{chat.phase && chat.phase !== "idle" ? PHASE_TEXT[chat.phase] : "打开对话"}</small></span>
+          setFocusNonce((nonce) => nonce + 1);
+        }} aria-label={`打开 TestMind Agent${chat.phase && chat.phase !== "idle" ? `：${PHASE_TEXT[chat.phase]}` : ""}`}>
+        <span aria-hidden="true">AI</span>
       </button>
     );
   }
 
   const panelStyle = layout.mode === "maximized"
-    ? { left: 12, top: 12, width: "calc(100vw - 24px)", height: "calc(100vh - 24px)" }
+    ? { left: 0, top: 0, width: "100vw", height: "100vh" }
     : shown;
 
   return (
@@ -200,39 +236,53 @@ export default function V2ChatPanel({ currentUser }) {
           {chat.phase === "queued" && <span className="v2chat-status-chip">排队中</span>}
         </div>
         <div className="v2chat-window-actions">
+          <button type="button" className="v2chat-header-button v2chat-new" title="新建对话"
+            onClick={() => {
+              setHistoryOpen(false);
+              chat.newConversation();
+              setFocusNonce((nonce) => nonce + 1);
+            }} disabled={chat.busy}>
+            <AddIcon /><span>新对话</span>
+          </button>
+          <button type="button" className="v2chat-header-button v2chat-history-toggle" title="对话记录"
+            aria-expanded={historyOpen} onClick={() => setHistoryOpen((open) => !open)}>
+            <HistoryIcon /><span>对话记录</span>
+          </button>
           <button type="button" aria-label={layout.mode === "maximized" ? "恢复窗口" : "最大化"}
             title={layout.mode === "maximized" ? "恢复窗口" : "最大化"}
+            className="v2chat-header-button v2chat-window-control"
             onClick={() => setLayout((current) => ({
               ...current, mode: current.mode === "maximized" ? "normal" : "maximized",
-            }))}>{layout.mode === "maximized" ? "❐" : "□"}</button>
+            }))}>{layout.mode === "maximized" ? <RestoreIcon /> : <MaximizeIcon />}</button>
           <button type="button" aria-label="最小化" title="最小化"
-            onClick={() => {
-              const launcher = fitLauncher();
-              setLayout((current) => ({
-                ...current, mode: "minimized",
-                launcherLeft: launcher.left, launcherTop: launcher.top,
-              }));
-            }}>—</button>
-        </div>
-      </header>
-      <div className="v2chat">
-      <aside className="v2chat-side">
-        <div className="v2chat-side-head">
-          <button type="button" className="v2chat-new" onClick={chat.newConversation} disabled={chat.busy}>
-            ＋ New chat
+            className="v2chat-header-button v2chat-window-control" onClick={minimizeToPanelCorner}>
+            <MinimizeIcon />
           </button>
         </div>
-        <ul className="v2chat-list v2chat-side-list">
-          {chat.conversations.map((c) => (
-            <li key={c.id}
-                className={chat.active?.id === c.id ? "v2chat-item active" : "v2chat-item"}
-                onClick={() => chat.openConversation(c)}
-                title={c.title}>
-              <span className="v2chat-item-title">{c.title}</span>
-            </li>
-          ))}
-        </ul>
-      </aside>
+        {historyOpen && (
+          <section className="v2chat-history-popover" aria-label="对话记录">
+            <div className="v2chat-history-head"><strong>对话记录</strong><span>{chat.conversations.length}</span></div>
+            <ul className="v2chat-list">
+              {!chat.conversations.length && <li className="v2chat-history-empty">还没有保存的对话</li>}
+              {chat.conversations.map((conversation) => (
+                <li key={conversation.id}>
+                  <button type="button"
+                    className={chat.active?.id === conversation.id ? "v2chat-item active" : "v2chat-item"}
+                    onClick={() => {
+                      setHistoryOpen(false);
+                      void chat.openConversation(conversation);
+                      setFocusNonce((nonce) => nonce + 1);
+                    }}
+                    title={conversation.title}>
+                    {conversation.title}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+      </header>
+      <div className="v2chat">
       <main className="v2chat-main">
         {chat.error && <div className="v2chat-error">{chat.error}</div>}
         {chat.capabilities?.model_ready === false && (
@@ -257,7 +307,8 @@ export default function V2ChatPanel({ currentUser }) {
             onStop={chat.cancel}
             disabled={!canSend}
             stopping={chat.phase === "running"}
-            placeholder={chat.phase === "paused" ? "队列已暂停，请新建对话" : "Ask TestMind…（Enter 发送，Shift+Enter 换行）"}
+            placeholder="Ask TestMind"
+            focusKey={`${layout.mode}:${chat.active?.id || "none"}:${focusNonce}`}
           />
         </footer>
       </main>

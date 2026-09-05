@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import ChatTurn from "./ChatTurn.jsx";
+import { ArrowDownIcon } from "./ChatIcons.jsx";
 import { isNearBottom, shouldAutoScroll } from "./scrollPolicy.js";
 
 const SCROLL_THRESHOLD = 80;
@@ -11,6 +12,7 @@ const SCROLL_THRESHOLD = 80;
 export default function ChatTimeline({ turns, streaming, activeId, sendNonce }) {
   const containerRef = useRef(null);
   const intent = useRef(null); // "force"（切换会话/自己发送时置位）
+  const lastSendNonce = useRef(sendNonce);
   const [nearBottom, setNearBottom] = useState(true);
   const [jumpVisible, setJumpVisible] = useState(false);
 
@@ -48,9 +50,11 @@ export default function ChatTimeline({ turns, streaming, activeId, sendNonce }) 
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    if (intent.current === "force" || sendNonce > 0) {
+    const ownMessageSubmitted = sendNonce !== lastSendNonce.current;
+    if (intent.current === "force" || ownMessageSubmitted) {
       const force = intent.current === "force";
       intent.current = null;
+      lastSendNonce.current = sendNonce;
       requestAnimationFrame(() => {
         scrollToBottom();
         if (force) { setNearBottom(true); setJumpVisible(false); }
@@ -75,7 +79,7 @@ export default function ChatTimeline({ turns, streaming, activeId, sendNonce }) 
         {jumpVisible && (
           <button type="button" className="v2-jump-bottom"
             onClick={() => { intent.current = "force"; scrollToBottom("smooth"); setJumpVisible(false); }}>
-            ↓ 回到最新
+            <ArrowDownIcon /><span>回到最新</span>
           </button>
         )}
       </div>

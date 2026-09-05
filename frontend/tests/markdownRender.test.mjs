@@ -35,6 +35,43 @@ test("无序与有序列表", () => {
   assert.deepEqual(p.children, [{ type: "text", text: "正文" }]);
 });
 
+test("标题、分隔线与段落换行", () => {
+  const blocks = renderMarkdown("# 一级标题\n\n## **判断方法**\n\n---\n\n第一行\n第二行");
+  assert.equal(blocks[0].type, "heading");
+  assert.equal(blocks[0].level, 1);
+  assert.deepEqual(blocks[1], {
+    type: "heading", level: 2, children: [{ type: "bold", text: "判断方法" }],
+  });
+  assert.equal(blocks[2].type, "divider");
+  assert.deepEqual(blocks[3].children, [
+    { type: "text", text: "第一行" },
+    { type: "break" },
+    { type: "text", text: "第二行" },
+  ]);
+});
+
+test("GFM 风格表格：表头、对齐、行内格式与数据行", () => {
+  const [table] = renderMarkdown([
+    "| 条件 | **方法** | 复杂度 |",
+    "| :--- | :---: | ---: |",
+    "| 整体有序 | 二分 | `O(log n)` |",
+    "| 行列有序 | Z 搜索 | O(m + n) |",
+  ].join("\n"));
+  assert.equal(table.type, "table");
+  assert.deepEqual(table.align, ["left", "center", "right"]);
+  assert.deepEqual(table.headers[1], [{ type: "bold", text: "方法" }]);
+  assert.equal(table.rows.length, 2);
+  assert.deepEqual(table.rows[0][2], [{ type: "code", text: "O(log n)" }]);
+});
+
+test("表格中的转义竖线和行内代码竖线不会误拆列", () => {
+  const [table] = renderMarkdown("| 输入 | 含义 |\n|---|---|\n| a\\|b | `x|y` |");
+  assert.equal(table.type, "table");
+  assert.equal(table.rows[0].length, 2);
+  assert.deepEqual(table.rows[0][0], [{ type: "text", text: "a|b" }]);
+  assert.deepEqual(table.rows[0][1], [{ type: "code", text: "x|y" }]);
+});
+
 test("混排：加粗列表项 + 代码块后的段落", () => {
   const blocks = renderMarkdown("- **关键** 步骤\n- 直接 `x`\n\n```bash\necho hi\n```\n\n收尾");
   assert.equal(blocks.length, 3);

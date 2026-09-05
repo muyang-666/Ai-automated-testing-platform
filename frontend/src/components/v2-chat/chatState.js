@@ -5,6 +5,25 @@
 // latest_run  = 最近一次提交的 run（可能只是 queued follow-up，不能当 Stop 目标）；
 // queue_state = idle / executable / paused（后端 pause-guard 语义）。
 
+export const UNSAVED_CONVERSATION_ID = "local:new-conversation";
+
+export function createUnsavedConversation() {
+  return { id: UNSAVED_CONVERSATION_ID, title: "新对话", isUnsaved: true };
+}
+
+export function isUnsavedConversation(conversation) {
+  return conversation?.id === UNSAVED_CONVERSATION_ID && conversation?.isUnsaved === true;
+}
+
+export function shouldAdoptInitialConversation(loadGeneration, currentGeneration) {
+  return loadGeneration === currentGeneration;
+}
+
+export function mergeConversationSummaries(current, incoming) {
+  const seen = new Set(current.map((conversation) => conversation.id));
+  return [...current, ...incoming.filter((conversation) => !seen.has(conversation.id))];
+}
+
 // 顶部“Conversation 当前状态”，只由 snapshot 派生，绝不因“提交了一个 follow-up”而改。
 // A running + B queued → active_run.status = running → 顶部仍是 Running；
 // B 自己是 queued 由 turnModel（run 尚无终态且不是 active head）负责。
@@ -35,7 +54,17 @@ export function canSendMessage({ hasActive, phase, modelReady }) {
 // 保证 sidebar 与顶部 header title 一致。
 export function mergeRenamedConversation({ conversations, active, conversationId, title }) {
   return {
-    conversations: conversations.map((c) => (c.id === conversationId ? { ...c, title } : c)),
-    active: active && active.id === conversationId ? { ...active, title } : active,
+    conversations: renameConversationSummaries(conversations, conversationId, title),
+    active: renameActiveConversation(active, conversationId, title),
   };
+}
+
+export function renameConversationSummaries(conversations, conversationId, title) {
+  return conversations.map((conversation) => (
+    conversation.id === conversationId ? { ...conversation, title } : conversation
+  ));
+}
+
+export function renameActiveConversation(active, conversationId, title) {
+  return active && active.id === conversationId ? { ...active, title } : active;
 }

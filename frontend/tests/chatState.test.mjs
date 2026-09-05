@@ -1,8 +1,29 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  canSendMessage, conversationState, mergeRenamedConversation, stopTargetRun,
+  canSendMessage, conversationState, createUnsavedConversation, isUnsavedConversation,
+  mergeConversationSummaries, mergeRenamedConversation, shouldAdoptInitialConversation, stopTargetRun,
+  renameActiveConversation, renameConversationSummaries,
 } from "../src/components/v2-chat/chatState.js";
+
+test("未发送的新对话只创建本地草稿，不具备服务端会话 ID", () => {
+  const draft = createUnsavedConversation();
+  assert.equal(draft.title, "新对话");
+  assert.equal(draft.isUnsaved, true);
+  assert.equal(isUnsavedConversation(draft), true);
+  assert.equal(isUnsavedConversation({ id: 123, title: "新对话" }), false);
+});
+
+test("首次列表请求过期后不能切走用户刚创建的本地对话", () => {
+  assert.equal(shouldAdoptInitialConversation(3, 3), true);
+  assert.equal(shouldAdoptInitialConversation(3, 4), false);
+  assert.deepEqual(
+    mergeConversationSummaries([{ id: 9, title: "刚发送的对话" }], [
+      { id: 1, title: "旧对话" }, { id: 9, title: "重复项" },
+    ]),
+    [{ id: 9, title: "刚发送的对话" }, { id: 1, title: "旧对话" }],
+  );
+});
 
 // P06 fix：A running + B queued → Stop 必须取消 A（active head），不能取消最新提交的 B。
 test("Stop 目标 = snapshot.active_run.id（A running + B queued → 取消 A）", () => {
@@ -72,4 +93,19 @@ test("mergeRenamedConversation: 重命名非激活会话时 active 不变", () =
   const next = mergeRenamedConversation({ conversations, active, conversationId: 2, title: "改名B" });
   assert.equal(next.conversations[1].title, "改名B");
   assert.equal(next.active, active);
+});
+
+test("自动命名晚到时不能把已持久化会话回滚为本地草稿", () => {
+  const persisted = { id: 9, title: "新对话" };
+  const draft = createUnsavedConversation();
+
+  assert.deepEqual(
+    renameConversationSummaries([persisted], 9, "排查登录失败"),
+    [{ id: 9, title: "排查登录失败" }],
+  );
+  assert.deepEqual(
+    renameActiveConversation(persisted, 9, "排查登录失败"),
+    { id: 9, title: "排查登录失败" },
+  );
+  assert.equal(renameActiveConversation(draft, 9, "排查登录失败"), draft);
 });
