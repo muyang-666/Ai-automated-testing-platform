@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import useConversationChat, { blocksToText } from "./useConversationChat";
+import { messageFailure } from "./conversationErrors.js";
 import "./v2Chat.css";
 
 const QUEUE_BADGE = { queued: "排队中", paused: "已暂停", failed: "失败",
@@ -230,6 +231,7 @@ export default function V2ChatPanel({ currentUser }) {
             <div key={m.id || m.sequence_no} className={`v2chat-msg role-${m.role}`}>
               <div className="v2chat-msg-label">{m.role === "user" ? "你" : m.role === "assistant" ? "AI" : "工具"}</div>
               <div className="v2chat-msg-body">
+                {messageFailure(m) && <div className="v2chat-message-error" role="status">{messageFailure(m)}</div>}
                 {m.role === "user" ? blocksToText(m.content)
                   : m.role === "assistant"
                     ? blocksToText(m.content).split("\n").map((line, i) => <div key={i}>{line}</div>)

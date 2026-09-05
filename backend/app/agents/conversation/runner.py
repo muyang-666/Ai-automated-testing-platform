@@ -115,7 +115,7 @@ class ConversationRunner:
                 system_prompt=self.system_prompt,
                 messages=restored,
                 tool_registry=self.tool_registry,
-                metadata={"conversation_id": session_id, "run_id": run.id},
+                metadata={"conversation_id": session_id, "run_id": run_id},
                 application_context=None,
             )
             config = self._build_config(loop_events, cancel_event)

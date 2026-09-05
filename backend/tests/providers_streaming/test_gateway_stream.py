@@ -248,6 +248,28 @@ def test_existing_llm_gateway_exposes_managed_stream_context():
     assert events[-1].type == "done"
 
 
+@pytest.mark.parametrize("status,code", [(402, "insufficient_balance"), (401, "provider_auth_error"),
+                                       (403, "provider_auth_error"), (400, "provider_request_error")])
+def test_provider_account_errors_are_specific_and_not_retried(status, code):
+    calls = []
+    def handle(request):
+        calls.append(request)
+        return httpx.Response(status, json={"error": {"message": "synthetic-private-marker"}})
+    adapter = OpenAIStreamAdapter(async_client_factory=lambda: httpx.AsyncClient(transport=httpx.MockTransport(handle)))
+    async def go():
+        control = StreamControl(cancel_event=asyncio.Event())
+        snapshot = ProviderSnapshot("openai_compatible", "p", "https://example.invalid", "synthetic-key", "m", max_tokens=10)
+        events = [event async for event in _gateway(adapter, max_retries=2).stream(snapshot, REQ, CTX, control=control)]
+        assert events[-1].type == "error"
+        assert control.error_code == code
+        assert len(control.attempt_records) == 1
+        assert "synthetic-private-marker" not in events[-1].error.error_message
+        if status == 402:
+            assert "余额不足" in events[-1].error.error_message
+    _run(go())
+    assert len(calls) == 1
+
+
 def test_deadline_interrupts_headers_and_records_distinct_code():
     entered = asyncio.Event()
     async def handler(request):
@@ -349,7 +371,7 @@ def test_real_429_retries_but_real_400_does_not():
     rejected = _run(exercise(400))
     assert retried[0] == 2 and retried[1][-1].type == "done"
     assert rejected[0] == 1 and rejected[1][-1].type == "error"
-    assert rejected[2].error_code == "http_error"
+    assert rejected[2].error_code == "provider_request_error"
 
 
 def test_request_and_response_ids_are_kept_separate_in_attempt_record():

@@ -34,6 +34,24 @@ def test_conversion_openai_user_text():
     assert messages == [{"role": "user", "content": "你好"}]
 
 
+@pytest.mark.parametrize("reason", ["error", "aborted"])
+def test_empty_failure_record_is_not_sent_as_an_assistant_reply(reason):
+    failed = make_assistant(content=[], stop_reason=reason)
+    history = [make_user(text="previous question"), failed, make_user(message_id="u2", text="next question")]
+    messages, _ = to_openai_messages_and_tools(StreamRequest(messages=history))
+    assert [message["role"] for message in messages] == ["user", "user"]
+    _, messages, _ = to_anthropic_system_messages_and_tools(StreamRequest(messages=history))
+    assert [message["role"] for message in messages] == ["user", "user"]
+    assert failed.content == []  # original audit record remains unchanged
+
+
+def test_skipping_failure_does_not_hide_missing_tool_results():
+    call = make_assistant(content=[ToolCall(id="c1", name="echo", arguments={})], stop_reason="toolUse")
+    failed = make_assistant(content=[], stop_reason="error")
+    with pytest.raises(StreamError, match="工具结果"):
+        to_openai_messages_and_tools(StreamRequest(messages=[call, failed, make_user()]))
+
+
 def test_conversion_openai_four_message_history_preserves_tool_request():
     user, assistant_req, tool_result, assistant_reply = build_four_message_history()
     messages, _ = to_openai_messages_and_tools(

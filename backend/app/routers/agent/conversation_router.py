@@ -6,6 +6,7 @@ Token 不进 URL；事件游标可断线续传（客户端带 after_sequence）�
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 
@@ -16,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.agents.runtime.errors import AgentError
 from app.core.database import SessionLocal, get_db
 from app.models.agent.agent_event import AgentEvent
+from app.models.agent.agent_run import AgentRun
 from app.models.agent.agent_session import AgentSession
 from app.models.user import User
 from app.routers.dependencies import get_current_user
@@ -80,7 +82,7 @@ def _require_conversation(db: Session, conversation_id: int, user: User) -> Agen
     return row
 
 
-def _message_item(row) -> dict:
+def _message_item(row, run_errors: dict | None = None) -> dict:
     content = None
     if isinstance(row.content_json, dict):
         content = row.content_json.get("content")
@@ -94,6 +96,9 @@ def _message_item(row) -> dict:
         "timestamp_ms": row.timestamp_ms,
         "content": content,
         "run_id": row.run_id,
+        "stop_reason": (row.content_json.get("stop_reason")
+                        if isinstance(row.content_json, dict) else None),
+        "error_code": (run_errors or {}).get(row.run_id),
     }
 
 
@@ -152,7 +157,11 @@ def get_messages(conversation_id: int,
                                    after_sequence=after_sequence, limit=limit)
     except AgentError as e:
         raise _http_error(e)
-    return [ConversationMessageItem(**item) for item in map(_message_item, rows)]
+    run_ids = {row.run_id for row in rows if row.run_id is not None}
+    run_errors = dict(db.query(AgentRun.id, AgentRun.error_code).filter(
+        AgentRun.id.in_(run_ids), AgentRun.session_id == conversation_id,
+    ).all()) if run_ids else {}
+    return [ConversationMessageItem(**_message_item(row, run_errors)) for row in rows]
 
 
 @router.post("/conversations/{conversation_id}/turns", status_code=202,
@@ -194,23 +203,27 @@ def stream_events(conversation_id: int,
     # Release the request-scoped read transaction before returning a long-lived
     # stream.  Polling below uses a fresh short Session so MySQL REPEATABLE READ
     # can observe newly committed events.
-    db.rollback()
     requester_user_id = current_user.id
+    db.rollback()
     cursor = after_sequence if after_sequence is not None else 0
 
-    def generate():
+    def poll_events(after: int) -> list[dict]:
+        with SessionLocal() as poll_db:
+            rows = list_events_since(
+                poll_db, session_id=conversation_id,
+                requester_user_id=requester_user_id,
+                after_sequence=after, limit=200,
+            )
+            return [_event_item(row) for row in rows]
+
+    async def generate():
         nonlocal cursor
         deadline = time.monotonic() + timeout_seconds
         last_heartbeat = 0.0
         while time.monotonic() < deadline:
-            with SessionLocal() as poll_db:
-                rows = list_events_since(
-                    poll_db, session_id=conversation_id,
-                    requester_user_id=requester_user_id,
-                    after_sequence=cursor, limit=200,
-                )
-                # Materialize ORM data before the short polling Session closes.
-                events = [_event_item(row) for row in rows]
+            # Run only the short DB operation in a thread. Waiting for new
+            # tokens must not occupy FastAPI's shared sync request thread pool.
+            events = await asyncio.to_thread(poll_events, cursor)
             for event in events:
                 cursor = max(cursor, event["sequence_no"])
                 yield f"event: conversation\ndata: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
@@ -218,7 +231,7 @@ def stream_events(conversation_id: int,
             if now - last_heartbeat >= 15:
                 last_heartbeat = now
                 yield ": keep-alive\n\n"
-            time.sleep(0.25)
+            await asyncio.sleep(0.25)
 
     return StreamingResponse(generate(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache",

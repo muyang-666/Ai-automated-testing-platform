@@ -67,7 +67,11 @@ class OpenAIStreamAdapter:
             response = await await_controlled(response_cm.__aenter__(), control)
             control.current_request_id = _header_id(response.headers)
             if response.status_code >= 400:
-                code = "retryable_http" if response.status_code == 429 or response.status_code >= 500 else "http_error"
+                code = {400: "provider_request_error", 401: "provider_auth_error",
+                        402: "insufficient_balance", 403: "provider_auth_error"}.get(
+                    response.status_code,
+                    "retryable_http" if response.status_code == 429 or response.status_code >= 500 else "http_error",
+                )
                 raise StreamError(code, request_id=control.current_request_id)
             yield assembler.start_event()
             decoder = _SseDecoder(limits)
@@ -98,7 +102,10 @@ class OpenAIStreamAdapter:
                 control.set_failure(exc.error_code)
                 yield assembler.error_event(exc.error_code)
                 return
-            if not exc.retryable and exc.error_code not in {"http_error", "configuration_error", "unsupported_parameter"}:
+            if not exc.retryable and exc.error_code not in {
+                "http_error", "configuration_error", "unsupported_parameter",
+                "insufficient_balance", "provider_auth_error", "provider_request_error",
+            }:
                 control.set_failure(exc.error_code)
                 yield assembler.error_event(exc.error_code)
                 return

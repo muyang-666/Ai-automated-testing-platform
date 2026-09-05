@@ -27,6 +27,9 @@ _FIXED = {
     "refused": "模型拒绝回答", "canceled": "请求已取消", "budget_exhausted": "物理模型尝试预算已耗尽",
     "deadline_exceeded": "请求超过总截止时间", "network_error": "网络请求失败",
     "http_error": "供应商返回不可重试的 HTTP 错误", "retryable_http": "供应商返回可重试的 HTTP 错误",
+    "insufficient_balance": "模型服务余额不足，请充值或在模型管理中切换可用模型。",
+    "provider_auth_error": "模型服务认证失败，请在模型管理中检查 API Key 和访问权限。",
+    "provider_request_error": "模型服务拒绝请求，请检查模型名称、参数或对话格式。",
     "configuration_error": "供应商配置无效", "stream_gateway_error": "流式调用内部失败",
 }
 
@@ -304,6 +307,14 @@ def _checked_messages(messages: list[Message]):
     pending: dict[str, str] = {}
     for message in messages:
         if isinstance(message, AssistantMessage):
+            # Failure records remain in storage/UI, but are not model replies.
+            # Sending an empty assistant content=None without tool calls is
+            # rejected by some providers and poisons every subsequent turn.
+            if message.stop_reason in {"error", "aborted"} and not any(
+                isinstance(block, ToolCall) or (isinstance(block, TextContent) and block.text.strip())
+                for block in message.content
+            ):
+                continue
             if pending:
                 raise StreamError("mismatched_tool_result")
             ids: set[str] = set()

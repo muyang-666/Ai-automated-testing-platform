@@ -35,6 +35,7 @@
   min-height: 46px; padding: 8px 16px; border-bottom: 1px solid #e5e5e5; font-weight: 600; }
 .v2chat-status { font-weight: 400; color: #666; font-size: 12px; }
 .v2chat-error { background: #fff1f0; color: #cf1322; padding: 6px 12px; }
+.v2chat-message-error { color: #a12b28; background: #fff1f0; border-radius: 8px; padding: 8px 12px; }
 .v2chat-config-warning { background: #fffbe6; color: #874d00; padding: 8px 12px;
   border-bottom: 1px solid #ffe58f; }
 .v2chat-paused { background: #fffbe6; color: #ad6800; padding: 6px 12px; }

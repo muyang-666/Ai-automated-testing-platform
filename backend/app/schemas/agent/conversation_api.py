@@ -56,6 +56,8 @@ class ConversationMessageItem(BaseModel):
     timestamp_ms: int | None = None
     content: list[dict] | str | None = None  # 结构化内容块（model_dump），保 ToolCall/ToolResult
     run_id: int | None = None
+    stop_reason: str | None = None
+    error_code: str | None = None
 
 
 class ConversationEventItem(BaseModel):

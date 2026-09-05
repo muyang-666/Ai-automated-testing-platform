@@ -294,6 +294,7 @@ def test_no_active_db_transaction_during_model_wait(db_session):
             @asynccontextmanager
             async def managed():
                 async def events():
+                    assert not db_session.in_transaction(), "模型等待前 rollback 后又触发了 ORM 隐式查询"
                     try:
                         with SessionLocal() as probe_session:
                             probe_session.execute(sql_text("SELECT 1")).scalar()

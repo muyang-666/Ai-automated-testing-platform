@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as conversationApi from "./conversationApi";
+import { runErrorMessage } from "./conversationErrors.js";
 
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : `id-${Date.now()}-${Math.random()}`);
 const STATE_LABELS = {
@@ -11,16 +12,6 @@ const STATE_LABELS = {
   interrupted: "已中断",
   cancelled: "已取消",
 };
-const RUN_ERROR_MESSAGES = {
-  configuration_not_ready: "Agent 对话模型尚未配置，请先在模型管理中为“Agent 对话”绑定模型。",
-  agent_runtime_error: "Agent Worker 执行失败，请检查 Worker 日志后重试。",
-  model_error: "模型调用失败，请稍后重试或检查模型配置。",
-  canceled: "本轮回答已取消。",
-};
-
-function runErrorMessage(errorCode) {
-  return RUN_ERROR_MESSAGES[errorCode] || "本轮没有生成回答，请稍后重试。";
-}
 
 // 内容块渲染辅助：assistant 结构化 content → 文本
 export function blocksToText(content) {
@@ -51,23 +42,34 @@ export default function useConversationChat(userId) {
   const [runError, setRunError] = useState("");
   const [busy, setBusy] = useState(false);
   const [capabilities, setCapabilities] = useState(null);
+  const [connectionError, setConnectionError] = useState("");
   const lastEventSequence = useRef(0);
-  const lastMessageSequence = useRef(0);
   const stopStream = useRef(null);
   const runRef = useRef(null);
-  const reconnects = useRef(0);
-  const reconnectTimer = useRef(null);
+  const activeId = useRef(null);
+  const generation = useRef(0);
+  const refreshSequence = useRef(0);
+  const refreshTimer = useRef(null);
+  const committedIds = useRef(new Set());
+  const pendingText = useRef(new Map());
 
   const refresh = useCallback(async (conversationId) => {
+    if (activeId.current !== conversationId) return null;
+    const scope = generation.current;
+    const sequence = ++refreshSequence.current;
     const [snapRes, msgRes] = await Promise.all([
       conversationApi.getConversation(conversationId),
       conversationApi.getMessages(conversationId),
     ]);
     const snap = snapRes.data;
     const msgs = msgRes.data;
+    if (scope !== generation.current || activeId.current !== conversationId
+      || sequence !== refreshSequence.current) return null;
     setSnapshot(snap);
     setMessages(msgs);
-    lastMessageSequence.current = msgs.length ? msgs[msgs.length - 1].sequence_no : 0;
+    committedIds.current = new Set(msgs.map((message) => message.message_id));
+    for (const id of committedIds.current) pendingText.current.delete(id);
+    setStreaming([...pendingText.current.values()].join("\n\n"));
     const latestStatus = snap.latest_run?.status;
     const nextPhase = snap.active_run?.status
       || (snap.queue_state === "paused" ? "paused"
@@ -82,22 +84,42 @@ export default function useConversationChat(userId) {
     return { snap, msgs };
   }, []);
 
-  const connectEvents = useCallback((conversationId) => {
-    if (reconnectTimer.current) {
-      clearTimeout(reconnectTimer.current);
-      reconnectTimer.current = null;
-    }
+  const stopAll = useCallback(() => {
+    ++generation.current; // Invalidate in-flight snapshots and old stream callbacks.
     stopStream.current?.();
+    stopStream.current = null;
+    clearTimeout(refreshTimer.current);
+    refreshTimer.current = null;
+  }, []);
+
+  const connectEvents = useCallback((conversationId) => {
+    stopStream.current?.();
+    const scope = generation.current;
+    const isCurrent = () => scope === generation.current && activeId.current === conversationId;
+    const scheduleRefresh = () => {
+      if (refreshTimer.current) return;
+      // Several messages and the terminal event arrive together. Fetch one
+      // snapshot instead of issuing two full-history requests per event.
+      refreshTimer.current = setTimeout(() => {
+        refreshTimer.current = null;
+        if (isCurrent()) void refresh(conversationId).catch(() => {
+          if (isCurrent()) setConnectionError("正在恢复对话连接…");
+        });
+      }, 50);
+    };
     stopStream.current = conversationApi.streamConversationEvents({
       conversationId,
       afterSequence: lastEventSequence.current,
       onEvent: (event) => {
-        reconnects.current = 0;
-        if (event.sequence_no > lastEventSequence.current) {
-          lastEventSequence.current = event.sequence_no;
-        }
+        if (!isCurrent() || event.sequence_no <= lastEventSequence.current) return;
+        lastEventSequence.current = event.sequence_no;
+        setConnectionError("");
         if (event.event_type === "conversation_text_delta") {
-          setStreaming((prev) => prev + (event.payload?.text || ""));
+          const id = event.payload?.message_id;
+          if (!committedIds.current.has(id)) {
+            pendingText.current.set(id, (pendingText.current.get(id) || "") + (event.payload?.text || ""));
+            setStreaming([...pendingText.current.values()].join("\n\n"));
+          }
         } else if (event.event_type === "conversation_tool_started") {
           setActivity((prev) => [...prev.slice(-49), { id: event.sequence_no, text: `✓ 调用工具 ${event.payload?.tool_name || ""}` }]);
         } else if (event.event_type === "conversation_tool_finished") {
@@ -107,48 +129,51 @@ export default function useConversationChat(userId) {
           setRunError("");
         } else if (event.event_type === "run_succeeded") {
           setPhase("idle");
-          setStreaming("");
-          refresh(conversationId);
+          scheduleRefresh(); // Keep visible text until the committed message loads.
         } else if (event.event_type === "run_failed") {
           setPhase("failed");
           setRunError(runErrorMessage(event.payload?.error_code));
-          refresh(conversationId);
+          scheduleRefresh();
         } else if (event.event_type === "run_cancelled") {
           setPhase("cancelled");
-          refresh(conversationId);
+          scheduleRefresh();
         } else if (event.event_type === "run_interrupted") {
           setPhase("interrupted");
           setRunError("Agent Worker 已中断，本轮没有生成回答，请重新发送。");
-          refresh(conversationId);
+          scheduleRefresh();
         } else if (event.event_type === "conversation_message_committed") {
-          refresh(conversationId);
+          scheduleRefresh();
         }
       },
-      onError: () => setError("事件流连接失败，将自动重连"),
-      onClose: () => {
-        if (reconnects.current < 5) {
-          reconnects.current += 1;
-          reconnectTimer.current = setTimeout(() => connectEvents(conversationId), 800);
-        }
-      },
+      onOpen: () => { if (isCurrent()) setConnectionError(""); },
+      onError: () => { if (isCurrent()) setConnectionError("回复连接暂时中断，正在自动恢复…"); },
     });
   }, [refresh]);
 
   const openConversation = useCallback(async (conversation) => {
+    stopAll();
+    activeId.current = conversation.id;
+    const scope = generation.current;
+    lastEventSequence.current = 0;
+    committedIds.current = new Set();
+    pendingText.current = new Map();
     setActive(conversation);
     setError("");
     setRunError("");
     setStreaming("");
     setMessages([]);
     setActivity([]);
-    reconnects.current = 0;
-    const { snap } = await refresh(conversation.id);
-    // A snapshot replaces all state before the stream starts, so only events
-    // after its dedicated event cursor need to be consumed.  Message sequence
-    // is intentionally separate.
-    lastEventSequence.current = snap.latest_event_sequence || 0;
+    setConnectionError("");
+    setSnapshot(null);
+    setPhase("idle");
+    runRef.current = null;
+    // Establish the subscription before slow snapshot requests. It survives
+    // idle time and reconstructs in-flight text; committed IDs suppress replay.
     connectEvents(conversation.id);
-  }, [refresh, connectEvents]);
+    try { await refresh(conversation.id); } catch (err) {
+      if (scope === generation.current) setError(String(err?.message || "对话加载失败"));
+    }
+  }, [refresh, connectEvents, stopAll]);
 
   const newConversation = useCallback(async () => {
     setBusy(true);
@@ -164,39 +189,31 @@ export default function useConversationChat(userId) {
     }
   }, [openConversation]);
 
-  const loadList = useCallback(async () => {
-    try {
-      const res = await conversationApi.listConversations();
-      setConversations(res.data);
-      if (!active && res.data.length) await openConversation(res.data[0]);
-    } catch (err) {
-      setError(String(err?.response?.data?.detail || err.message));
-    }
-  }, [active, openConversation]);
-
   const send = useCallback(async (text) => {
     if (!active || !text.trim()) return;
     if (capabilities?.model_ready === false) {
-      setRunError(RUN_ERROR_MESSAGES.configuration_not_ready);
+      setRunError(runErrorMessage("configuration_not_ready"));
       return;
     }
     setError("");
     setRunError("");
     setBusy(true);
+    const scope = generation.current;
     try {
       const res = await conversationApi.submitTurn(active.id, {
         content: text.trim(),
         client_request_id: uid(),
         queue_mode: "follow_up",
       });
+      if (scope !== generation.current) return;
       const submission = res.data;
       runRef.current = submission.run_id;
-      if (submission.queue_state === "executable") setPhase("running");
+      if (submission.queue_state === "executable") setPhase("queued");
       else if (submission.queue_state === "paused") setPhase("paused");
       else setPhase("queued");
       await refresh(active.id);
     } catch (err) {
-      setError(String(err?.response?.data?.detail || err.message));
+      if (scope === generation.current) setError(String(err?.response?.data?.detail || err.message));
     } finally {
       setBusy(false);
     }
@@ -212,29 +229,39 @@ export default function useConversationChat(userId) {
     }
   }, []);
 
-  const stopAll = useCallback(() => {
-    stopStream.current?.();
-    stopStream.current = null;
-    if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
-    reconnectTimer.current = null;
-  }, []);
-
   useEffect(() => {
+    let disposed = false;
     (async () => {
       try {
-        const caps = await conversationApi.getConversationCapabilities();
+        const [caps, list] = await Promise.all([
+          conversationApi.getConversationCapabilities(), conversationApi.listConversations(),
+        ]);
+        if (disposed) return;
         setCapabilities(caps.data);
-      } catch {
-        setCapabilities(null);
+        setConversations(list.data);
+        if (list.data.length) await openConversation(list.data[0]);
+      } catch (err) {
+        if (!disposed) setError(String(err?.message || "对话加载失败"));
       }
-      await loadList();
     })();
-    return stopAll;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId]);
+    return () => { disposed = true; activeId.current = null; stopAll(); };
+  }, [userId, openConversation, stopAll]);
+
+  useEffect(() => {
+    if (!active || (!["queued", "running"].includes(phase) && !connectionError)) return undefined;
+    let disposed = false;
+    let timer;
+    const poll = async () => {
+      try { await refresh(active.id); } catch { /* stream handles reconnection notice */ }
+      if (!disposed) timer = setTimeout(poll, 2000);
+    };
+    timer = setTimeout(poll, 2000);
+    return () => { disposed = true; clearTimeout(timer); };
+  }, [active, phase, connectionError, refresh]);
 
   return {
-    conversations, active, snapshot, messages, activity, streaming, phase, error, runError, busy, capabilities,
+    conversations, active, snapshot, messages, activity, streaming, phase,
+    error: error || connectionError, runError, busy, capabilities,
     newConversation, openConversation, send, cancel, refresh, STATE_LABELS,
   };
 }

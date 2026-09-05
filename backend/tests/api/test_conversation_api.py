@@ -464,6 +464,9 @@ def test_provider_error_snapshot_consistency(client, db_session):
     # refresh snapshot 一致性：messages 与 run 终态一致
     messages = client.get(f"/agent/conversations/{cid}/messages").json()
     assert messages[0]["role"] == "user"
+    assert messages[-1]["role"] == "assistant"
+    assert messages[-1]["stop_reason"] == "error"
+    assert messages[-1]["error_code"] == "synthetic_model_error"
 
 
 def test_capabilities_no_secret(client):
@@ -473,3 +476,21 @@ def test_capabilities_no_secret(client):
     assert body["tools"] == ["calculator"]
     assert "api_key" not in body and "secret" not in json.dumps(body).lower()
     assert body["model_ready"] is False  # 测试库未配置 agent_chat 场景
+
+
+def test_sse_does_not_reacquire_request_connection_after_rollback(db_session):
+    from app.routers.agent.conversation_router import stream_events
+
+    seed_users(db_session)
+    chat = conversation_service.create_conversation_session(
+        db_session, requester_user_id=USER_A_ID, title="stream connection",
+    )
+    db_session.commit()
+    chat_id = chat.id
+    user = db_session.get(User, USER_A_ID)
+    response = stream_events(
+        chat_id, after_sequence=0, timeout_seconds=1,
+        db=db_session, current_user=user,
+    )
+    assert response.media_type == "text/event-stream"
+    assert not db_session.in_transaction(), "SSE 持有请求级连接会挤占发送/刷新所需连接"
