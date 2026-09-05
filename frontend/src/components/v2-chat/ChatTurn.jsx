@@ -1,46 +1,74 @@
 import { messageFailure } from "./conversationErrors.js";
 import ToolActivity from "./ToolActivity.jsx";
+import { renderMarkdown } from "./markdownRender.js";
 
 const TURN_BADGE = {
-  queued: { text: "Queued", cls: "queued" },
-  running: { text: "", cls: "running" },
-  failed: { text: "Failed", cls: "failed" },
-  interrupted: { text: "Interrupted", cls: "interrupted" },
-  cancelled: { text: "Cancelled", cls: "cancelled" },
-  paused: { text: "Paused", cls: "paused" },
+  queued: { text: "排队中", cls: "queued" },
+  running: null,
+  failed: { text: "失败", cls: "failed" },
+  interrupted: { text: "已中断", cls: "interrupted" },
+  cancelled: { text: "已取消", cls: "cancelled" },
+  paused: { text: "已暂停", cls: "paused" },
 };
+
+// Markdown 结构化数据 → React 元素。markdownRender 只输出数据、无任何 HTML，
+// 文本一律经 React 文本节点输出 → 原始 HTML 仅作文本显示，无法注入。
+function InlineSegments({ segments }) {
+  return segments.map((seg, index) => {
+    if (seg.type === "bold") return <strong key={index}>{seg.text}</strong>;
+    if (seg.type === "code") return <code className="v2-md-code" key={index}>{seg.text}</code>;
+    return <span key={index}>{seg.text}</span>;
+  });
+}
+
+function MarkdownBlock({ block }) {
+  if (block.type === "code") {
+    return <pre className="v2-md-pre"><code>{block.text}</code></pre>;
+  }
+  if (block.type === "list") {
+    const items = block.items.map((item, i) => (
+      <li key={i}><InlineSegments segments={item} /></li>
+    ));
+    return block.ordered ? <ol className="v2-md-list">{items}</ol> : <ul className="v2-md-list">{items}</ul>;
+  }
+  return <p className="v2-md-p"><InlineSegments segments={block.children} /></p>;
+}
+
+function MarkdownBody({ text, streaming }) {
+  const blocks = renderMarkdown(text);
+  if (!blocks.length) return null;
+  return (
+    <div className={streaming ? "v2-md streaming" : "v2-md"}>
+      {blocks.map((block, i) => <MarkdownBlock key={i} block={block} />)}
+    </div>
+  );
+}
 
 // 一个 Turn = 一条用户消息 + 该 Run 的工具活动 + 助手回复。
 // 组件只消费 turnModel.buildConversationTurns 的结构化结果。
 export default function ChatTurn({ turn }) {
-  const badge = TURN_BADGE[turn.status];
+  const badge = turn.status ? TURN_BADGE[turn.status] : null;
   return (
     <section className="v2-turn" data-status={turn.status || "idle"}>
       {turn.userMessage ? (
         <div className="v2-turn-user">
           <div className="v2-msg user">{turn.userText}</div>
-          {badge?.text && <span className={`v2-turn-badge ${badge.cls}`}>{badge.text}</span>}
         </div>
       ) : null}
 
-      {turn.toolActivities?.map((activity) => (
-        <div key={activity.toolCallId} className="v2-turn-tools">
-          <ToolActivity activity={activity} />
-        </div>
-      ))}
+      {badge?.text ? <span className={`v2-turn-badge ${badge.cls}`}>{badge.text}</span> : null}
 
-      {turn.streamingText ? (
-        <div className="v2-turn-assistant">
-          {turn.assistantTexts?.map((text, i) => <div className="v2-msg assistant" key={i}>{text}</div>)}
-          <div className="v2-msg assistant streaming">{turn.streamingText}</div>
+      {turn.toolActivities?.length > 0 && (
+        <div className="v2-turn-tools">
+          {turn.toolActivities.map((activity) => (
+            <ToolActivity key={`${activity.runId ?? ""}-${activity.toolCallId}`} activity={activity} />
+          ))}
         </div>
-      ) : (
-        turn.assistantTexts?.length > 0 && (
-          <div className="v2-turn-assistant">
-            {turn.assistantTexts.map((text, i) => <div className="v2-msg assistant" key={i}>{text}</div>)}
-          </div>
-        )
       )}
+
+      {turn.assistantTexts?.map((text, i) => <MarkdownBody key={i} text={text} />)}
+
+      {turn.streamingText ? <MarkdownBody streaming text={turn.streamingText} /> : null}
 
       {turn.assistantMessage?.error_code ? (
         <div className="v2-turn-error" role="status">{messageFailure(turn.assistantMessage)}</div>

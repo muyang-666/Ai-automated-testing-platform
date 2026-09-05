@@ -79,6 +79,52 @@ test("终态事件驱动 turn.status（failed/interrupted 等）", () => {
   void events;
 });
 
+test("Bug7: (run_id, tool_call_id) 合并键 —— 两 Run 复用同一 callId 不串 Turn，且按 sequence 排序", () => {
+  const messages = [
+    user("a", 1, 1, "A"), assistant("a1", 1, 2, "答 A"),
+    user("b", 2, 3, "B"), assistant("b1", 2, 4, "答 B"),
+  ];
+  const events = [
+    toolEvent(10, 1, "conversation_tool_started", "tc-same"),
+    toolEvent(11, 1, "conversation_tool_finished", "tc-same", "calculator", { is_error: false }),
+    toolEvent(20, 2, "conversation_tool_started", "tc-same"), // 另一 Run 复用同一 callId
+    toolEvent(21, 2, "conversation_tool_finished", "tc-same", "calculator", { is_error: true, error_code: "boom" }),
+  ];
+  const turns = buildConversationTurns({ messages, events });
+  assert.equal(turns.length, 2);
+  assert.equal(turns[0].toolActivities.length, 1, "A 只见自己的工具活动");
+  assert.equal(turns[0].toolActivities[0].status, "success");
+  assert.equal(turns[0].toolActivities[0].seq, 10);
+  assert.equal(turns[1].toolActivities.length, 1, "B 的工具不被 A 的 started/finished 污染");
+  assert.equal(turns[1].toolActivities[0].status, "error");
+  assert.equal(turns[1].toolActivities[0].errorCode, "boom");
+  assert.equal(turns[1].toolActivities[0].seq, 20);
+});
+
+test("同一 Turn 内多 Tool 按事件 sequence_no 排序（而非 callId 字典序）", () => {
+  const messages = [user("a", 1, 1, "A"), assistant("a1", 1, 2, "答 A")];
+  const events = [
+    toolEvent(30, 1, "conversation_tool_started", "tc-zebra"),
+    toolEvent(31, 1, "conversation_tool_finished", "tc-zebra", "calculator", { is_error: false }),
+    toolEvent(20, 1, "conversation_tool_started", "tc-alpha"),
+    toolEvent(21, 1, "conversation_tool_finished", "tc-alpha", "calculator", { is_error: false }),
+  ];
+  const [turn] = buildConversationTurns({ messages, events });
+  assert.equal(turn.toolActivities.length, 2);
+  assert.equal(turn.toolActivities[0].toolCallId, "tc-alpha"); // seq 20 先发生
+  assert.equal(turn.toolActivities[1].toolCallId, "tc-zebra");
+});
+
+test("活跃 head 尚无落库回复（流式文本在途）时 turn 为 running，不误标 queued", () => {
+  const messages = [user("a", 1, 1, "A")]; // assistant 消息尚未 commit
+  const turns = buildConversationTurns({
+    messages,
+    overrides: { activeRunId: 1, streaming: { runId: 1, text: "正在流式…" } },
+  });
+  assert.equal(turns[0].status, "running");
+  assert.equal(turns[0].streamingText, "正在流式…");
+});
+
 test("scrollPolicy: 打开/自己发送/刷新强制到底；流式仅在近底部时跟随", () => {
   assert.equal(shouldAutoScroll({ eventKind: "open", isNearBottomNow: false }), true);
   assert.equal(shouldAutoScroll({ eventKind: "own", isNearBottomNow: false }), true);

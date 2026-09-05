@@ -8,7 +8,7 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "node --test tests/turnModel.test.mjs"
+    "test": "node --test tests/turnModel.test.mjs tests/chatState.test.mjs tests/markdownRender.test.mjs"
   },
   "dependencies": {
     "antd": "^6.3.2",

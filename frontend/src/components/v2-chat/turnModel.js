@@ -1,4 +1,4 @@
-// Turn 归组纯函数（P06 Frontend UX Hardening 核心）。
+// Turn 归组纯函数（P06 Frontend UX Hardening 核心，P06 fix 轮加固工具归属）。
 //
 // 数据库 Message sequence 是物理落库顺序；Follow-up 场景下 B.user 可能先于
 // A.assistant 落库（sequence 交错）。UI 层一律按"所属 Turn"归组，而不是按
@@ -47,30 +47,39 @@ export function buildConversationTurns({
     userMessages.filter((m) => m.run_id != null).map((m) => [m.run_id, m.sequence_no]),
   );
 
-  // 事件 → 工具活动（按 tool_call_id 合并 started/finished）。
-  const toolByCallId = new Map();
+  // 事件 → 工具活动。合并键 = (run_id, tool_call_id)：不同 Run 复用同一
+  // tool_call_id 时互不污染（否则 A 的 started 会被 B 的 finished 覆盖终态）。
+  // 排序键 = 事件 sequence_no（同 Turn 内按调用先后，而非 callId 字典序）。
+  const toolByKey = new Map();
   const terminalStatusByRunId = new Map();
   for (const event of events) {
-    if (event.event_type === "conversation_tool_started"
-        || event.event_type === "conversation_tool_finished") {
+    if (["conversation_tool_started", "conversation_tool_finished"].includes(event.event_type)) {
       const callId = event.payload?.tool_call_id;
       if (!callId) continue;
-      const existing = toolByCallId.get(callId) || {
-        toolCallId: callId, toolName: event.payload?.tool_name || "", status: "running",
-        runId: event.run_id ?? null,
+      const runId = event.run_id ?? null;
+      const key = `${runId ?? ""}::${callId}`;
+      const existing = toolByKey.get(key) || {
+        toolCallId: callId,
+        runId,
+        toolName: event.payload?.tool_name || "",
+        status: "running",
+        errorCode: null,
+        seq: event.sequence_no ?? 0,
       };
-      existing.toolName = event.payload?.tool_name || existing.toolName;
-      existing.runId = event.run_id ?? existing.runId;
+      if (!existing.toolName && event.payload?.tool_name) existing.toolName = event.payload.tool_name;
+      if (existing.runId == null && runId != null) existing.runId = runId;
+      existing.seq = Math.min(existing.seq, event.sequence_no ?? existing.seq);
       if (event.event_type === "conversation_tool_finished") {
         existing.status = event.payload?.is_error ? "error" : "success";
         existing.errorCode = event.payload?.error_code ?? null;
       }
-      toolByCallId.set(callId, existing);
+      toolByKey.set(key, existing);
     } else if (["run_succeeded", "run_failed", "run_cancelled", "run_interrupted"].includes(event.event_type)) {
       if (event.run_id != null) terminalStatusByRunId.set(event.run_id, event.event_type.replace("run_", ""));
     }
   }
-  const toolActivities = [...toolByCallId.values()].sort((a, b) => a.toolCallId < b.toolCallId ? -1 : 1);
+  const toolActivities = [...toolByKey.values()]
+    .sort((a, b) => (a.seq - b.seq) || (a.toolCallId < b.toolCallId ? -1 : 1));
 
   // 兜底：无 run_id 的非 user 消息归属最近的 user。
   const ownerByMessageId = new Map();
@@ -125,7 +134,7 @@ export function buildConversationTurns({
     }
   }
 
-  // 工具活动归属 Turn：仅接受两种可信来源 —— DB 事件 run_id，或调用方在事件
+  // 工具活动归属 Turn：只接受两种可信来源 —— DB 事件 run_id，或调用方在事件
   // 到达时解析好的 overrides.toolOwners（callId -> ownerSequence）。
   // 禁止“兜底挂到最新 Turn”：旧数据缺失归属时会错误迁移到每个新回答之后。
   const turns = [...turnsByOwner.values()].sort((a, b) => a.ownerSequence - b.ownerSequence);
@@ -137,9 +146,9 @@ export function buildConversationTurns({
   }
   const explicitOwners = overrides.toolOwners || new Map();
   for (const activity of toolActivities) {
-    const target = (activity.runId != null && toolRunToTurn.get(activity.runId))
-      || (explicitOwners.get(activity.toolCallId) != null
-          && toolOwnerToTurn.get(explicitOwners.get(activity.toolCallId)));
+    const byRun = activity.runId != null ? toolRunToTurn.get(activity.runId) : undefined;
+    const byOwner = explicitOwners.get(activity.toolCallId);
+    const target = byRun || (byOwner != null && toolOwnerToTurn.get(byOwner));
     if (target) {
       target.toolActivities.push(activity);
       activity.turnOwnerSequence = target.ownerSequence;
@@ -157,7 +166,9 @@ export function buildConversationTurns({
         turn.status = overridesMap[turn.runId].status;
         turn.errorCode = overridesMap[turn.runId].errorCode || null;
       } else if (turn.runId === activeRunId) {
-        turn.status = turn.assistantMessages?.length ? "running" : "queued";
+        // 活跃 head（已 claim / 执行中）：一律 running —— 流式文本在途时
+        // 落库 assistant 消息可能尚未写入，不能因此标成 queued。
+        turn.status = "running";
       }
     }
     // 尚无任何 Run 信息的纯 user turn：提交后未执行 → queued（follow-up 或等待 claim）

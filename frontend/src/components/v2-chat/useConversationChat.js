@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as conversationApi from "./conversationApi";
 import { runErrorMessage } from "./conversationErrors.js";
+import {
+  canSendMessage, conversationState, mergeRenamedConversation, stopTargetRun,
+} from "./chatState.js";
 import { buildConversationTurns, extractText } from "./turnModel.js";
 
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : `id-${Date.now()}-${Math.random()}`);
@@ -46,12 +49,11 @@ export default function useConversationChat(userId) {
   const [phase, setPhase] = useState("idle"); // idle/queued/running/paused/failed/interrupted/cancelled
   const [error, setError] = useState("");
   const [runError, setRunError] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(false); // 仅“新建对话”等操作锁，不拦截发送
   const [capabilities, setCapabilities] = useState(null);
   const [connectionError, setConnectionError] = useState("");
   const lastEventSequence = useRef(0);
   const stopStream = useRef(null);
-  const runRef = useRef(null);
   const activeId = useRef(null);
   const generation = useRef(0);
   const refreshSequence = useRef(0);
@@ -99,17 +101,15 @@ export default function useConversationChat(userId) {
     backfillToolOwners(msgs);
     for (const id of committedIds.current) pendingText.current.delete(id);
     setStreaming([...pendingText.current.values()].join("\n\n"));
-    const latestStatus = snap.latest_run?.status;
-    const nextPhase = snap.active_run?.status
-      || (snap.queue_state === "paused" ? "paused"
-        : ["failed", "interrupted", "cancelled"].includes(latestStatus) ? latestStatus : "idle");
+    // 顶部状态一律由 snapshot 派生：A running + B queued 时仍是 running，
+    // 提交 follow-up 不再直接改全局 phase。
+    const nextPhase = conversationState(snap);
     setPhase(nextPhase);
-    if (["failed", "interrupted"].includes(nextPhase)) {
+    if (nextPhase === "failed" || nextPhase === "interrupted") {
       setRunError(runErrorMessage(snap.latest_run?.error_code));
-    } else if (nextPhase !== "cancelled") {
+    } else {
       setRunError("");
     }
-    runRef.current = snap.active_run?.id || null;
     return { snap, msgs };
   }, [backfillToolOwners]);
 
@@ -170,17 +170,13 @@ export default function useConversationChat(userId) {
           setPhase("running");
           setRunError("");
         } else if (event.event_type === "run_succeeded") {
-          setPhase("idle");
-          scheduleRefresh(); // Keep visible text until the committed message loads.
+          scheduleRefresh(); // 顶部状态交给 snapshot 派生（worker 可能立刻提升下一个 run）
         } else if (event.event_type === "run_failed") {
-          setPhase("failed");
           setRunError(runErrorMessage(event.payload?.error_code));
           scheduleRefresh();
         } else if (event.event_type === "run_cancelled") {
-          setPhase("cancelled");
           scheduleRefresh();
         } else if (event.event_type === "run_interrupted") {
-          setPhase("interrupted");
           setRunError("Agent Worker 已中断，本轮没有生成回答，请重新发送。");
           scheduleRefresh();
         } else if (event.event_type === "conversation_message_committed") {
@@ -213,7 +209,6 @@ export default function useConversationChat(userId) {
     setConnectionError("");
     setSnapshot(null);
     setPhase("idle");
-    runRef.current = null;
     // Establish the subscription before slow snapshot requests. It survives
     // idle time and reconstructs in-flight text; committed IDs suppress replay.
     connectEvents(conversation.id);
@@ -236,27 +231,51 @@ export default function useConversationChat(userId) {
     }
   }, [openConversation]);
 
-
+  // 重命名成功后同时更新 conversations list 与 active conversation：
+  // sidebar、打开着的 header title 保持一致，不能只改列表。
+  const applyRenameTitle = useCallback((conversationId, title) => {
+    const next = mergeRenamedConversation({ conversations, active, conversationId, title });
+    setConversations(next.conversations);
+    setActive(next.active);
+  }, [conversations, active]);
 
   const setTitle = useCallback(async (conversationId, rawTitle) => {
     const title = String(rawTitle || "").replace(/\s+/g, " ").trim();
     if (!title || title.length > 200) return;
     try {
       const renamed = await conversationApi.renameConversation(conversationId, { title });
-      setConversations((prev) => prev.map((c) => (c.id === conversationId ? renamed.data : c)));
-      setActive((prev) => (prev && prev.id === conversationId ? { ...prev, title: renamed.data.title } : prev));
+      applyRenameTitle(conversationId, renamed.data.title || title);
     } catch { /* 重命名失败不打断对话 */ }
-  }, []);
+  }, [applyRenameTitle]);
 
-  const cancel = useCallback(async () => {
-    if (!runRef.current) return;
+  const renameIfNeeded = useCallback(async (conversationId, fallbackTitle) => {
+    if (!fallbackTitle) return;
+    const title = String(fallbackTitle).replace(/\s+/g, " ").trim().slice(0, 24);
+    if (!title) return;
     try {
-      await conversationApi.cancelConversationRun(runRef.current);
-      setPhase("cancelled");
+      const renamed = await conversationApi.renameConversation(conversationId, { title });
+      applyRenameTitle(conversationId, renamed.data.title || title);
+    } catch { /* 自动命名失败不阻断聊天 */ }
+  }, [applyRenameTitle]);
+
+  // Stop = 取消正在执行的 active head（snapshot.active_run.id）。
+  // 绝不取消 latest submitted：A running + B queued 时 Stop 必须作用于 A。
+  const cancel = useCallback(async () => {
+    const target = stopTargetRun(snapshot);
+    if (!target) return;
+    setRunError("");
+    try {
+      await conversationApi.cancelConversationRun(target);
+      // worker 随后发 run_cancelled；这里立即拉一次让顶部状态快速归位
+      if (active?.id) void refresh(active.id).catch(() => {});
     } catch (err) {
-      setError(String(err?.response?.data?.detail || err.message));
+      const status = err?.response?.status;
+      // 404/409：run 已终态（worker 已提升下一个 run）→ 视为取消已完成
+      if (status !== 404 && status !== 409) {
+        setError(String(err?.response?.data?.detail || err.message));
+      }
     }
-  }, []);
+  }, [snapshot, active?.id, refresh]);
 
   useEffect(() => {
     let disposed = false;
@@ -301,49 +320,37 @@ export default function useConversationChat(userId) {
     [messages, allEvents, streaming, snapshot, toolOwners],
   );
 
-  const renameIfNeeded = useCallback(async (conversationId, fallbackTitle) => {
-    if (!fallbackTitle) return;
-    const title = fallbackTitle.replace(/\s+/g, " ").trim().slice(0, 24);
-    try {
-      await conversationApi.renameConversation(conversationId, { title });
-      const list = await conversationApi.listConversations();
-      setConversations(list.data);
-    } catch { /* 自动命名失败不阻断聊天 */ }
-  }, []);
-
   const send = useCallback(async (text) => {
     if (!active || !text.trim()) return;
-    if (capabilities?.model_ready === false) {
-      setRunError(runErrorMessage("configuration_not_ready"));
+    if (!canSendMessage({ hasActive: true, phase, modelReady: capabilities?.model_ready })) {
+      if (capabilities?.model_ready === false) {
+        setRunError(runErrorMessage("configuration_not_ready"));
+      }
       return;
     }
     setError("");
     setRunError("");
-    setBusy(true);
     const scope = generation.current;
     try {
-      const res = await conversationApi.submitTurn(active.id, {
+      // queue_mode=follow_up：A running 时提交 B 会入队，不在 UI 层猜测状态；
+      // 顶部 phase 由下方 refresh（snapshot）派生，B 的 queued 由 turnModel 显示。
+      await conversationApi.submitTurn(active.id, {
         content: text.trim(),
         client_request_id: uid(),
         queue_mode: "follow_up",
       });
       if (scope !== generation.current) return;
-      const submission = res.data;
-      runRef.current = submission.run_id;
-      if (submission.queue_state === "executable") setPhase("queued");
-      else if (submission.queue_state === "paused") setPhase("paused");
-      else setPhase("queued");
       const result = await refresh(active.id);
       const firstUser = result?.msgs?.find((m) => m.role === "user");
-      if (active.title === "新对话" && result?.msgs && result.msgs.filter((m) => m.role === "user").length === 1) {
+      const isFirstUserMessage = (result?.msgs?.filter((m) => m.role === "user").length ?? 0) === 1;
+      if ((!active.title || active.title === "新对话") && isFirstUserMessage) {
         void renameIfNeeded(active.id, firstUser ? extractText(firstUser.content) : text);
       }
     } catch (err) {
       if (scope === generation.current) setError(String(err?.response?.data?.detail || err.message));
-    } finally {
-      setBusy(false);
     }
-  }, [active, capabilities?.model_ready, refresh, renameIfNeeded]);
+    // 注意：这里不设 busy——网络请求在途时依然允许继续输入/发送 follow-up。
+  }, [active, phase, capabilities?.model_ready, refresh, renameIfNeeded]);
 
   return {
     turns,

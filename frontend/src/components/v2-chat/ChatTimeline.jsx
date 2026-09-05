@@ -4,11 +4,13 @@ import { isNearBottom, shouldAutoScroll } from "./scrollPolicy.js";
 
 const SCROLL_THRESHOLD = 80;
 
-// 消息时间轴：维护 isNearBottom，按场景自动滚动（打开/发送强制到底；
-// 流式仅在近底部跟随；用户上滚时显示"回到最新"，绝不强制拉回）。
+// 消息时间轴：维护 isNearBottom，按场景自动滚动。
+// 切换/打开任意 Conversation 都默认滚到底（不做 per-conversation 只滚一次）；
+// 自己发送强制到底；流式仅在近底部跟随；用户主动上滑看历史时绝不强制拉回，
+// 只显示"↓ 回到最新"。
 export default function ChatTimeline({ turns, streaming, activeId, sendNonce }) {
   const containerRef = useRef(null);
-  const intent = useRef(null); // "force" | "follow"
+  const intent = useRef(null); // "force"（切换会话/自己发送时置位）
   const [nearBottom, setNearBottom] = useState(true);
   const [jumpVisible, setJumpVisible] = useState(false);
 
@@ -25,28 +27,27 @@ export default function ChatTimeline({ turns, streaming, activeId, sendNonce }) 
     if (el) el.scrollTo({ top: el.scrollHeight, behavior });
   };
 
-  const openedOnce = useRef(new Set());
+  // activeId 每次变化（含从别的会话切回来）都默认滚到底。
+  // 状态更新放在 requestAnimationFrame 内，避免 effect 内同步 setState。
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return undefined;
     el.addEventListener("scroll", updatePosition, { passive: true });
     updatePosition();
-    // 首次打开/切换会话：强制定位到底部（不打扰用户主动查看历史）。
-    if (!openedOnce.current.has(activeId)) {
-      openedOnce.current.add(activeId);
-      requestAnimationFrame(() => {
-        scrollToBottom();
-        setNearBottom(true);
-        setJumpVisible(false);
-      });
-    }
+    intent.current = "force";
+    requestAnimationFrame(() => {
+      scrollToBottom();
+      setNearBottom(true);
+      setJumpVisible(false);
+    });
     return () => el.removeEventListener("scroll", updatePosition);
   }, [activeId]);
 
-  // 切换/打开/自己发送：强制到底；流式：近底部才跟随。
-  // 状态更新放在 requestAnimationFrame 内，避免 effect 内同步 setState。
+  // 内容变化：intent=force（切换）或 sendNonce（自己发送）→ 强制到底；
+  // 其余（流式/刷新）仅在近底部时跟随，用户上滑时不动。
   useEffect(() => {
-    if (!containerRef.current) return;
+    const el = containerRef.current;
+    if (!el) return;
     if (intent.current === "force" || sendNonce > 0) {
       const force = intent.current === "force";
       intent.current = null;

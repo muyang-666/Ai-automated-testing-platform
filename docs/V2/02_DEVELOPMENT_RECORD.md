@@ -772,3 +772,38 @@ v2-chat 已含浮动窗口（min/max/launcher）、SSE 订阅（eventStream.js �
 - 修复：将 `resolveOwnerForRun` + `backfillToolOwners` 定义移到 `refresh` 之前（二者只依赖 refs，无循环）。
 - 验证：ESLint 通过；headless Chrome（CDP）注入真实登录态整页加载复现/回归：修复前捕获到该 ReferenceError 且 `#root` 空；修复后 0 exception，侧栏菜单 + 主页面 + V2 Chat 悬浮球正常渲染。
 - 教训（写给自己）：同一 hook 内 `const` 之间的交叉引用必须保证声明顺序先于使用；此类 bug 应补一条静态自检（后续可加 no-use-before-define 或构建期 TDZ 检查）。
+
+## 2.26 2026-09-05 — P06 Chat 前端 Bug Fix + UI Polish（纯前端，未触碰 Agent Runtime）
+
+### Bug1/Stop 取消错 Run
+- 根因：`send()` 把 `runRef` 指向最新提交的 follow-up；Stop 取消 B 而不是正在跑的 A。
+- 修复：删除 runRef；新增纯函数 `stopTargetRun(snapshot) = snapshot.active_run.id`；`cancel()` 只取消 active head。A running + B queued 时 Stop 作用于 A。
+
+### Bug2/全局 phase 覆盖 Turn
+- 根因：submit 后按 submission.queue_state 把全局 phase 改成 queued，顶部错误显示"排队中"。
+- 修复：新增 `conversationState(snapshot)`（active_run.status > queue_state executable=queued > paused > 终态 > idle），顶部状态一律由 snapshot 派生，事件仅做瞬时修正（run_started→running，终态→scheduleRefresh）。B 的 queued 由 turnModel 显示（非 active、无终态、无回复）。
+- 顺带修复：active head 无已落库 assistant 文本（流式在途）时不再误标 queued → 一律 running。
+
+### Bug3/切换会话滚动
+- 删除 `openedOnce` per-conversation 逻辑；每次 activeId 变化都置 force 滚到底（rAF 内），流式仅近底部跟随、上滑不拉回，保留"↓ 回到最新"。
+
+### Bug4/Title 同步
+- 新增纯函数 `mergeRenamedConversation`；自动命名与手动改名共用 `applyRenameTitle`，同时更新 conversations list 与 active（header 数据源），不再只改 sidebar。
+
+### Bug5/Markdown
+- 新增纯函数 `markdownRender.js`：输出结构化数据（paragraph/bold/inline code/code block/list），组件映射 React 元素；零 HTML 输出 + 文本节点渲染 → 原始 HTML 无法注入；未闭合符号容错。ChatTurn/流式文本均走渲染。
+
+### Bug6/快速连续发送
+- 发送门禁 `canSendMessage` 只由 active/paused/modelReady 决定；网络 busy 从发送路径剥离（busy 仅用于"新建对话"操作锁）。Running 中输入框与 Send 均可用，连续 Enter 提交 follow-up 入队。
+
+### Bug7/工具加固
+- 合并键由 tool_call_id 改为 (run_id, tool_call_id)（不同 Run 复用同一 callId 不再互相覆盖终态）；同一 Turn 多 Tool 按事件 sequence_no 排序（非 callId 字典序）；React key 同步 run+call。
+
+### UI Polish
+- v2Chat.css 整体重写为开发者工作台：白/低饱和灰阶、细边框、少阴影；黑色大标题栏 → 46px 白色细栏（品牌/居中会话标题/运行态细 chip/窗口按钮）；New chat 改紧凑文字按钮；sidebar 240px、激活项浅灰；主内容/Composer 最大 800px 居中；User 浅灰气泡、Assistant 无卡片；Tool 小型灰 inline；去掉常驻"状态/可用工具"调试信息；字体栈 Inter/system-ui/PingFang SC 等；悬浮球改白卡。未复制任何商标。
+
+### 测试与构建（真实结果）
+- `npm test`：25/25 通过（原 6 + 新增 19：Stop 目标、conversationState、canSendMessage、mergeRenamed、跨 Run 同 callId 不串 Turn、seq 排序、流式 active running、markdown 5 项）。测试脚本改为 `node --test tests/{turnModel,chatState,markdownRender}.test.mjs`。
+- `npm run lint`：0 errors（7 个既有 warning，均在旧 pages）。
+- `npm run build`：通过（chunk>500KB 提示为既有）。
+- headless Chrome CDP 整页回归：0 exception，主应用 + V2 Chat 正常渲染（防白屏回归）。

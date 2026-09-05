@@ -4,11 +4,10 @@ import ChatTimeline from "./ChatTimeline.jsx";
 import ChatComposer from "./ChatComposer.jsx";
 import "./v2Chat.css";
 
-const QUEUE_BADGE = { queued: "排队中", paused: "已暂停", failed: "失败",
-  interrupted: "已中断", cancelled: "已取消", running: "回答中", idle: "空闲" };
-const TOOL_LABELS = { calculator: "计算器" };
-const DEFAULT_LAYOUT = { width: 760, height: 620 };
-const MIN_SIZE = { width: 420, height: 360 };
+const PHASE_TEXT = { running: "回答中…", queued: "排队中…", paused: "已暂停", failed: "失败",
+  interrupted: "已中断", cancelled: "已取消", idle: "空闲" };
+const DEFAULT_LAYOUT = { width: 880, height: 640 };
+const MIN_SIZE = { width: 440, height: 380 };
 
 function storageKey(userId) {
   return `testmind:v2-chat-window:${userId || "anonymous"}`;
@@ -60,7 +59,9 @@ export default function V2ChatPanel({ currentUser }) {
   const dragRef = useRef(null);
   const launcherDragRef = useRef(null);
   const suppressLauncherClick = useRef(false);
-  const canSend = !chat.busy && !!chat.active && chat.phase !== "paused"
+  // 发送门禁只由对话状态决定；chat.busy 只是“新建对话”的操作锁，绝不拦截发送
+  // （Running 中必须允许继续发 follow-up，快速连续发送不能被静默吞掉）。
+  const canSend = Boolean(chat.active) && chat.phase !== "paused"
     && chat.capabilities?.model_ready !== false;
   const shown = fit(layout, layout);
 
@@ -168,8 +169,9 @@ export default function V2ChatPanel({ currentUser }) {
           if (suppressLauncherClick.current) { suppressLauncherClick.current = false; return; }
           setLayout((current) => ({ ...current, mode: "normal", ...fit(current, current) }));
         }}>
-        <span className="v2chat-launcher-mark">AI</span>
-        <span><strong>TestMind Agent</strong><small>{chat.STATE_LABELS[chat.phase] || "打开对话"}</small></span>
+        <span className="v2chat-brand-mark">AI</span>
+        <span><strong>TestMind Agent</strong>
+          <small>{chat.phase && chat.phase !== "idle" ? PHASE_TEXT[chat.phase] : "打开对话"}</small></span>
       </button>
     );
   }
@@ -186,7 +188,16 @@ export default function V2ChatPanel({ currentUser }) {
         onPointerUp={() => { dragRef.current = null; }} onPointerCancel={() => { dragRef.current = null; }}>
         <div className="v2chat-brand">
           <span className="v2chat-brand-mark">AI</span>
-          <div><strong>TestMind Agent</strong><small>{chat.STATE_LABELS[chat.phase] || "对话协作空间"}</small></div>
+          <strong className="v2chat-brand-name">TestMind Agent</strong>
+        </div>
+        <div className="v2chat-conv-head">
+          <span className="v2-chat-title" title="双击重命名" onDoubleClick={handleRenameTitle}>
+            {chat.active?.title || "新的对话"}
+          </span>
+          {chat.phase === "running" && (
+            <span className="v2chat-status-chip is-running"><i className="v2chat-dot" />正在回答</span>
+          )}
+          {chat.phase === "queued" && <span className="v2chat-status-chip">排队中</span>}
         </div>
         <div className="v2chat-window-actions">
           <button type="button" aria-label={layout.mode === "maximized" ? "恢复窗口" : "最大化"}
@@ -207,8 +218,9 @@ export default function V2ChatPanel({ currentUser }) {
       <div className="v2chat">
       <aside className="v2chat-side">
         <div className="v2chat-side-head">
-          <span className="brand">TestMind<small>Agent 对话工作台</small></span>
-          <button className="v2chat-new" onClick={chat.newConversation} disabled={chat.busy}>＋ New chat</button>
+          <button type="button" className="v2chat-new" onClick={chat.newConversation} disabled={chat.busy}>
+            ＋ New chat
+          </button>
         </div>
         <ul className="v2chat-list v2chat-side-list">
           {chat.conversations.map((c) => (
@@ -222,16 +234,6 @@ export default function V2ChatPanel({ currentUser }) {
         </ul>
       </aside>
       <main className="v2chat-main">
-        <header className="v2chat-header">
-          <span className="v2-chat-title" title="双击重命名" onDoubleClick={handleRenameTitle}>
-            {chat.active?.title || "V2 对话式 Test Agent"}
-          </span>
-          <span className="v2chat-status">
-            {chat.snapshot ? `状态：${QUEUE_BADGE[chat.phase] || chat.phase}` : ""}
-            {chat.capabilities?.tools?.length
-              ? ` · 可用工具：${chat.capabilities.tools.map((name) => TOOL_LABELS[name] || name).join("、")}` : ""}
-          </span>
-        </header>
         {chat.error && <div className="v2chat-error">{chat.error}</div>}
         {chat.capabilities?.model_ready === false && (
           <div className="v2chat-config-warning">尚未配置 Agent 对话模型，请先前往“模型管理”完成绑定。</div>
@@ -239,14 +241,13 @@ export default function V2ChatPanel({ currentUser }) {
         {chat.runError && chat.capabilities?.model_ready !== false
           && <div className="v2chat-error">{chat.runError}</div>}
         {chat.phase === "paused" && (
-          <div className="v2chat-paused">上一轮失败/中断，后续消息已暂停（请新建对话或等待后续版本恢复）。</div>
+          <div className="v2chat-paused">上一轮失败/中断，本轮已暂停（可新建对话继续）。</div>
         )}
         <ChatTimeline
           turns={chat.turns}
           streaming={chat.streaming}
           activeId={chat.active?.id}
           sendNonce={sendNonce}
-          phase={chat.phase}
         />
         <footer className="v2chat-footer">
           <ChatComposer
@@ -254,8 +255,8 @@ export default function V2ChatPanel({ currentUser }) {
             onChange={setDraft}
             onSubmit={submit}
             onStop={chat.cancel}
-            disabled={!chat.active || chat.phase === "paused" || chat.capabilities?.model_ready === false}
-            stopping={chat.phase === "running" || chat.phase === "queued"}
+            disabled={!canSend}
+            stopping={chat.phase === "running"}
             placeholder={chat.phase === "paused" ? "队列已暂停，请新建对话" : "Ask TestMind…（Enter 发送，Shift+Enter 换行）"}
           />
         </footer>
