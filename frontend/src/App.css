@@ -1,55 +1,198 @@
 #root {
   width: 100%;
   min-height: 100vh;
-  margin: 0 auto;
+  margin: 0;
   padding: 0;
   text-align: initial;
 }
 
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: filter 300ms;
-}
-.logo:hover {
-  filter: drop-shadow(0 0 2em #646cffaa);
-}
-.logo.react:hover {
-  filter: drop-shadow(0 0 2em #61dafbaa);
+.app-sidebar.ant-layout-sider {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  align-self: flex-start;
+  overflow: hidden;
+  border-right: 1px solid #e7e7e9;
+  background:
+    radial-gradient(circle at 4% 7%, rgba(205, 224, 250, 0.78) 0, rgba(205, 224, 250, 0) 34%),
+    radial-gradient(circle at 96% 94%, rgba(255, 231, 181, 0.62) 0, rgba(255, 231, 181, 0) 42%),
+    linear-gradient(160deg, rgba(241, 245, 250, 0.96) 0%, rgba(241, 242, 244, 0.92) 52%, rgba(250, 247, 239, 0.9) 100%) !important;
+  font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", "PingFang SC", "Microsoft YaHei UI", sans-serif;
+  backdrop-filter: blur(18px);
 }
 
-@keyframes logo-spin {
-  from {
-    transform: rotate(0deg);
+.app-sidebar .ant-layout-sider-children {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  background: transparent;
+}
+
+.app-sidebar-brand {
+  display: flex;
+  height: 68px;
+  flex: 0 0 68px;
+  align-items: center;
+  padding: 0 18px;
+  box-sizing: border-box;
+}
+
+.app-sidebar .app-sidebar-brand-name.ant-typography {
+  margin: 0;
+  color: #303136;
+  font-size: 20px;
+  font-weight: 680;
+  letter-spacing: -0.025em;
+  line-height: 1;
+}
+
+.app-sidebar-menu.ant-menu {
+  flex: 1;
+  min-height: 0;
+  padding: 5px 8px 18px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border-inline-end: 0 !important;
+  background: transparent !important;
+  color: #44464b;
+  font-family: inherit;
+}
+
+.app-sidebar-menu.ant-menu-inline .ant-menu-item,
+.app-sidebar-menu.ant-menu-inline .ant-menu-submenu-title {
+  width: 100%;
+  height: 42px;
+  margin: 2px 0;
+  padding-inline: 12px !important;
+  border-radius: 10px;
+  color: #46484d !important;
+  font-size: 15px;
+  font-weight: 440;
+  letter-spacing: -0.01em;
+  line-height: 42px;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.app-sidebar-menu.ant-menu-inline .ant-menu-item::after {
+  display: none;
+}
+
+.app-sidebar-menu.ant-menu-inline .ant-menu-item:hover,
+.app-sidebar-menu.ant-menu-inline .ant-menu-submenu-title:hover {
+  background: rgba(224, 226, 230, 0.52) !important;
+  color: #222327 !important;
+}
+
+.app-sidebar-menu.ant-menu-inline .ant-menu-item-selected {
+  background: rgba(216, 219, 225, 0.68) !important;
+  color: #242529 !important;
+  font-weight: 600;
+}
+
+.app-sidebar-menu.ant-menu-inline .ant-menu-submenu-selected > .ant-menu-submenu-title {
+  color: #303136 !important;
+}
+
+.app-sidebar-menu.ant-menu-inline .ant-menu-sub {
+  background: transparent !important;
+}
+
+.app-sidebar-menu.ant-menu-inline .ant-menu-sub .ant-menu-item {
+  padding-inline-start: 34px !important;
+  font-size: 14.5px;
+}
+
+.app-sidebar-menu .ant-menu-title-content {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app-sidebar-menu .ant-menu-submenu-arrow {
+  color: #85878c !important;
+}
+
+.app-sidebar-menu .ant-menu-item:focus-visible,
+.app-sidebar-menu .ant-menu-submenu-title:focus-visible {
+  outline: 2px solid #8b8e94;
+  outline-offset: -2px;
+}
+
+.app-sidebar-account {
+  display: flex;
+  min-width: 0;
+  flex: none;
+  align-items: center;
+  gap: 9px;
+  margin: 8px;
+  padding: 9px 8px 9px 10px;
+  border: 1px solid rgba(212, 214, 219, 0.72);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.48);
+  box-shadow: 0 1px 3px rgba(36, 38, 42, 0.04);
+  backdrop-filter: blur(14px);
+}
+
+.app-sidebar-account-avatar {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  place-items: center;
+  border: 1px solid rgba(205, 207, 212, 0.86);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.72);
+  color: #3f4146;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.app-sidebar-account-name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: #35373b;
+  font-size: 14px;
+  font-weight: 580;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-sidebar .app-sidebar-logout.ant-btn {
+  height: 30px;
+  flex: none;
+  padding-inline: 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+  color: #66696f;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.app-sidebar .app-sidebar-logout.ant-btn:hover,
+.app-sidebar .app-sidebar-logout.ant-btn:focus-visible {
+  background: rgba(220, 222, 226, 0.58) !important;
+  color: #282a2e !important;
+}
+
+.app-main-layout {
+  min-width: 0;
+  background: #f3f4f6;
+}
+
+.app-main-content {
+  min-width: 0;
+  padding: 24px;
+}
+
+@media (max-width: 900px) {
+  .app-sidebar.ant-layout-sider {
+    flex: 0 0 220px !important;
+    width: 220px !important;
+    max-width: 220px !important;
+    min-width: 220px !important;
   }
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  a:nth-of-type(2) .logo {
-    animation: logo-spin infinite 20s linear;
-  }
-}
-
-.card {
-  padding: 2em;
-}
-
-.read-the-docs {
-  color: #888;
-}
-
-/* 左侧菜单字体加大加粗 */
-.ant-menu-dark .ant-menu-item,
-.ant-menu-dark .ant-menu-submenu-title {
-  font-size: 15px !important;
-  font-weight: 600 !important;
-}
-
-.ant-menu-dark .ant-menu-sub .ant-menu-item {
-  font-size: 15px !important;
-  font-weight: 600 !important;
 }

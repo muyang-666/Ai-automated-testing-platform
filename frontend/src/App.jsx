@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Button, Layout, Menu, Space, Spin, Typography } from "antd";
+import { Button, Layout, Menu, Spin, Typography } from "antd";
 import { getCurrentUser, logout } from "./api/auth";
 import ApiDocPage from "./pages/ApiDocPage";
 import CasePage from "./pages/CasePage";
@@ -16,7 +16,7 @@ import UserPage from "./pages/UserPage";
 // import TestAgentWidget from "./components/test-agent/TestAgentWidget";
 import V2ChatPanel from "./components/v2-chat/V2ChatPanel";
 
-const { Header, Sider, Content } = Layout;
+const { Sider, Content } = Layout;
 const { Text } = Typography;
 
 const PAGE_KEYS = [
@@ -161,55 +161,31 @@ export default function App() {
   return (
     <>
       <Layout style={{ minHeight: "100vh" }}>
-        <Sider width={220} style={{ background: "#001529" }}>
-        <div
-          style={{
-            height: 64,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <Text
-            style={{
-              color: "#fff",
-              fontSize: 18,
-              fontWeight: "bold",
-              letterSpacing: 1,
-            }}
-          >
-            TestMind
-          </Text>
+        <Sider width={240} theme="light" className="app-sidebar">
+        <div className="app-sidebar-brand">
+          <Text className="app-sidebar-brand-name">TestMind</Text>
         </div>
         <Menu
-          theme="dark"
+          theme="light"
+          className="app-sidebar-menu"
           mode="inline"
           selectedKeys={[currentPage]}
           defaultOpenKeys={["function-cases-group", "api-cases-group"]}
           onClick={handleMenuClick}
           items={menuItems}
         />
+        <div className="app-sidebar-account">
+          <span className="app-sidebar-account-avatar" aria-hidden="true">
+            {(currentUser.display_name || currentUser.username || "用户").trim().slice(0, 1)}
+          </span>
+          <span className="app-sidebar-account-name" title={currentUser.display_name || currentUser.username}>
+            {currentUser.display_name || currentUser.username}
+          </span>
+          <Button type="text" className="app-sidebar-logout" onClick={handleLogout}>退出</Button>
+        </div>
         </Sider>
-        <Layout>
-        <Header
-          style={{
-            background: "#fff",
-            padding: "0 24px",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "flex-end",
-          }}
-        >
-          <Space>
-            <Text style={{ fontSize: 18, fontWeight: 700 }}>
-              {currentUser.display_name || currentUser.username}
-            </Text>
-            <Button size="small" style={{ fontSize: 16, fontWeight: 600 }} onClick={handleLogout}>
-              退出
-            </Button>
-          </Space>
-        </Header>
-        <Content style={{ padding: 24 }}>{renderPage()}</Content>
+        <Layout className="app-main-layout">
+        <Content className="app-main-content">{renderPage()}</Content>
         </Layout>
       </Layout>
       <V2ChatPanel key={currentUser.id} currentUser={currentUser} />
