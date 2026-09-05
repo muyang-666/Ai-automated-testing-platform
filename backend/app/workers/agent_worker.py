@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Callable
 
-from app.agents.runtime.errors import UnknownSkillError
+from app.agents.runtime.errors import AgentError, UnknownSkillError
 from app.models.agent.agent_run import AgentRun
 from app.services.agent import agent_run_service, conversation_service
 
@@ -42,6 +42,7 @@ class AgentWorker:
         poll_interval_seconds: float = 1.0,
         stale_after_seconds: float = 300.0,
         conversation_runner_factory: Callable[[], Any] | None = None,
+        conversation_snapshot_factory: Callable[[], Any] | None = None,
         heartbeat_interval_seconds: float | None = None,
         heartbeat_failure_limit: int = 1,
     ):
@@ -57,6 +58,7 @@ class AgentWorker:
         self._session_factory = session_factory
         self._runtime_factory = runtime_factory
         self._conversation_runner_factory = conversation_runner_factory
+        self._conversation_snapshot_factory = conversation_snapshot_factory
         self.worker_id = worker_id
         self._now = now_provider or datetime.utcnow
         self._sleeper = sleeper or time.sleep
@@ -94,7 +96,7 @@ class AgentWorker:
 
         # P05-C/D dispatch：conversation → ConversationRunner；其余 → legacy AgentRunner
         if run.workflow_code == "conversation":
-            result = self._run_conversation(db, run_id, execution_token)
+            result = self._run_conversation(db, run_id, execution_token, run.session_id)
             self._promote_conversation_queue_after_terminal(db, run_id)
             return result
 
@@ -127,7 +129,8 @@ class AgentWorker:
             final_status=fresh.status if fresh else None,
         )
 
-    def _run_conversation(self, db, run_id: int, execution_token: int) -> WorkerRunResult:
+    def _run_conversation(self, db, run_id: int, execution_token: int,
+                          session_id: int) -> WorkerRunResult:
         """conversation Run：ConversationRunner.run()（async）执行并自行 finalize。
 
         P05-D：执行期间并行运行 ownership control loop（fenced heartbeat +
@@ -142,12 +145,23 @@ class AgentWorker:
             self._mark_failed(db, run_id, "agent_unknown_workflow", "未配置 conversation runner")
             return WorkerRunResult(action="failed", run_id=run_id, final_status="failed")
         try:
-            asyncio.run(self._run_conversation_async(db, run_id, execution_token))
+            asyncio.run(self._run_conversation_async(db, run_id, execution_token, session_id))
+        except AgentError as e:
+            db.rollback()
+            fresh = db.query(AgentRun).get(run_id)
+            if fresh is not None and fresh.status == "running":
+                error_code = getattr(e, "error_code", None) or "agent_runtime_error"
+                message = ("Agent 对话模型尚未配置，请在模型管理中绑定 Agent 对话场景。"
+                           if error_code == "configuration_not_ready"
+                           else "Agent 执行失败，请查看错误码。")
+                self._mark_failed(db, run_id, error_code, message)
+            return WorkerRunResult(action="failed", run_id=run_id, final_status="failed")
         except Exception as e:
             db.rollback()
             fresh = db.query(AgentRun).get(run_id)
             if fresh is not None and fresh.status == "running":
-                self._mark_failed(db, run_id, "agent_runtime_error", (str(e) or type(e).__name__)[:500])
+                self._mark_failed(db, run_id, "agent_runtime_error",
+                                  (str(e) or type(e).__name__)[:500])
             return WorkerRunResult(action="failed", run_id=run_id, final_status="failed")
         fresh = db.query(AgentRun).get(run_id)
         return WorkerRunResult(
@@ -156,10 +170,22 @@ class AgentWorker:
             final_status=fresh.status if fresh else None,
         )
 
-    async def _run_conversation_async(self, db, run_id: int, execution_token: int) -> None:
-        """runner task + ownership control task 同 loop 并发；runner 结束即停 control。"""
+    async def _run_conversation_async(self, db, run_id: int, execution_token: int,
+                                      session_id: int) -> None:
+        """runner task + ownership control task 同 loop 并发；runner 结束即停 control。
+
+        P06：runner 事件经 ConversationEventPersister 落库（独立 Session、短事务、
+        文本增量聚合），SSE 以 DB 事件行为 Source of Truth；run 结束后 flush 收尾。
+        """
         cancel_event = asyncio.Event()
         runner = self._conversation_runner_factory()
+        if self._conversation_snapshot_factory is not None:
+            runner.snapshot = self._conversation_snapshot_factory()
+        from app.workers.conversation_event_persister import ConversationEventPersister
+        persister = ConversationEventPersister(
+            self._session_factory, session_id=session_id, run_id=run_id,
+            worker_id=self.worker_id, execution_token=execution_token)
+        runner.event_persister = persister
         runner_task = asyncio.create_task(
             runner.run(db, run_id, cancel_event=cancel_event,
                        worker_id=self.worker_id, execution_token=execution_token))
@@ -168,6 +194,7 @@ class AgentWorker:
         try:
             await asyncio.wait({runner_task}, return_when=asyncio.FIRST_COMPLETED)
             runner_task.result()  # runner 内部异常上抛给 _run_conversation 的统一边界
+            persister.flush()  # 收尾：把未刷出的文本增量落库
         finally:
             control_task.cancel()
             try:
@@ -360,23 +387,25 @@ def main(argv=None) -> None:
     def runtime_factory(on_step_boundary):
         return AgentRunner(skill_registry, tool_registry, on_step_boundary=on_step_boundary)
 
-    # conversation 的执行依赖来源（P05-C 最小装配）：统一 LLMGateway + 当前环境快照。
-    # 模型场景绑定/配置中心属于 P06；默认 env 为空/ mock 时会在首个 conversation Run
-    # 预检失败并以固定错误落 failed，不会静默调用真实 Key。
+    # conversation 执行依赖（P06 收敛）：统一 LLMGateway + 配置中心 agent_chat 场景快照
+    # （按 Run 解析）；工具白名单只暴露 conversation_safe_tools，不暴露 legacy 业务工具。
+    from app.agents.tools.conversation_safe_tools import build_conversation_tool_registry
+    from app.services.agent.conversation_provider import resolve_conversation_snapshot
     conversation_gateway = LLMGateway()
-    conversation_snapshot = ProviderSnapshot(
-        provider_type=settings.LLM_PROVIDER,
-        name=settings.LLM_PROVIDER,
-        base_url=settings.LLM_BASE_URL or "",
-        api_key=settings.LLM_API_KEY or "",
-        model_name=settings.LLM_MODEL or "",
-    )
+    conversation_tools = build_conversation_tool_registry()
+
+    def conversation_snapshot_factory():
+        db = SessionLocal()
+        try:
+            return resolve_conversation_snapshot(db)
+        finally:
+            db.close()
 
     def conversation_runner_factory():
         return ConversationRunner(
             gateway=conversation_gateway,
-            snapshot=conversation_snapshot,
-            tool_registry=tool_registry,
+            snapshot=None,  # 每个 Run 执行前由 worker 经 conversation_snapshot_factory 注入
+            tool_registry=conversation_tools,
         )
 
     worker = AgentWorker(
@@ -386,6 +415,7 @@ def main(argv=None) -> None:
         poll_interval_seconds=args.poll_interval,
         stale_after_seconds=args.stale_after,
         conversation_runner_factory=conversation_runner_factory,
+        conversation_snapshot_factory=conversation_snapshot_factory,
     )
 
     recovered = worker.recover_stale_runs()

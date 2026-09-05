@@ -19,6 +19,11 @@ from app.schemas.llm.llm_config import (
 
 DEFAULT_SCENE_CONFIGS = [
     {
+        "scene_code": "agent_chat",
+        "scene_name": "Agent 对话",
+        "enabled": True,
+    },
+    {
         "scene_code": "requirement_to_function_case",
         "scene_name": "需求生成功能测试用例",
         "enabled": True,
@@ -261,10 +266,27 @@ def delete_model(db: Session, model_id: int) -> bool:
 
 def init_default_scene_configs(db: Session) -> None:
     existing_codes = {row[0] for row in db.query(LLMSceneConfig.scene_code).all()}
+    usable_models = (
+        db.query(LLMModel)
+        .join(LLMProvider, LLMProvider.id == LLMModel.provider_id)
+        .filter(
+            LLMModel.status == "active",
+            LLMModel.is_deleted.is_(False),
+            LLMProvider.status == "active",
+            LLMProvider.is_deleted.is_(False),
+        )
+        .all()
+    )
     added = False
     for cfg in DEFAULT_SCENE_CONFIGS:
         if cfg["scene_code"] not in existing_codes:
-            db.add(LLMSceneConfig(**cfg))
+            values = dict(cfg)
+            # A fresh single-model installation has no meaningful choice to
+            # make.  Bind Agent Chat automatically so the first conversation
+            # works; with zero/multiple models the admin must choose explicitly.
+            if cfg["scene_code"] == "agent_chat" and len(usable_models) == 1:
+                values["model_id"] = usable_models[0].id
+            db.add(LLMSceneConfig(**values))
             added = True
     if added:
         db.commit()

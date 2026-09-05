@@ -638,3 +638,53 @@ run_agent_loop() / loop.py + tool_executor/policy/budget # 已实现，无生产
 ### Deferred
 
 - P06：HTTP/SSE/前端表达（含 paused/executable 展示、取消 UI）、conversation 工具白名单与模型场景绑定；legacy 入口替换收尾（AgentRunner/CaseGenerationWorkflow/legacy API 保留 compat）。P05 范围全部完成。
+
+## 2.22 2026-09-04 — V2-P06：Conversation API + SSE + 基础持续聊天工作台（后端完成并测试；前端接入+build；浏览器 E2E 待验收）
+
+- 授权范围：新 Conversation API/SSE/前端 Chat；不做 TestArtifact/MindMap/Artifact Tool/SSE 之外的 UI。
+
+### Preflight
+
+- 文档：01 状态更新为 P05 已完成 / P06 当前。
+- queued active head cancel：新增 `conversation_service.cancel_conversation_run`（单一 conversation cancel 边界）——head（queued 或 running）取消 → run_cancelled 事件 + 同事务原子 promote 下一个 queued follow-up；queued follow-up 取消只取消自身、不误 promote C；非 owner/非 conversation/已终态按合同报错。HTTP 与 service 测试覆盖。
+
+### 后端实现
+
+- `routers/agent/conversation_router.py`：POST/GET /agent/conversations、GET /{id}（快照）、GET /{id}/messages（after_sequence/limit，结构化 content）、POST /{id}/turns（202，复用 submit_conversation_turn，queue_mode follow_up/reject）、GET /{id}/events（SSE：DB AgentEvent 游标轮询，Bearer 统一鉴权，Token 不进 URL，keep-alive，断线带 after_sequence 续传）、POST /conversation-runs/{id}/cancel、GET /conversation-capabilities。所有权一律 404（不泄露存在性）；configuration_not_ready → 503。
+- `services/agent/conversation_service.py`：cancel_conversation_run、conversation_snapshot、list_messages_since、list_events_since。
+- `services/agent/conversation_provider.py`：agent_chat 场景解析 → ProviderSnapshot（配置中心），未配置抛 configuration_not_ready；capabilities 用 is_conversation_model_ready。
+- `agents/tools/conversation_safe_tools.py`：Conversation 工具白名单（calculator，只读无副作用）；Worker 不再把 legacy T05 工具暴露给 Conversation。
+- `workers/conversation_event_persister.py` + worker 接线：AgentLoop 事件经 sink 安全落库为 AgentEvent 行（conversation_tool_started/finished、conversation_message_committed、conversation_text_delta 聚合 0.25s/400 字符；run 生命周期沿用既有 run_* 名）；文本增量聚合非逐 token；不落隐藏 reasoning/原始日志；独立 Session 短事务，best-effort 不阻断主执行。
+- `runner.py`：新增 event_persister 钩子（compose sink）。
+- Worker main：conversation factory 使用白名单 registry + 每 Run 经 conversation_snapshot_factory 解析 agent_chat 快照。
+
+### 前端实现（build 验证，浏览器未运行）
+
+- `components/v2-chat/`：conversationApi.js（含 fetch+ReadableStream SSE、Bearer 头不进 URL）、useConversationChat.js（idle/queued/running/paused/failed/interrupted/cancelled 状态、follow-up 提交、SSE 增量渲染、断线重连、refresh restore、Stop）、V2ChatPanel.jsx（会话列表/新建/消息/工具活动/流式文本/Queued/Paused/Stop/错误）、v2Chat.css（文本渲染不使用 dangerouslySetInnerHTML）。
+- App.jsx 入口从 TestAgentWidget（旧固定 Workflow 悬浮台，保留文件并标注 deprecated）切换到 V2ChatPanel。`npm run build` 通过。
+
+### 测试（实际命令与结果，backend，项目 venv）
+
+- 新增 `tests/api/test_conversation_api.py`（11 项）覆盖 §24 场景 1-20：创建/owner/list、cross-user 404、turn 202/幂等/409、follow_up/reject、messages 游标与结构化 ToolCall/ToolResult、快照 queue_state、cancel（running head/queued head promote/follow-up 仅取消）、SSE auth/cross-user/游标续传去重、capabilities 无 Secret、HTTP+Worker+Fake 验收故事（17→calculator→22→refresh→17）、provider error 快照一致性。
+- 全后端：`pytest tests --ignore=test_isolation.py` → 578 passed；isolation 3 passed。
+
+### 已知限制 / Deferred（如实记录）
+
+- 浏览器级 E2E（§26）未运行：本仓库无 vitest/Playwright 前端测试基建，本环境无浏览器；前端仅 build 验证。
+- SSE 为 DB 轮询 + 持久化事件（Worker 与 API 独立进程下的唯一跨进程通道）；文本增量按聚合行持久化（非"transient only"，见 persister 注释）。
+- capabilities.worker_status 恒为 unknown（跨进程健康检查留 P10，不伪报 online）。
+- agent_chat 场景需要在模型管理配置后 model_ready 才为 true（真实供应商验证留 P10）。
+- 前端 lint 未运行（仓库无 lint 脚本基线噪音评估）；旧 legacy 悬浮台文件保留 deprecated，V1 入口未物理删除。
+- 未触碰 docs/V2 根目录 P06/P07_EXECUTION_GUIDE.md（非本轮创建，未提交为正式规范）。
+
+### P06-R01 交互与可靠性修正（2026-09-04）
+
+- 前端将消息游标与事件游标彻底分离；SSE 与普通 API 统一使用 `VITE_API_BASE_URL`，并补齐 401 登录失效处理和重连定时器清理。
+- SSE 后端释放请求级读事务，每次轮询使用独立短 Session，避免 MySQL REPEATABLE READ 下看不到新事件。
+- `conversation_message_committed` 不再由内存 `message_end` 提前伪报；消息、committed 事件、用量和 Run 终态在 ownership 行锁下同事务提交。
+- 执行期增量/工具事件写入也携带 worker_id + execution_token 做 fencing，旧 Worker 失去所有权后停止写事件。
+- Conversation Chat 改为独立浮窗：可拖动、原生自由缩放、最小化、最大化；按用户保存模式、位置和尺寸，小屏自动贴合视口。
+- 截图复核后修正文案与布局：移除 `Revision/Idle/tools` 混合文案，改为中文状态/工具名；用户消息右对齐；按钮颜色与间距显式定义；失败/中断不再被 refresh 覆盖成空闲。
+- 无回答根因经只读查询确认：现有 Run 5/6 均被 Worker 消费，但因缺少 `agent_chat` 场景以 `configuration_not_ready` 失败。默认场景现包含“Agent 对话”；仅有一个可用模型时首次初始化自动绑定，多模型不猜测。当前本机已初始化为 `agent_chat → model_id=1`，`model_ready=true`，未发起真实模型请求。
+- 最小化使用独立 launcher 坐标，每次点击最小化先吸附右下角，之后仍可单独拖动；恢复时保留大窗口原位置与尺寸。
+- 验证：相关后端 62 passed（含默认场景单/多模型选择边界与 Worker 配置错误码保留）；新前端文件 ESLint 通过；`vite build` 通过。电脑操作复核未发现可复用的已登录浏览器标签，真实登录/真实模型交互仍需人工 E2E。

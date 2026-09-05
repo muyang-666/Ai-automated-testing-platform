@@ -12,7 +12,9 @@ import ReportPage from "./pages/ReportPage";
 import ParameterPage from "./pages/ParameterPage";
 import ScenePage from "./pages/ScenePage";
 import UserPage from "./pages/UserPage";
-import TestAgentWidget from "./components/test-agent/TestAgentWidget";
+// 旧固定 Workflow 悬浮台（deprecated，P06 起新 V2 Chat 使用 V2ChatPanel）
+// import TestAgentWidget from "./components/test-agent/TestAgentWidget";
+import V2ChatPanel from "./components/v2-chat/V2ChatPanel";
 
 const { Header, Sider, Content } = Layout;
 const { Text } = Typography;
@@ -210,7 +212,7 @@ export default function App() {
         <Content style={{ padding: 24 }}>{renderPage()}</Content>
         </Layout>
       </Layout>
-      <TestAgentWidget key={currentUser.id} currentUser={currentUser} />
+      <V2ChatPanel key={currentUser.id} currentUser={currentUser} />
     </>
   );
 }

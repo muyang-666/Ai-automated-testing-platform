@@ -18,6 +18,7 @@ from sqlalchemy import text as sql_text
 from app.agents.conversation.events import AssistantDoneEvent, AssistantStartEvent
 from app.agents.conversation.messages import AssistantMessage, TextContent, Usage
 from app.agents.providers.streaming import AttemptBudget, ProviderSnapshot
+from app.agents.runtime.errors import AgentError
 from app.core.database import SessionLocal
 from app.models.agent.agent_event import AgentEvent
 from app.models.agent.agent_message import AgentMessage
@@ -237,7 +238,9 @@ def test_worker_claims_and_executes_conversation_run_end_to_end(db_session):
     stored = db_session.query(AgentMessage).filter(
         AgentMessage.session_id == chat.id).order_by(AgentMessage.sequence_no.asc()).all()
     assert [row.role for row in stored] == ["user", "assistant"]
-    assert event_types_for(db_session, run_id) == ["run_started", "run_succeeded"]  # 无重复 run_started
+    assert event_types_for(db_session, run_id) == [
+        "run_started", "conversation_message_committed", "run_succeeded",
+    ]  # committed 事件与消息同事务，且不重复 run_started
     assert probe["result"] == "ok", f"LLM 等待期间持有 DB 事务: {probe['error']}"
 
 
@@ -344,6 +347,34 @@ def test_conversation_without_configured_runner_fails_cleanly(db_session):
     assert result.action == "failed"
     run = fresh_run(db_session, run_id)
     assert run.status == "failed" and run.error_code == "agent_unknown_workflow"
+
+
+def test_conversation_model_configuration_error_keeps_specific_error_code(db_session):
+    seed_user(db_session)
+    chat = conversation_session(db_session)
+    submission = submit_turn(db_session, chat.id, content="hello", key="no-model")
+
+    def unavailable_snapshot():
+        raise AgentError("not configured", error_code="configuration_not_ready")
+
+    worker = AgentWorker(
+        session_factory=SessionLocal,
+        runtime_factory=lambda hook: RecordingLegacyRunner(),
+        worker_id=WORKER_A,
+        now_provider=FakeClock(),
+        sleeper=lambda _s: None,
+        poll_interval_seconds=0.1,
+        stale_after_seconds=300.0,
+        conversation_runner_factory=lambda: ChatConversationRunner(),
+        conversation_snapshot_factory=unavailable_snapshot,
+    )
+
+    result = worker.run_once()
+    run = fresh_run(db_session, submission.run.id)
+    assert result.action == "failed"
+    assert run.status == "failed"
+    assert run.error_code == "configuration_not_ready"
+    assert "模型尚未配置" in run.error_message
 
 
 # ---------------------------------------------------------------- Case 6：claim service

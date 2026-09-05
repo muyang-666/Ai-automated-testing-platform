@@ -159,7 +159,9 @@ def test_plain_chat_restores_persists_and_succeeds_without_duplicating_user_mess
     assert [row.role for row in stored] == ["user", "assistant"]
     assert stored[0].content == "hello" and stored[1].content == "hi"
     assert len(outcome.persisted_message_ids) == 1
-    assert event_types(db_session, first.run.id) == ["run_started", "run_succeeded"]
+    assert event_types(db_session, first.run.id) == [
+        "run_started", "conversation_message_committed", "run_succeeded",
+    ]
     run = db_session.get(AgentRun, first.run.id)
     assert run.status == "succeeded" and run.active_slot is None
     assert run.llm_calls_used == 1 and run.tool_calls_used == 0

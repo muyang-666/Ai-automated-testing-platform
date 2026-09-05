@@ -17,7 +17,7 @@ SSE。禁止本模块 → AgentRunner 或 → CaseGenerationWorkflow 的任何�
 1) start 事务（running + run_started 事件，短事务立即 commit）；
 2) restore 只读后立即 rollback 释放读事务；
 3) 网络等待（run_agent_loop）期间无任何 DB 事务；
-4) 收尾：persist_conversation_messages 自带提交，随后事件/终态在同一收尾 commit 完成。
+4) 收尾：ownership 行锁下把消息、message_committed 事件与终态一次 commit。
 """
 from __future__ import annotations
 
@@ -83,6 +83,7 @@ class ConversationRunner:
     provider_attempt_budget: AttemptBudget = field(default_factory=lambda: AttemptBudget(limit=24))
     stream_limits: StreamLimits = field(default_factory=StreamLimits)
     policy: Any = None
+    event_persister: Callable[[Any], None] | None = None  # P06：安全执行事件落库（Worker 注入）
     id_factory: Callable[[], str] = field(default_factory=lambda: lambda: uuid.uuid4().hex)
     timestamp_factory: Callable[[], int] = field(default_factory=lambda: lambda: int(time.time() * 1000))
 
@@ -141,7 +142,23 @@ class ConversationRunner:
                 status="failed", error_code="ownership_lost",
                 model_calls=result.model_calls, tool_calls=result.tool_calls,
                 turns=result.turns, run_finalized=False)
-        return self._finalize_run(db, run, result, loop_events)
+        try:
+            return self._finalize_run(
+                db, run, result, loop_events,
+                worker_id=worker_id, execution_token=execution_token,
+            )
+        except AgentError as exc:
+            if getattr(exc, "error_code", None) != "agent_ownership_lost":
+                raise
+            db.rollback()
+            state = self._execution_state(db, run.id, worker_id, execution_token)
+            if state == "terminal":
+                return self._no_write_outcome_for_terminal(db, run.id)
+            return ConversationRunOutcome(
+                status="failed", error_code="ownership_lost",
+                model_calls=result.model_calls, tool_calls=result.tool_calls,
+                turns=result.turns, run_finalized=False,
+            )
 
     @staticmethod
     def _execution_state(db: Session, run_id: int, worker_id: str | None,
@@ -244,10 +261,15 @@ class ConversationRunner:
 
     def _build_config(self, loop_events: list[Any],
                       cancel_event: asyncio.Event | None) -> AgentLoopConfig:
+        def event_sink(event: Any) -> None:
+            loop_events.append(event)
+            if self.event_persister is not None:
+                self.event_persister(event)
+
         return AgentLoopConfig(
             gateway=self.gateway,
             snapshot=self.snapshot,
-            event_sink=loop_events.append,  # EventSink：本轮内存收集，未来由 SSE 通道替换
+            event_sink=event_sink,  # 内存收集 + Worker 注入的持久化通道
             cancel_event=cancel_event or asyncio.Event(),
             limits=self.limits,
             provider_attempt_budget=self.provider_attempt_budget,
@@ -260,7 +282,15 @@ class ConversationRunner:
     # ------------------------------------------------------------------ 收尾
 
     def _finalize_run(self, db: Session, run: AgentRun, result: Any,
-                      loop_events: list[Any]) -> ConversationRunOutcome:
+                      loop_events: list[Any], *, worker_id: str | None,
+                      execution_token: int | None) -> ConversationRunOutcome:
+        # Lock and verify ownership in the same transaction that writes the
+        # final messages/events/status.  This closes the former check-then-write
+        # race between _execution_state() and two separate commits.
+        if worker_id is not None and execution_token is not None:
+            agent_run_service.assert_execution_ownership(
+                db, run.id, worker_id, execution_token,
+            )
         self._persist_new_messages(db, run, result)
         self._record_usage(db, run, result)
         terminal, error_code = self._map_terminal(result)
@@ -300,10 +330,21 @@ class ConversationRunner:
                 continue  # 已持久化；理论上 new_messages 不含历史，此处为显式保险
             fresh.append(message)
         if fresh:
-            # persist_conversation_messages 内部完成自己的提交事务
+            # Runner uses one transaction for messages + committed events +
+            # terminal state.  This event is therefore never visible before
+            # its AgentMessage row exists.
             conversation_service.persist_conversation_messages(
                 db, session_id=run.session_id, requester_user_id=run.requester_user_id,
-                run_id=run.id, messages=fresh)
+                run_id=run.id, messages=fresh, commit=False)
+            for message in fresh:
+                agent_run_service.append_event(
+                    db, run.session_id, run.id, "conversation_message_committed",
+                    {
+                        "message_id": message.message_id,
+                        "role": message.role,
+                        "stop_reason": getattr(message, "stop_reason", None),
+                    },
+                )
 
     def _record_usage(self, db: Session, run: AgentRun, result: Any) -> None:
         if result.model_calls:

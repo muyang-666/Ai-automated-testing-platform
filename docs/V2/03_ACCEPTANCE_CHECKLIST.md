@@ -56,6 +56,19 @@
 - [x] Dependency Audit 完成（P05-A 记录）；新 Conversation 主路径与 legacy 在 Worker 层隔离（dispatch 分流），legacy 链路回归通过；目录级 legacy 收尾（删除/兼容区整理）留 P06。
 
 ## P06 Conversation API + SSE + 基础工作台
+> 2026-09-04 状态：后端 Conversation API / SSE / conversation cancel / capabilities / agent_chat 场景与工具白名单已实现并经 HTTP + Fake Worker/Provider 测试（后端套件 578 + isolation 3，见 02 §2.22）。前端 V2ChatPanel 已接入并通过 `vite build`。本环境无前端测试基建（无 vitest/Playwright），浏览器级 E2E（§26 故事）未运行，以下对应项保留未勾，待浏览器验收。
+后端验收（已测）：
+- [x] 创建 Conversation（可无项目，owner 来自登录态）；列表只含本人；跨用户访问返回 404。
+- [x] POST turns 返回 202（run_id/user_message_id/replayed/queue_state）；幂等 replay/同 key 不同内容 409；follow_up 排队 / reject 409。
+- [x] GET messages 按 sequence_no + after_sequence/limit，返回结构化 content（保 ToolCall/ToolResult 关联）。
+- [x] GET conversation 快照含 active_run/queue_state/queued_follow_ups/事件与消息游标。
+- [x] cancel：running head / queued head（cancel→promote B）/ queued follow-up（仅取消，不误 promote C）。
+- [x] SSE：Bearer 鉴权、cross-user 404、游标续传无重复、DB 事件为 Source of Truth。
+- [x] 执行事件安全落库：tool started/finished、message committed、聚合 text delta；无隐藏 reasoning。
+- [x] capabilities 只返回安全信息（tools=[calculator]、worker_status=unknown、不返回 Secret）；model_ready=false 当未配置。
+- [x] 验收故事链（HTTP + Worker + Fake Provider）：记住 17 → 加 5 → calculator → 22 → refresh → 17；provider error → failed 且快照一致。
+前端（已实现 + build 通过，浏览器验收未运行，项未勾）：
+
 - [ ] 浏览器持续聊天至少三轮，回复来自模型而非前端状态模板；前端“发送”只提交 Turn，不再无条件 createCaseRun。
 - [ ] 开始前检查 agent_chat 模型与 Worker 状态，不引用用例场景。
 - [ ] SSE Bearer 鉴权、游标重连、增量去重、快照恢复正确。

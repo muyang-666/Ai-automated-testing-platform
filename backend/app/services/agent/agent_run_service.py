@@ -301,9 +301,16 @@ def assert_execution_ownership(db: Session, run_id: int, worker_id: str,
     不匹配抛 AgentError(error_code='agent_ownership_lost')，调用方必须停止提交
     任何 Run 生命周期状态，不得先写消息再发现自己过期。
     """
-    run = db.query(AgentRun).filter(AgentRun.id == run_id).first()
-    if run is None or run.status != "running" \
-            or run.worker_id != worker_id or run.execution_token != execution_token:
+    # FOR UPDATE keeps the ownership check and the caller's following writes in
+    # one critical section.  MySQL honours the row lock; SQLite safely ignores
+    # the clause while retaining the same test contract.
+    row = db.execute(
+        select(AgentRun.status, AgentRun.worker_id, AgentRun.execution_token)
+        .where(AgentRun.id == run_id)
+        .with_for_update()
+    ).first()
+    if row is None or row.status != "running" \
+            or row.worker_id != worker_id or row.execution_token != execution_token:
         raise AgentError(
             f"Run {run_id} 的执行所有权已失效（worker/token 不匹配或已非 running）",
             error_code="agent_ownership_lost",

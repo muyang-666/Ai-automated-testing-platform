@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.conversation.messages import Message, UserMessage, parse_message
 from app.agents.runtime.errors import AgentError, AgentPermissionError
+from app.models.agent.agent_event import AgentEvent
 from app.models.agent.agent_message import AgentMessage
 from app.models.agent.agent_run import AgentRun
 from app.models.agent.agent_session import AgentSession
@@ -226,6 +227,118 @@ def promote_next_conversation_run(db: Session, session_id: int) -> int | None:
         return None
 
 
+
+
+# ─────────────────────────── P06 snapshot / read helpers ───────────────────────────
+
+def list_conversations_for_user(db: Session, requester_user_id: int) -> list[AgentSession]:
+    return list(db.query(AgentSession).filter(
+        AgentSession.user_id == requester_user_id,
+        AgentSession.mode == "conversation",
+    ).order_by(AgentSession.id.desc()).all())
+
+
+def conversation_snapshot(db: Session, *, session_id: int,
+                          requester_user_id: int) -> dict:
+    """P06 会话快照：元数据 + 当前 run + queue 状态 + 最新游标。不带消息正文。"""
+    from sqlalchemy import func as sa_func
+    session = _owned_conversation(db, session_id, requester_user_id, require_active=False)
+    head = db.execute(
+        select(AgentRun).where(
+            AgentRun.session_id == session.id,
+            AgentRun.workflow_code == "conversation",
+            AgentRun.active_slot == 1,
+        ).order_by(AgentRun.id.desc())
+    ).scalar_one_or_none()
+    latest_run = db.execute(
+        select(AgentRun).where(
+            AgentRun.session_id == session.id,
+            AgentRun.workflow_code == "conversation",
+        ).order_by(AgentRun.id.desc()).limit(1)
+    ).scalar_one_or_none()
+    queue = conversation_queue_state(db, session.id)
+    latest_event = db.execute(
+        select(sa_func.max(AgentEvent.sequence_no)).where(
+            AgentEvent.session_id == session.id)).scalar_one_or_none() or 0
+    latest_message = db.execute(
+        select(sa_func.max(AgentMessage.sequence_no)).where(
+            AgentMessage.session_id == session.id)).scalar_one_or_none() or 0
+    return {
+        "conversation": {
+            "id": session.id,
+            "title": session.title,
+            "project_id": session.project_id,
+            "status": session.status,
+            "created_at": session.created_at,
+            "updated_at": session.updated_at,
+        },
+        "active_run": ({
+            "id": head.id, "status": head.status, "workflow_code": head.workflow_code,
+            "error_code": head.error_code,
+        } if head is not None else None),
+        "latest_run": ({
+            "id": latest_run.id,
+            "status": latest_run.status,
+            "error_code": latest_run.error_code,
+        } if latest_run is not None else None),
+        "queue_state": queue["state"],
+        "head_status": queue["head_status"],
+        "queued_follow_ups": queue["queued_follow_ups"],
+        "latest_event_sequence": int(latest_event),
+        "latest_message_sequence": int(latest_message),
+    }
+
+
+def list_messages_since(db: Session, *, session_id: int, requester_user_id: int,
+                        after_sequence: int | None = None,
+                        limit: int = 200) -> list[AgentMessage]:
+    """按 sequence_no 升序的消息分页（P06 前端/恢复用）。"""
+    _owned_conversation(db, session_id, requester_user_id, require_active=False)
+    statement = db.query(AgentMessage).filter(AgentMessage.session_id == session_id)
+    if after_sequence is not None:
+        statement = statement.filter(AgentMessage.sequence_no > after_sequence)
+    return list(statement.order_by(AgentMessage.sequence_no.asc()).limit(limit).all())
+
+
+def list_events_since(db: Session, *, session_id: int, requester_user_id: int,
+                      after_sequence: int | None = None,
+                      limit: int = 500) -> list[AgentEvent]:
+    _owned_conversation(db, session_id, requester_user_id, require_active=False)
+    statement = db.query(AgentEvent).filter(AgentEvent.session_id == session_id)
+    if after_sequence is not None:
+        statement = statement.filter(AgentEvent.sequence_no > after_sequence)
+    return list(statement.order_by(AgentEvent.sequence_no.asc()).limit(limit).all())
+
+def cancel_conversation_run(db: Session, *, run_id: int,
+                            requester_user_id: int) -> AgentRun:
+    """P06 conversation 取消（单一应用边界，含原子 promote）。
+
+    语义：
+    - head（active_slot=1，queued 或 running）→ cancelled + run_cancelled 事件
+      + 同事务 promote 下一个 queued follow-up（queued head 在 Worker claim 前
+      被取消时，B 不会永远留在 NULL slot）；
+    - queued follow-up（active_slot=NULL）→ 仅取消自身，不触发 promote
+      （当前 head A 若仍在，不得错误提升 C）；
+    - 非 conversation Run / 非 owner / 已终态 → 相应错误。
+    """
+    run = db.query(AgentRun).filter(AgentRun.id == run_id).first()
+    if run is None:
+        raise AgentError(f"Run {run_id} 不存在", error_code="agent_run_not_found")
+    session = db.query(AgentSession).filter(AgentSession.id == run.session_id).first()
+    if session is None or session.user_id != requester_user_id:
+        raise AgentPermissionError("会话不存在或无权访问")
+    if run.workflow_code != "conversation":
+        raise AgentError("该接口只支持 conversation Run", error_code="agent_run_not_conversation")
+    if run.status in {"succeeded", "failed", "cancelled", "interrupted"}:
+        raise AgentError("Run 已终态，无需取消", error_code="agent_run_not_startable")
+    was_head = run.active_slot == 1
+    agent_run_service.transition_status(db, run, "cancelled")
+    agent_run_service.append_event(db, run.session_id, run.id, "run_cancelled", {})
+    if was_head:
+        promote_next_conversation_run(db, run.session_id)
+    db.commit()
+    return run
+
 def conversation_queue_state(db: Session, session_id: int) -> dict:
     """派生队列状态（P06 前端展示用，不新增 DB status）。
 
@@ -274,7 +387,14 @@ def conversation_queue_state(db: Session, session_id: int) -> dict:
 
 def persist_conversation_messages(db: Session, *, session_id: int,
                                   requester_user_id: int, run_id: int,
-                                  messages: list[Message]) -> list[AgentMessage]:
+                                  messages: list[Message],
+                                  commit: bool = True) -> list[AgentMessage]:
+    """Persist assistant/tool messages.
+
+    ``commit=False`` lets ConversationRunner include messages, committed
+    events and the Run terminal transition in one fenced transaction.  Other
+    application callers keep the historical self-committing behaviour.
+    """
     session = _owned_conversation(db, session_id, requester_user_id)
     run = db.query(AgentRun).filter(AgentRun.id == run_id,
                                     AgentRun.session_id == session.id).first()
@@ -294,7 +414,8 @@ def persist_conversation_messages(db: Session, *, session_id: int,
             db.add(row)
             db.flush()
             rows.append(row)
-        db.commit()
+        if commit:
+            db.commit()
         return rows
     except Exception:
         db.rollback()

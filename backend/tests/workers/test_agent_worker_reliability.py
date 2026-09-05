@@ -15,7 +15,9 @@ from datetime import datetime, timedelta
 
 from sqlalchemy import text as sql_text
 
-from app.agents.conversation.events import AssistantErrorEvent, AssistantStartEvent, AssistantDoneEvent
+from app.agents.conversation.events import (
+    AssistantDoneEvent, AssistantErrorEvent, AssistantStartEvent, ToolExecutionStartEvent,
+)
 from app.agents.conversation.messages import AssistantMessage, TextContent, Usage
 from app.agents.conversation.runner import ConversationRunner
 from app.agents.conversation.budget import AgentLoopLimits
@@ -28,6 +30,7 @@ from app.models.agent.agent_run import AgentRun
 from app.models.user import User
 from app.services.agent import agent_run_service, conversation_service
 from app.workers.agent_worker import AgentWorker
+from app.workers.conversation_event_persister import ConversationEventPersister
 
 WORKER_A = "reliability-a"
 WORKER_B = "reliability-b"
@@ -314,6 +317,32 @@ def test_ownership_replaced_mid_execution_old_worker_does_not_finalize(db_sessio
     assert result.action == "completed"
     assert db_session.query(AgentMessage).filter(
         AgentMessage.session_id == chat.id, AgentMessage.role != "user").count() == 0
+
+
+def test_stale_worker_cannot_persist_conversation_events(db_session):
+    seed_user(db_session)
+    chat = conversation(db_session)
+    sub = submit(db_session, chat.id, key="stale-event")
+    token = agent_run_service.claim_queued_run(
+        db_session, sub.run.id, WORKER_A, datetime.utcnow(),
+    )
+    db_session.commit()
+
+    persister = ConversationEventPersister(
+        SessionLocal, session_id=chat.id, run_id=sub.run.id,
+        worker_id=WORKER_A, execution_token=token,
+    )
+    with SessionLocal() as takeover:
+        run = takeover.get(AgentRun, sub.run.id)
+        run.worker_id = WORKER_B
+        run.execution_token = token + 1
+        takeover.commit()
+
+    persister(ToolExecutionStartEvent(
+        tool_call_id="stale-call", tool_name="calculator", args={},
+    ))
+    db_session.expire_all()
+    assert "conversation_tool_started" not in events_for(db_session, sub.run.id)
 
 
 # ---------------------------------------------------------------- F. Cancel propagation
