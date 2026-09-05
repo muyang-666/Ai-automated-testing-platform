@@ -26,6 +26,10 @@ export function cancelConversationRun(runId) {
   return request.post(`/agent/conversation-runs/${runId}/cancel`, {});
 }
 
+export function renameConversation(id, data) {
+  return request.patch(`/agent/conversations/${id}`, data);
+}
+
 export function getConversationCapabilities() {
   return request.get("/agent/conversation-capabilities");
 }

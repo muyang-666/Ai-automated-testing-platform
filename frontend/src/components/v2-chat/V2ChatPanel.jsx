@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import useConversationChat, { blocksToText } from "./useConversationChat";
-import { messageFailure } from "./conversationErrors.js";
+import useConversationChat from "./useConversationChat";
+import ChatTimeline from "./ChatTimeline.jsx";
+import ChatComposer from "./ChatComposer.jsx";
 import "./v2Chat.css";
 
 const QUEUE_BADGE = { queued: "排队中", paused: "已暂停", failed: "失败",
@@ -53,6 +54,7 @@ function readLayout(userId) {
 export default function V2ChatPanel({ currentUser }) {
   const chat = useConversationChat(currentUser?.id);
   const [draft, setDraft] = useState("");
+  const [sendNonce, setSendNonce] = useState(0);
   const [layout, setLayout] = useState(() => readLayout(currentUser?.id));
   const panelRef = useRef(null);
   const dragRef = useRef(null);
@@ -147,6 +149,13 @@ export default function V2ChatPanel({ currentUser }) {
     if (!text || !canSend) return;
     chat.send(text);
     setDraft("");
+    setSendNonce((n) => n + 1);
+  };
+
+  const handleRenameTitle = () => {
+    if (!chat.active) return;
+    const next = window.prompt("重命名对话", chat.active.title || "");
+    if (next && next.trim()) void chat.setTitle(chat.active.id, next.trim());
   };
 
   if (layout.mode === "minimized") {
@@ -197,20 +206,26 @@ export default function V2ChatPanel({ currentUser }) {
       </header>
       <div className="v2chat">
       <aside className="v2chat-side">
-        <button className="v2chat-new" onClick={chat.newConversation} disabled={chat.busy}>＋ 新对话</button>
-        <ul className="v2chat-list">
+        <div className="v2chat-side-head">
+          <span className="brand">TestMind<small>Agent 对话工作台</small></span>
+          <button className="v2chat-new" onClick={chat.newConversation} disabled={chat.busy}>＋ New chat</button>
+        </div>
+        <ul className="v2chat-list v2chat-side-list">
           {chat.conversations.map((c) => (
             <li key={c.id}
                 className={chat.active?.id === c.id ? "v2chat-item active" : "v2chat-item"}
-                onClick={() => chat.openConversation(c)}>
-              {c.title}
+                onClick={() => chat.openConversation(c)}
+                title={c.title}>
+              <span className="v2chat-item-title">{c.title}</span>
             </li>
           ))}
         </ul>
       </aside>
       <main className="v2chat-main">
         <header className="v2chat-header">
-          <span>{chat.active?.title || "V2 对话式 Test Agent"}</span>
+          <span className="v2-chat-title" title="双击重命名" onDoubleClick={handleRenameTitle}>
+            {chat.active?.title || "V2 对话式 Test Agent"}
+          </span>
           <span className="v2chat-status">
             {chat.snapshot ? `状态：${QUEUE_BADGE[chat.phase] || chat.phase}` : ""}
             {chat.capabilities?.tools?.length
@@ -226,41 +241,23 @@ export default function V2ChatPanel({ currentUser }) {
         {chat.phase === "paused" && (
           <div className="v2chat-paused">上一轮失败/中断，后续消息已暂停（请新建对话或等待后续版本恢复）。</div>
         )}
-        <div className="v2chat-messages">
-          {chat.messages.map((m) => (
-            <div key={m.id || m.sequence_no} className={`v2chat-msg role-${m.role}`}>
-              <div className="v2chat-msg-label">{m.role === "user" ? "你" : m.role === "assistant" ? "AI" : "工具"}</div>
-              <div className="v2chat-msg-body">
-                {messageFailure(m) && <div className="v2chat-message-error" role="status">{messageFailure(m)}</div>}
-                {m.role === "user" ? blocksToText(m.content)
-                  : m.role === "assistant"
-                    ? blocksToText(m.content).split("\n").map((line, i) => <div key={i}>{line}</div>)
-                    : `结果：${blocksToText(m.content)}`}
-              </div>
-            </div>
-          ))}
-          {chat.streaming && (
-            <div className="v2chat-msg role-assistant">
-              <div className="v2chat-msg-label">AI</div>
-              <div className="v2chat-msg-body v2chat-streaming">{chat.streaming}</div>
-            </div>
-          )}
-          {chat.activity.map((a) => (
-            <div key={a.id} className="v2chat-activity">{a.text}</div>
-          ))}
-        </div>
+        <ChatTimeline
+          turns={chat.turns}
+          streaming={chat.streaming}
+          activeId={chat.active?.id}
+          sendNonce={sendNonce}
+          phase={chat.phase}
+        />
         <footer className="v2chat-footer">
-          {(chat.phase === "running" || chat.phase === "queued") && (
-            <button className="v2chat-stop" onClick={chat.cancel}>Stop</button>
-          )}
-          <input
+          <ChatComposer
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submit(); } }}
-            placeholder={chat.phase === "paused" ? "队列已暂停" : "输入消息…（支持回答中继续发送，自动排队）"}
-            disabled={!canSend}
+            onChange={setDraft}
+            onSubmit={submit}
+            onStop={chat.cancel}
+            disabled={!chat.active || chat.phase === "paused" || chat.capabilities?.model_ready === false}
+            stopping={chat.phase === "running" || chat.phase === "queued"}
+            placeholder={chat.phase === "paused" ? "队列已暂停，请新建对话" : "Ask TestMind…（Enter 发送，Shift+Enter 换行）"}
           />
-          <button className="v2chat-send" onClick={submit} disabled={!canSend}>发送</button>
         </footer>
       </main>
       </div>

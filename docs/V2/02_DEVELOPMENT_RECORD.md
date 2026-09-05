@@ -699,3 +699,76 @@ run_agent_loop() / loop.py + tool_executor/policy/budget # 已实现，无生产
 - 验证：39 项受影响后端测试通过；6 项前端流测试通过（空闲超过五次、断网/读中断恢复、UTF8 分片即时展示、取消重连、401、迟到事件）；修改文件 ESLint 与前端构建通过。
 - 真实模型短探测：合成“只回复 OK。”、max_tokens=64、禁用重试；放行网络后一次调用首字 1.364 秒、结束 1.366 秒、stop，无错误。该数字只代表模型接口探测，不是浏览器端到端耗时；首次沙箱探测返回 network_error，不作为模型性能样本。
 - 确认无 queued/running 任务后重启现有 API 和 Worker，新进程健康检查通过。浏览器端真实消息的端到端耗时未新增测量。
+
+## 2.23 2026-09-05 — P06 Frontend UX Hardening + Visual Redesign（Turn 数据层/Bug 修复/契约补充）
+
+- 授权范围：修复 Conversation Chat UX/归属 Bug 并做开发者工作台风视觉收敛；不改 Agent Runtime/follow-up/Worker/AgentLoop 语义；不动 P07/MindMap。
+
+### 前端现状核对（并行工作区已存在的基础）
+
+v2-chat 已含浮动窗口（min/max/launcher）、SSE 订阅（eventStream.js 自动续期/重连/去重）、错误文案表、后端快照已带 latest_run。缺口与本次交付：消息仍按物理 sequence 平铺、Tool 活动是 Conversation 级尾部列表（Bug1/2）、无滚动策略（Bug3）、标题恒为"新对话"（Bug4）、New Chat 已在侧栏顶部（Bug5 现状已满足）。
+
+### 后端最小合同补充（仅为前端正确归组所需，未动 Runtime）
+
+- `GET /conversations/{id}/events` 事件项补 `run_id`（AgentEvent 行本就有 run_id；schema ConversationEventItem 同步）。
+- 新增 `PATCH /agent/conversations/{id}`（body `{title}`），owner-only（隐藏存在性 404），service `conversation_service.rename_conversation`。
+
+### Bug1/Turn 归组（核心）
+
+- 新增纯函数 `v2-chat/turnModel.js::buildConversationTurns({messages, events, overrides})`：
+  归组主键 = 消息/事件的 `run_id → 该 Run 的 user message sequence`（owner sequence）；缺失 run_id 的旧行才退化为"归属最近 sequence 更小的 user"（不参与主路径）。输出 `[{ownerSequence, runId, userMessage, userText, assistantTexts, assistantMessage, toolActivities, status, streamingText}]`，按 owner sequence 排序。Tool 事件按 `tool_call_id` 合并为单条 ToolActivity（running/success/error），按 run_id 挂到所属 Turn。
+- UI 只消费 Turns（`ChatTurn`/`ChatTimeline`），不再直接遍历原始 messages/activity；流式文本挂在 active run 的 Turn 内。
+- hook：SSE 事件（含 run_id）留存最近 500 条 → turns memo（overrides 含 activeRunId 与流式文本）；open 时重置。
+
+### Bug2/Tool 归属
+
+`conversation_tool_started/finished`（现在带 run_id）→ 合并 ToolActivity → 只出现在产生它的 ChatTurn；下一轮不再重复。UI 低干扰：`ToolActivity.jsx` 单行"○/✓/✕ toolName + 状态"，默认折叠，仅可展开 error_code，不渲染参数/日志/原始结果。
+
+### Bug3/滚动策略
+
+- 纯函数 `scrollPolicy.js`（isNearBottom/threshold 80px；shouldAutoScroll 场景判定）。
+- `ChatTimeline`：打开/切换/自己发送强制到底（rAF 内，避开 effect 内同步 setState）；流式仅在近底部跟随；用户上滚出现浮动"↓ 回到最新"；绝不无条件拉回。
+
+### Bug4/Conversation Title
+
+- 首条用户消息提交成功后自动命名（确定性：去空白、trim、≤24 字，无需 LLM）；创建仍用"新对话"。
+- 支持双击标题 → prompt 重命名（走新 PATCH 接口）；hook `setTitle`/`renameIfNeeded` 同步会话列表与激活项。
+
+### Bug5/Sidebar
+
+核对现状：＋ New chat 已在侧栏顶部、历史列表紧随其后，无"另一处新建"；本轮未重复重构。
+
+### 组件树与样式
+
+- 新增组件：ChatTimeline / ChatTurn / ToolActivity / ChatComposer；纯函数 turnModel / scrollPolicy。
+- CSS 追加开发者工作台风格（白色画布、灰阶、轻边框、内容 860px 居中、用户右侧浅灰块、assistant 自然文本、tool 弱化行、composer 聚焦边框、Queued/Paused/Failed 只对异常/等待出徽标）；保留既有窗口 chrome（暗色 header/launcher 由并行工作区设计，未改）。
+
+### 测试与构建（真实结果）
+
+- `npm test`（node:test，新增 tests/turnModel.test.mjs）：6 项全过——Bug1 交错 sequence 归组、Bug2 tool 只属 A、started/finished 合并、follow-up queued、终态事件状态、scrollPolicy 判定。
+- `npm run lint`：0 errors（8 个 warning 均为既有旧 pages 的 hooks 依赖提示）。
+- `npm run build`：通过。
+- 后端回归：`tests/api/test_conversation_api.py` + `conversation_persistence` → 34 passed（含新 PATCH/事件 run_id 未破坏原合同）。
+
+### 已知限制/说明
+
+- 浏览器人工验收尚未执行（无自动化浏览器基建；需按 §25 场景手测，通过后再关闭 P06 剩余 UI 门禁）。
+- 双击重命名为 prompt 实现（保持简单）；删除会话无后端接口，未造 UI。
+- 视觉大改以追加 token 方式覆盖聊天内容区；窗口级视觉（header/launcher）沿用并行工作区的既有设计语言，未做推翻式重画。
+
+## 2.24 2026-09-05 — P06 FE 修复轮（浏览器实测反馈）
+
+- 实测问题与修复：
+  1. 上一轮工具记录反复出现在新回答后 → 根因：无 run_id 事件走"挂最新 Turn"兜底，随刷新迁移。修复：删除该兜底（只接受 DB run_id 或事件到达时解析的 toolOwners），工具只在产生它的 Turn 显示且位于回答之前。
+  2. 所有对话仍叫"新对话" → 依赖后端 PATCH /conversations/{id}（旧进程未加载时静默失败）；代码已就绪，需重启后端生效；前端自动命名/双击重命名已实现。
+  3. 新增/历史未统一顶部 → 侧栏头部统一为 TestMind 品牌 + ＋New chat，历史列表紧随其后。
+  4. 无法上滑看历史 → 滚动高度链缺 min-height 约束；补 .v2chat-main/.v2-timeline min-height + overflow-y:auto；打开/切换会话强制到底、近底部才跟随、上滚出现"回到最新"。
+- 验证：lint 0 errors；node:test 6/6；vite build 通过。
+
+## 2.25 2026-09-05 — P06 空白页 hotfix（全量刷新暴露 TDZ 崩溃）
+
+- 现象：浏览器整页刷新后白屏（HMR 增量更新不触发，全量刷新首次暴露）。
+- 根因：`useConversationChat` 中 `refresh` 的 `useCallback` 依赖数组引用了其**之后**才声明的 `const backfillToolOwners`（TDZ）。首次渲染即抛 `ReferenceError: Cannot access 'backfillToolOwners' before initialization`；无 Error Boundary → 整棵 React 树卸载 → 白屏。lint/build 均无法发现（运行时语义错误，非语法/未用变量）。
+- 修复：将 `resolveOwnerForRun` + `backfillToolOwners` 定义移到 `refresh` 之前（二者只依赖 refs，无循环）。
+- 验证：ESLint 通过；headless Chrome（CDP）注入真实登录态整页加载复现/回归：修复前捕获到该 ReferenceError 且 `#root` 空；修复后 0 exception，侧栏菜单 + 主页面 + V2 Chat 悬浮球正常渲染。
+- 教训（写给自己）：同一 hook 内 `const` 之间的交叉引用必须保证声明顺序先于使用；此类 bug 应补一条静态自检（后续可加 no-use-before-define 或构建期 TDZ 检查）。

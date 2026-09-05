@@ -60,9 +60,15 @@ class ConversationMessageItem(BaseModel):
     error_code: str | None = None
 
 
+class ConversationUpdateRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+    title: str = Field(min_length=1, max_length=200)
+
+
 class ConversationEventItem(BaseModel):
     sequence_no: int
     event_type: str
+    run_id: int | None = None
     payload: dict | None = None
     created_at: Any = None
 

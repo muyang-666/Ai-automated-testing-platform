@@ -24,6 +24,7 @@ from app.routers.dependencies import get_current_user
 from app.schemas.agent.conversation_api import (
     CancelConversationRunResponse,
     ConversationCapabilities,
+    ConversationUpdateRequest,
     ConversationCreateRequest,
     ConversationEventItem,
     ConversationMessageItem,
@@ -104,7 +105,8 @@ def _message_item(row, run_errors: dict | None = None) -> dict:
 
 def _event_item(row: AgentEvent) -> dict:
     return {"sequence_no": row.sequence_no, "event_type": row.event_type,
-            "payload": row.payload_json, "created_at": row.created_at}
+            "run_id": row.run_id, "payload": row.payload_json,
+            "created_at": row.created_at}
 
 
 @router.post("/conversations", response_model=ConversationSummary, status_code=201)
@@ -252,6 +254,22 @@ def cancel_run(run_id: int, db: Session = Depends(get_db),
         raise _http_error(e)
     return CancelConversationRunResponse(run_id=run.id, status=run.status,
                                          queue_state=snapshot["queue_state"])
+
+
+@router.patch("/conversations/{conversation_id}", response_model=ConversationSummary)
+def rename_conversation(conversation_id: int, payload: ConversationUpdateRequest,
+                        db: Session = Depends(get_db),
+                        current_user: User = Depends(get_current_user)):
+    _require_conversation(db, conversation_id, current_user)
+    try:
+        session = conversation_service.rename_conversation(
+            db, session_id=conversation_id, requester_user_id=current_user.id,
+            title=payload.title)
+    except AgentError as e:
+        raise _http_error(e)
+    return ConversationSummary(id=session.id, title=session.title,
+                               project_id=session.project_id, status=session.status,
+                               created_at=session.created_at, updated_at=session.updated_at)
 
 
 @router.get("/conversation-capabilities", response_model=ConversationCapabilities)

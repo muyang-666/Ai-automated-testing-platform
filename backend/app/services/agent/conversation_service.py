@@ -231,6 +231,17 @@ def promote_next_conversation_run(db: Session, session_id: int) -> int | None:
 
 # ─────────────────────────── P06 snapshot / read helpers ───────────────────────────
 
+def rename_conversation(db: Session, *, session_id: int,
+                          requester_user_id: int, title: str) -> AgentSession:
+    """P06 标题修改（owner-only；前端首条消息后自动命名用）。"""
+    if not isinstance(title, str) or not title.strip() or len(title) > 200:
+        raise ConversationDataError("会话标题无效")
+    session = _owned_conversation(db, session_id, requester_user_id, require_active=False)
+    session.title = title.strip()
+    db.commit()
+    return session
+
+
 def list_conversations_for_user(db: Session, requester_user_id: int) -> list[AgentSession]:
     return list(db.query(AgentSession).filter(
         AgentSession.user_id == requester_user_id,
