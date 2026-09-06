@@ -57,6 +57,7 @@ def _normalize_steps(raw_steps: Any) -> list[dict]:
     if not isinstance(raw_steps, list):
         raise ValueError("steps 必须是数组")
     normalized: list[dict] = []
+    used: set[int] = set()
     for index, item in enumerate(raw_steps, start=1):
         if isinstance(item, str):  # 旧 list[str] 兼容：视为单步 action
             step = {"action": item}
@@ -66,8 +67,19 @@ def _normalize_steps(raw_steps: Any) -> list[dict]:
                 raise ValueError(f"steps[{index}].action 必须是非空字符串")
         else:
             raise ValueError(f"steps[{index}] 必须是字符串或对象")
-        if "step_no" not in step:
-            step["step_no"] = index
+        provided = step.get("step_no")
+        if provided is not None:
+            if not isinstance(provided, int) or provided <= 0:
+                raise ValueError(f"steps[{index}].step_no 必须是正整数")
+            if provided in used:
+                raise ValueError(f"steps[{index}].step_no 重复（step_no 必须唯一）")
+            used.add(provided)
+        else:
+            candidate = 1
+            while candidate in used:
+                candidate += 1
+            step["step_no"] = candidate
+            used.add(candidate)
         normalized.append(step)
     return normalized
 
@@ -108,6 +120,10 @@ def validate_node_content(node_type: str, content: Any) -> Optional[dict[str, An
             raise ValueError("test_case content 必须是对象")
         steps = _normalize_steps(raw.get("steps", []))
         expected = _normalize_expected(raw.get("expected_results", []), len(steps))
+        step_numbers = {item["step_no"] for item in steps}
+        for item in expected:
+            if item["step_no"] is not None and item["step_no"] not in step_numbers:
+                raise ValueError(f"expected_results 引用了不存在的 step_no: {item['step_no']}")
         payload = {
             "preconditions": list(raw.get("preconditions") or []),
             "steps": steps,

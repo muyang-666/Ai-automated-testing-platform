@@ -69,19 +69,17 @@ _ALLOWED_KEYS = {
 
 
 def _readable(db: Session, artifact: TestArtifact, requester) -> bool:
-    if artifact.owner_user_id == requester.id:
-        return True
+    # P09.1.1：project-scoped Artifact 的读写完全服从 Project ACL（owner 不例外）；
+    # projectless Artifact 走 owner permission。
     if artifact.project_id is not None:
         return can_read_project(db, requester, artifact.project_id)
-    return False
+    return artifact.owner_user_id == requester.id
 
 
 def _writable(db: Session, artifact: TestArtifact, requester) -> bool:
-    if artifact.owner_user_id == requester.id:
-        return True
     if artifact.project_id is not None:
         return can_operate_project(db, requester, artifact.project_id)
-    return False
+    return artifact.owner_user_id == requester.id
 
 
 def _load_readable(db: Session, artifact_id: int, requester) -> TestArtifact:
@@ -622,6 +620,17 @@ def create_artifact(db: Session, *, requester, title: str, artifact_type: str = 
         raise TestArtifactValidationError("首期仅支持 artifact_type=test_design")
     if project_id is not None and not can_operate_project(db, requester, project_id):
         raise TestArtifactPermissionError("没有该项目的操作权限")
+    if project_id is not None and artifact_type == FUNCTIONAL_ARTIFACT_TYPE:
+        existing_row = db.execute(
+            select(TestArtifact.id).where(
+                TestArtifact.project_id == project_id,
+                TestArtifact.artifact_type == FUNCTIONAL_ARTIFACT_TYPE,
+            ).limit(1)
+        ).scalar_one_or_none()
+        if existing_row is not None:
+            raise TestArtifactValidationError(
+                "项目已存在主 Functional Artifact，请使用 ensure-project-functional",
+                error_code="artifact_already_exists")
     artifact = TestArtifact(
         owner_user_id=requester.id,
         project_id=project_id,
@@ -661,9 +670,10 @@ def list_artifacts(db: Session, *, requester) -> list[TestArtifact]:
     ).scalars().all()
     result = []
     for artifact in rows:
-        if artifact.owner_user_id == requester.id:
-            result.append(artifact)
-        elif artifact.project_id is not None and can_read_project(db, requester, artifact.project_id):
+        if artifact.project_id is not None:
+            if can_read_project(db, requester, artifact.project_id):
+                result.append(artifact)
+        elif artifact.owner_user_id == requester.id:
             result.append(artifact)
     return result
 
@@ -816,13 +826,12 @@ def ensure_project_functional_artifact(db: Session, *, project_id: int, requeste
     existing = get_project_functional_artifact(db, project_id=project_id, requester=requester)
     if existing is not None:
         return existing
+    # P09.1.1：Application Service 不在内部 commit；并发冲突由调用方事务回滚后重试/复读
     try:
-        artifact = create_artifact(
+        return create_artifact(
             db, requester=requester, title=(title or "功能测试").strip() or "功能测试",
             artifact_type=FUNCTIONAL_ARTIFACT_TYPE, project_id=project_id,
         )
-        db.commit()
-        return artifact
     except IntegrityError:
         db.rollback()
         existing = get_project_functional_artifact(db, project_id=project_id, requester=requester)
@@ -864,7 +873,6 @@ def get_or_create_default_module(db: Session, *, artifact_id: int, requester) ->
                 requester=requester,
                 summary="确保默认模块",
             )
-            db.commit()
             return db.execute(
                 select(ArtifactNode).where(
                     ArtifactNode.artifact_id == artifact.id,

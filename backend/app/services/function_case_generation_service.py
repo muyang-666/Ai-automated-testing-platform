@@ -288,9 +288,24 @@ def save_generated_function_cases(
     artifact = artifact_service.ensure_project_functional_artifact(
         db, project_id=project_id, requester=requester)
     module_title = _resolve_requirement_module_title(db, project_id, request)
-    module_node = _ensure_artifact_module(db, artifact, module_title, requester)
+    existing_module = db.query(ArtifactNode).filter(
+        ArtifactNode.artifact_id == artifact.id,
+        ArtifactNode.node_type == "module",
+        ArtifactNode.parent_id == artifact.root_node_id,
+        ArtifactNode.title == module_title,
+        ArtifactNode.deleted_revision.is_(None),
+    ).first()
 
     ops = []
+    if existing_module is None:
+        # P09.1.1：Module + Cases 同批（ref 引用）→ 一个 Revision；失败整体回滚
+        ops.append({"operation_type": "add_node",
+                    "parent_id": artifact.root_node_id,
+                    "node_type": "module", "title": module_title,
+                    "ref": "__module__"})
+        module_ref = "@__module__"
+    else:
+        module_ref = existing_module.id
     for item in request.cases:
         steps = item.steps_json if isinstance(item.steps_json, list) else []
         content = {
@@ -300,16 +315,15 @@ def save_generated_function_cases(
             "priority": item.priority if item.priority in ALLOWED_PRIORITIES else "P1",
             "tags": [item.case_type] if item.case_type in ALLOWED_CASE_TYPES else [],
         }
-        op = {
+        ops.append({
             "operation_type": "add_node",
-            "parent_id": module_node.id,
+            "parent_id": module_ref,
             "node_type": "test_case",
             "title": item.case_name or "未命名用例",
             "content": content,
             "source_refs": [{"source_type": "requirement",
                              "source_id": str(requirement.id)}],
-        }
-        ops.append(op)
+        })
 
     added_ids: list[int] = []
     if ops:
@@ -320,8 +334,7 @@ def save_generated_function_cases(
             actor_user_id=requester.id if requester is not None else None,
             summary=f"需求 #{requirement.id} 生成保存 {len(ops)} 条用例",
         )
-        db.commit()
-        # 以 created_revision 精确取回本批新增的 test_case id（一次 Revision）
+        # 不 commit：最外层 Router 事务边界负责提交/回滚
         added_rows = db.query(ArtifactNode).filter(
             ArtifactNode.artifact_id == artifact.id,
             ArtifactNode.node_type == "test_case",
@@ -330,7 +343,7 @@ def save_generated_function_cases(
         added_ids = [row.id for row in added_rows]
 
     return SaveGeneratedFunctionCasesResponse(
-        saved_count=len(ops),
+        saved_count=len(request.cases),
         case_ids=added_ids,
     )
 
@@ -349,33 +362,4 @@ def _resolve_requirement_module_title(db: Session, project_id: int,
             return row.name
     return artifact_service.DEFAULT_MODULE_TITLE
 
-
-def _ensure_artifact_module(db: Session, artifact, title: str, requester):
-    """Artifact 内按 title 定位一级 module；缺失则创建（一次 Revision）。"""
-    module = db.query(ArtifactNode).filter(
-        ArtifactNode.artifact_id == artifact.id,
-        ArtifactNode.node_type == "module",
-        ArtifactNode.parent_id == artifact.root_node_id,
-        ArtifactNode.title == title,
-        ArtifactNode.deleted_revision.is_(None),
-    ).first()
-    if module is not None:
-        return module
-    result = artifact_service.apply_operations(
-        db, artifact_id=artifact.id, expected_revision=artifact.current_revision,
-        operations=[{
-            "operation_type": "add_node", "parent_id": artifact.root_node_id,
-            "node_type": "module", "title": title,
-        }],
-        requester=requester, summary="确保需求模块",
-    )
-    _ = result
-    db.commit()
-    return db.query(ArtifactNode).filter(
-        ArtifactNode.artifact_id == artifact.id,
-        ArtifactNode.node_type == "module",
-        ArtifactNode.parent_id == artifact.root_node_id,
-        ArtifactNode.title == title,
-        ArtifactNode.deleted_revision.is_(None),
-    ).one()
 

@@ -54,6 +54,7 @@ def _http_error(err: TestArtifactError) -> HTTPException:
         TestArtifactNotFoundError.error_code: 404,
         "artifact_permission_denied": 403,
         "test_artifact_validation_error": 400,
+        "artifact_already_exists": 409,
         "test_artifact_data_error": 500,
     }
     status = status_map.get(code, 400)

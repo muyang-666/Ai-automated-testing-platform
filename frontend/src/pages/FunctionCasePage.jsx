@@ -4,22 +4,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button, Card, Drawer, Empty, Input, Select, Space, Table, Tag, Tree, Typography } from "antd";
 import { getProjectList } from "../api/project";
-import { ensureProjectArtifact, getArtifact, getArtifactTree } from "../api/testArtifact";
-import { collectScopeCases, buildModuleTree } from "../components/v2-workspace/caseView";
+import { ensureProjectArtifact, getArtifact, getArtifactTree, listArtifacts } from "../api/testArtifact";
+import {
+  collectScopeCases, buildModuleTree, expectedSummary, stepsSummary,
+} from "../components/v2-workspace/caseView";
 import { formatCaseNumber } from "../components/v2-workspace/caseNumber";
 import { getStoredProjectId, resolveProjectId, storeProjectId } from "../utils/projectSelection";
 import { isViewerOnly } from "../utils/authPermissions";
 
 const PRIORITY_COLOR = { P0: "red", P1: "orange", P2: "gold", P3: "default" };
 
-function textLines(items = []) {
-  return items.map((item, i) => {
-    if (typeof item === "string") return item;
-    if (Array.isArray(item) && typeof item[0] === "string") return `${i + 1}. ${item[0]}`;
-    if (item && typeof item === "object") return `${i + 1}. ${item.expected ?? ""}`;
-    return String(item);
-  }).filter(Boolean).join("\n");
-}
 
 function summarize(value, max = 120) {
   const text = String(value ?? "").replace(/\s+/g, " ").trim();
@@ -45,16 +39,31 @@ export default function FunctionCasePage() {
     const token = ++seq.current;
     setLoading(true);
     setError("");
+    setArtifact(null);
+    setTree(null);
     try {
-      const ensured = await ensureProjectArtifact({ project_id: pid });
+      // 读取优先：viewer 不触发无条件 ensure
+      const listRes = await listArtifacts();
       if (token !== seq.current) return;
-      const artifactRow = await getArtifact(ensured.data.id);
-      const treeRes = await getArtifactTree(ensured.data.id);
+      const own = (listRes.data || []).find(
+        (item) => item.project_id === pid && item.artifact_type === "test_design");
+      let artifactRow = null;
+      if (own) {
+        artifactRow = await getArtifact(own.id);
+      } else if (!viewerOnly) {
+        const ensured = await ensureProjectArtifact({ project_id: pid });
+        if (token !== seq.current) return;
+        artifactRow = await getArtifact(ensured.data.id);
+      }
       if (token !== seq.current) return;
-      setArtifact(artifactRow.data);
-      setTree(treeRes.data);
-      setScopeId(null);
-      setSelected(null);
+      if (artifactRow) {
+        const treeRes = await getArtifactTree(artifactRow.data.id);
+        if (token !== seq.current) return;
+        setArtifact(artifactRow.data);
+        setTree(treeRes.data);
+        setScopeId(null);
+        setSelected(null);
+      }
     } catch (err) {
       if (token !== seq.current) return;
       setArtifact(null);
@@ -129,11 +138,11 @@ export default function FunctionCasePage() {
       render: (_, row) => row.modulePath.join(" / ") || "—" },
     { title: "名称", dataIndex: "title", ellipsis: true, width: 200 },
     { title: "前置条件", key: "pre", width: 180,
-      render: (_, row) => <span className="cell-preview">{summarize(textLines(row.preconditions)) || "—"}</span> },
+      render: (_, row) => <span className="cell-preview">{summarize(row.preconditions.join("；")) || "—"}</span> },
     { title: "步骤", key: "steps", width: 220,
-      render: (_, row) => <span className="cell-preview">{summarize(textLines(row.steps)) || "—"}</span> },
+      render: (_, row) => <span className="cell-preview">{summarize(stepsSummary(row.steps)) || "—"}</span> },
     { title: "预期结果", key: "expected", width: 220,
-      render: (_, row) => <span className="cell-preview">{summarize(textLines(row.expectedResults)) || "—"}</span> },
+      render: (_, row) => <span className="cell-preview">{summarize(expectedSummary(row.expectedResults)) || "—"}</span> },
     { title: "优先级", dataIndex: "priority", width: 90,
       render: (value) => <Tag color={PRIORITY_COLOR[value] || "default"}>{value}</Tag> },
   ];

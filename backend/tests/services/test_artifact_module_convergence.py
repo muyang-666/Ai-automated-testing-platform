@@ -160,6 +160,7 @@ def test_two_concurrent_ensure_only_one_artifact(db_session):
     try:
         artifact_service.ensure_project_functional_artifact(
             session1, project_id=PROJECT_P, requester=user)
+        session1.commit()
     finally:
         session1.close()
     session2 = SessionLocal()
@@ -234,3 +235,63 @@ def test_two_cases_same_module_record_two_operations(db_session):
         ArtifactRevision.revision_no == result["new_revision"]).count()
     assert result["changed"] == 2
     assert ops == 2
+
+
+def _quick(db_session, user):
+    from app.models.test_artifact.artifact_operation import ArtifactOperation
+    from app.models.test_artifact.artifact_revision import ArtifactRevision
+
+    artifact = artifact_service.ensure_project_functional_artifact(
+        db_session, project_id=PROJECT_P, requester=user)
+    result = artifact_service.apply_operations(
+        db_session, artifact_id=artifact.id, expected_revision=artifact.current_revision,
+        requester=user, operations=[
+            {"operation_type": "add_node", "parent_id": artifact.root_node_id,
+             "node_type": "module", "title": "需求模块", "ref": "__m__"},
+            _case_ops("@__m__", "A"),
+            _case_ops("@__m__", "B"),
+        ])
+    db_session.commit()
+    ops = db_session.query(ArtifactOperation).join(
+        ArtifactRevision, ArtifactRevision.id == ArtifactOperation.revision_id).filter(
+        ArtifactRevision.artifact_id == artifact.id,
+        ArtifactRevision.revision_no == result["new_revision"]).count()
+    return result["changed"], ops
+
+
+def test_module_ref_plus_two_cases_rows(db_session):
+    user = _seed(db_session)
+    changed, ops = _quick(db_session, user)
+    assert changed == 3
+    assert ops == 3
+
+
+def test_case_content_rejects_duplicate_step_and_unknown_expected_ref(db_session):
+    user = _seed(db_session)
+    artifact = artifact_service.ensure_project_functional_artifact(
+        db_session, project_id=PROJECT_P, requester=user)
+    db_session.commit()
+    bad_cases = [
+        {"steps": [{"step_no": 1, "action": "a"}, {"step_no": 1, "action": "b"}]},
+        {"steps": [{"step_no": 1, "action": "a"}],
+         "expected_results": [{"step_no": 9, "expected": "不存在的步骤"}]},
+    ]
+    for content in bad_cases:
+        with pytest.raises(Exception) as exc:
+            artifact_service.apply_operations(
+                db_session, artifact_id=artifact.id,
+                expected_revision=artifact_service.get_artifact(
+                    db_session, artifact_id=artifact.id, requester=user).current_revision,
+                requester=user,
+                operations=[{
+                    "operation_type": "add_node",
+                    "parent_id": artifact.root_node_id,
+                    "node_type": "test_case", "title": "坏用例",
+                    "content": content,
+                }])
+        db_session.rollback()
+        assert exc.type.__name__ == "TestArtifactValidationError"
+    assert db_session.query(ArtifactNode).filter(
+        ArtifactNode.artifact_id == artifact.id,
+        ArtifactNode.node_type == "test_case",
+        ArtifactNode.deleted_revision.is_(None)).count() == 0

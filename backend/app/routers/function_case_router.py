@@ -111,8 +111,11 @@ def save_generated_func_cases(
         raise HTTPException(status_code=404, detail="需求文本不存在")
     require_project_write(db, current_user, requirement.project_id)
     try:
-        return save_generated_function_cases(db, request, requester=current_user)
+        result = save_generated_function_cases(db, request, requester=current_user)
+        db.commit()  # 事务边界在最外层 Router
+        return result
     except ValueError as e:
+        db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
 
 

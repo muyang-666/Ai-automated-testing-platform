@@ -233,3 +233,30 @@ def test_public_operations_cannot_submit_internal_restore(client):
     tree_after = test_client.get(f"/test-artifacts/{artifact['id']}/tree").json()
     assert [c["title"] for c in tree_after["root"]["children"]] == ["默认模块"]
     assert [c["title"] for c in tree_after["root"]["children"][0]["children"]] == ["TC1"]
+
+
+def test_plain_create_project_duplicate_returns_409(client):
+    """P09.1.1：普通 create 不得为第二份 project test_design 抛 500。"""
+    test_client, a, b, switch = client
+    # 通过 admin 用户创建项目资产：先把本项目用户升级 admin（仅本次）
+    from app.models.role import Role as RoleModel
+    from app.models.user_role import UserRole as UserRoleModel
+    from app.models.project import Project as ProjectModel
+    from app.core.database import SessionLocal as SL
+    db = SL()
+    try:
+        project = ProjectModel(id=9602, name="项目", status="active", is_deleted=False)
+        db.add(project)
+        role = db.query(RoleModel).filter(RoleModel.code == "system_admin").one()
+        ur = db.query(UserRoleModel).filter(UserRoleModel.user_id == a.id).first()
+        if ur is None:
+            db.add(UserRoleModel(user_id=a.id, role_id=role.id))
+        db.commit()
+    finally:
+        db.close()
+    ensured = test_client.post("/test-artifacts/ensure-project-functional",
+                               json={"project_id": 9602})
+    assert ensured.status_code == 200
+    second = test_client.post("/test-artifacts", json={"title": "重复", "project_id": 9602})
+    assert second.status_code == 409
+    assert "ensure" in second.json()["detail"]

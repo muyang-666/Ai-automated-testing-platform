@@ -1093,3 +1093,30 @@ P09 停止「独立 Chat + Artifact 右栏」扩展；新形态：V1「功能用
 - 后端全量（排除同名 isolation 收集冲突）：**701 passed**；isolation 3 passed；迁移 15 passed（含 0007 转换/降级）；P08 Eval 24 cases 全过（指标 1.0）。
 - 新增：module 嵌套/默认模块唯一/项目主 Artifact 唯一(唯一约束+并发)/编号移动稳定/需求生成→单 Revision/legacy 表未写 等专项测试。
 - 前端：npm test **40 passed**（新增 caseView/caseNumber 等）、lint **0 errors**、build 通过。
+
+## 2.35 2026-09-06 — P09.1.1 Hardening（权限/事务边界/创建入口/表格与空项目）
+
+### 1) Project-scoped Artifact 权限服从 Project ACL
+- artifact_service `_readable/_writable/list`：project_id != null → 完全服从 can_read/can_operate_project（owner 不再例外）；projectless → owner 权限。
+- 测试：创建者被移出项目后读/写均不可（404）；viewer 可读不可写（403）；projectless owner 正常；admin/tester 正常。
+
+### 2) Application Service 事务边界恢复
+- 移除 `ensure_project_functional_artifact` / `get_or_create_default_module` 及生成保存内部的 `db.commit()`；commit/rollback 一律在最外层 Router/调用方。
+- Requirement 生成保存改为：Module 缺失时 `add module(ref)` + N 条 `test_case(parent=@ref)` 放进**同一个 apply_operations()** → 一次保存 = 一个 Revision；任一步失败整体 rollback（新增 rollback 测试：仅 root、无新 Revision）。Artifact 首次创建 Revision 1 独立。
+- Router（/test-artifacts/ensure-project-functional、/function-cases/save-generated）在最外层 commit/rollback。
+
+### 3) FunctionCasePage 表格摘要
+- 步骤列改用 `stepsSummary()`（action/data 正确摘要），预期列改用 `expectedSummary()`；前置用字符串数组 join；不再用通用 textLines 的 item.expected 渲染 steps。
+
+### 4) Viewer 空项目
+- 页面先 `GET listArtifacts` 读取当前项目 Functional Artifact：exists → 加载；not exists + 非 viewer → ensure；not exists + viewer → 只读空态（不再无条件 POST ensure）。
+
+### 5) 收口 Project Artifact 创建入口
+- 普通 `POST /test-artifacts`：project-scoped `test_design` 已存在 → 明确 `artifact_already_exists` → HTTP 409（不再 IntegrityError 500）；项目主 Artifact 只允许 ensure-project-functional。新增 API 测试 409。
+
+### 6) TestCase schema 加固
+- steps.step_no 唯一（缺失自动补最小未用正数）；expected_results.step_no 非 null 必须引用存在的 step。新增校验测试。
+
+### 回归（真实结果）
+- 后端全量（排除同名 isolation 收集冲突）：**708 passed**（另 worker 并发时序抖动用例单跑通过，与改动无关）；isolation 3 passed；Eval 24/24。
+- 前端：npm test 40 passed、lint 0 errors（8 warnings 既有）、build 通过。

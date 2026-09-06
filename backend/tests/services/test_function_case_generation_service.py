@@ -15,6 +15,7 @@ from app.models.llm.llm_model import LLMModel
 from app.models.llm.llm_provider import LLMProvider
 from app.models.llm.llm_scene_config import LLMSceneConfig
 from app.models.project import Project
+from app.models.test_artifact.artifact_node import ArtifactNode
 from app.models.requirement_doc import RequirementDoc
 from app.models.role import Role
 from app.models.user import User
@@ -299,21 +300,22 @@ def test_save_generated_cases_creates_llm_source_rows(db_session):
 
     assert response.saved_count == 2
     assert len(response.case_ids) == 2
+    db_session.commit()  # 事务边界在最外层调用方
     assert db_session.query(FunctionCase).count() == 0  # 旧 V1 表不写入（deprecated）
     artifact = artifact_service.get_project_functional_artifact(
         db_session, project_id=requirement.project_id, requester=user)
     assert artifact.id == artifact_before.id
     revisions = artifact_service.list_revisions(db_session, artifact_id=artifact.id,
                                                 requester=user)
-    # ensure(default module 创建 1 rev) + cases batch 1 rev：case 批次恰好一个 Revision
-    assert len(revisions) == rev_before + 2
+    # Module（若缺失）+ N cases 同一批 → 恰好一个 Revision
+    assert len(revisions) == rev_before + 1
     from app.models.test_artifact.artifact_operation import ArtifactOperation
     from app.models.test_artifact.artifact_revision import ArtifactRevision
     last_ops = db_session.query(ArtifactOperation).join(
         ArtifactRevision, ArtifactRevision.id == ArtifactOperation.revision_id).filter(
         ArtifactRevision.artifact_id == artifact.id,
         ArtifactRevision.revision_no == revisions[-1].revision_no).count()
-    assert last_ops == 2
+    assert last_ops == 3  # 默认模块 + 2 条用例
     tree = artifact_service.get_tree(db_session, artifact_id=artifact.id, requester=user)
     default_module = next(c for c in tree["root"]["children"] if c["title"] == "默认模块")
     cases = {c["title"]: c for c in default_module["children"]}
@@ -404,3 +406,40 @@ def test_save_missing_requirement_raises(db_session):
             db_session,
             SaveGeneratedFunctionCasesRequest(requirement_id=404404, project_id=1, cases=[]),
         )
+
+
+def test_save_rolls_back_when_batch_fails(db_session):
+    """P09.1.1：Module+Cases 同批失败 → 整体回滚（无 Module、无 Revision）。"""
+    from app.services.test_artifacts.errors import TestArtifactValidationError
+
+    user = _seed_project_user(db_session)
+    requirement = _seed_requirement(db_session)
+    artifact = artifact_service.ensure_project_functional_artifact(
+        db_session, project_id=requirement.project_id, requester=user)
+    db_session.commit()
+    artifact = artifact_service.get_project_functional_artifact(
+        db_session, project_id=requirement.project_id, requester=user)
+    rev_before = artifact.current_revision
+    with pytest.raises(TestArtifactValidationError):
+        fcg.save_generated_function_cases(
+            db_session,
+            SaveGeneratedFunctionCasesRequest(
+                requirement_id=requirement.id,
+                project_id=requirement.project_id,
+                cases=[
+                    {"case_name": "好用例", "steps_json": ["步骤"], "expected_result": "ok"},
+                    # 第二条第步骤 step_no 重复 → 批内校验失败
+                    {"case_name": "坏用例", "steps_json": [
+                        {"step_no": 1, "action": "a"}, {"step_no": 1, "action": "b"}]},
+                ],
+            ),
+            requester=user,
+        )
+    db_session.rollback()
+    revisions = artifact_service.list_revisions(db_session, artifact_id=artifact.id,
+                                                requester=user)
+    assert len(revisions) == rev_before
+    nodes = db_session.query(ArtifactNode).filter(
+        ArtifactNode.artifact_id == artifact.id,
+        ArtifactNode.deleted_revision.is_(None)).all()
+    assert len(nodes) == 1  # 仅 root
