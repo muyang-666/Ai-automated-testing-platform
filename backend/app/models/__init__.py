@@ -26,6 +26,10 @@ from app.models.agent.agent_run import AgentRun
 from app.models.agent.agent_step import AgentStep
 from app.models.agent.agent_artifact import AgentArtifact
 from app.models.agent.agent_approval import AgentApproval
+from app.models.test_artifact.test_artifact import TestArtifact
+from app.models.test_artifact.artifact_node import ArtifactNode
+from app.models.test_artifact.artifact_revision import ArtifactRevision
+from app.models.test_artifact.artifact_operation import ArtifactOperation
 
 __all__ = [
     "APICase",
@@ -56,4 +60,8 @@ __all__ = [
     "AgentStep",
     "AgentArtifact",
     "AgentApproval",
+    "TestArtifact",
+    "ArtifactNode",
+    "ArtifactRevision",
+    "ArtifactOperation",
 ]

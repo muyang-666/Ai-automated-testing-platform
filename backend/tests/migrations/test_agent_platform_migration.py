@@ -24,7 +24,14 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 SCRIPT_LOCATION = str(BACKEND_DIR / "alembic")
 
 BASELINE_REVISION = "0001_v1_schema_baseline"
-HEAD_REVISION = "0004_agent_run_execution_token"
+HEAD_REVISION = "0005_test_artifact_core"
+
+ARTIFACT_TABLE_NAMES = {
+    "test_artifact",
+    "artifact_node",
+    "artifact_revision",
+    "artifact_operation",
+}
 
 AGENT_TABLE_NAMES = {
     "agent_sessions",
@@ -69,8 +76,11 @@ def _make_config(db_url: str) -> Config:
 
 
 def _create_v1_schema(engine) -> None:
-    """模拟存量数据库：只创建 V1 的 21 张表。"""
-    v1_tables = [t for t in Base.metadata.sorted_tables if not t.name.startswith("agent_")]
+    """模拟存量数据库：只创建 V1 的 21 张表（agent_* 与 P07 artifact 表不属于 V1 存量）。"""
+    v1_tables = [
+        t for t in Base.metadata.sorted_tables
+        if not t.name.startswith("agent_") and t.name not in ARTIFACT_TABLE_NAMES
+    ]
     Base.metadata.create_all(bind=engine, tables=v1_tables)
 
 
@@ -105,10 +115,23 @@ def test_stamp_then_upgrade_creates_agent_tables(tmp_path):
     engine = create_engine(db_url)
     names = _table_names(engine)
     assert AGENT_TABLE_NAMES <= names
+    assert ARTIFACT_TABLE_NAMES <= names  # P07 TestArtifact 领域四表
     assert V1_TABLE_NAMES <= names  # V1 表仍在
     assert _version_num(engine) == HEAD_REVISION
 
     inspector = inspect(engine)
+
+    # P07 关键唯一约束
+    revision_uniques = {
+        (uc["name"], tuple(uc["column_names"]))
+        for uc in inspector.get_unique_constraints("artifact_revision")
+    }
+    assert ("uq_artifact_revision_no", ("artifact_id", "revision_no")) in revision_uniques
+    operation_uniques = {
+        (uc["name"], tuple(uc["column_names"]))
+        for uc in inspector.get_unique_constraints("artifact_operation")
+    }
+    assert ("uq_artifact_operation_idx", ("revision_id", "op_index")) in operation_uniques
 
     # 关键列抽查
     run_cols = {c["name"] for c in inspector.get_columns("agent_runs")}
@@ -161,6 +184,7 @@ def test_downgrade_removes_agent_tables_keeps_v1(tmp_path):
     engine = create_engine(db_url)
     names = _table_names(engine)
     assert not (AGENT_TABLE_NAMES & names)  # Agent 表全部消失
+    assert not (ARTIFACT_TABLE_NAMES & names)  # P07 四表同样消失
     assert V1_TABLE_NAMES <= names  # V1 表仍在
     engine.dispose()
 

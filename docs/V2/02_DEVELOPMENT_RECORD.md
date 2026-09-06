@@ -807,3 +807,44 @@ v2-chat 已含浮动窗口（min/max/launcher）、SSE 订阅（eventStream.js �
 - `npm run lint`：0 errors（7 个既有 warning，均在旧 pages）。
 - `npm run build`：通过（chunk>500KB 提示为既有）。
 - headless Chrome CDP 整页回归：0 exception，主应用 + V2 Chat 正常渲染（防白屏回归）。
+
+## 2.27 2026-09-05 — V2-P07 Test Artifact Core（后端领域，无 Agent/无 LLM）
+
+### 目标与边界
+建立首期长期测试资产领域 TestArtifact（Artifact≈repository、Revision≈commit、Operation≈patch），完全独立于 Agent/Conversation/LLM 即可可靠支持：create → add/update/delete/move node → Revision → Diff → Undo → Restore → 乐观冲突。本轮不实现 Artifact Tools / AgentLoop 调用 Artifact / MindMap（P08/P09）。
+
+### 落地结构（轻适配仓库分层；Artifact Domain ≠ agents/conversation）
+- models：`app/models/test_artifact/`{test_artifact,artifact_node,artifact_revision,artifact_operation}.py（已注册进 `app/models/__init__.py`）。
+- schemas：`app/schemas/test_artifact/`{__init__,api,content}.py（test_case 强 schema：preconditions/steps/expected_results/priority P0-P4/tags；root/group/test_point 只允许空 content；source_refs 数据合同校验）。
+- services：`app/services/test_artifacts/`{errors,domain,repository,diff,artifact_service}.py。
+- routers：`app/routers/test_artifact_router.py`（薄壳，已挂 main `/test-artifacts`）。
+- migration：`alembic/versions/0005_test_artifact_core.py`（down=0004，upgrade create/verify、downgrade 反依赖删表）。
+- tests：`tests/services/test_test_artifact_service.py`（§27 32 项 + §28 E2E）、`tests/api/test_test_artifact_api.py`（7）、`tests/migrations/test_test_artifact_migration.py`（5）。
+
+### 语义决策（05 留白/需归一处）
+- 表名单数：test_artifact/artifact_node/artifact_revision/artifact_operation。
+- order_key=Integer 同 parent 兄弟序号（新增=末尾自增，move 可显式指定）；非 fractional（P07 最简单可测试方案）。
+- status 值域（05 未给）：active/archived；actor_type：user/agent/system；operation_type：add_node/update_node/delete_node/move_node/restore。
+- root 唯一性：`test_artifact.root_node_id` 为指针列（不建 FK 避免与 artifact_node 双向环），唯一性由事务内 Service 校验保证（新增/verify 防第二 root；root 不可 delete/move/带 parent）。
+- revision/conversation_id、run_id 为 nullable 审计整型（不建 FK，Artifact 不耦合 Conversation）。
+- Undo/Restore = plan-reconcile：把“当前可见态”对齐到“目标 Revision 重放态”（diff.replay_to_state），生成反向 primitive op（add/update/delete/move/restore），经同一 apply_operations 产出**一个新 Revision**；历史从不物理删除。目标态=当前态时 no-op（不产生空 Revision、不 400）。
+- Batch 内支持 add_node 携带 ref、后续 op 用 `@ref` 引用先前节点 id（同批建 group→point→TC 仍“恰好一个 Revision”）。
+- Diff 一律由 Operation.before/after 派生（added/updated/deleted/moved），不重比整树。
+
+### 关键机制
+- 唯一写入口 `artifact_service`：Router/测试（及未来 UI/Agent Tool）不得直接 db.add Node。
+- 一次 operation batch = 一个事务 + 恰好一个 Revision；任何 op 失败 → 抛错由调用方 rollback（全批无痕）。
+- 乐观并发：写带 expected_revision；前置快速失败 + 末尾权威条件 `UPDATE test_artifact SET current_revision=+1 WHERE current_revision=expected` 行裁决（rowcount=0 → RevisionConflictError，payload {expected,current}），HTTP 409 带 {error_code,expected_revision,current_revision}；不做 last-write-wins。
+- 删除=逻辑删除（deleted_revision=当前 Revision），tree 默认隐藏、不可作 parent/target；restore 恢复时校验 parent 链/内容 schema。
+- 服务端控制字段（id/artifact_id/owner_user_id/node_type/created_revision/deleted_revision/created_by/parent_id/order_key 等）不可被客户端 update patch / add 伪造（拒绝测试覆盖）。
+- 权限：无项目 Artifact owner-only（跨用户读/写按不存在 404 隔离）；有项目走 permission_service 读写；project 只读(如 viewer)写 → 403 artifact_permission_denied。
+
+### 测试（真实结果，全部 SQLite，不连真实 MySQL/不启 Worker/不调 LLM）
+- `python -m pytest tests/services/test_test_artifact_service.py -q` → **36 passed**（含 §28 E2E：create=1 → 一批建组/点/TC=2 → update=3 → move=4 → delete=5 → undo=6（TC001 added 恢复）→ restore rev3=7，历史 1..7 保留）。
+- `python -m pytest tests/api/test_test_artifact_api.py -q` → **7 passed**（create 201/tree/批量一 Revision/409 载荷/400/owner 404/forged 字段 400/undo+restore 端点）。
+- `python -m pytest tests/migrations/test_test_artifact_migration.py tests/migrations/test_agent_platform_migration.py -q` → **14 passed**（create/downgrade/re-upgrade/overlap verify/结构不一致明确失败；HEAD 更新为 0005）。
+- 回归：structure 结构测试 + agent services/API + llm defaults + conversation API/persistence → 73 + 34 passed（agent 全 API 36 项含 Fake Worker）。
+- 备注：`tests/conftest.py` 的 db_session 在 drop 前临时 `PRAGMA foreign_keys=OFF`——SQLite DROP TABLE 对自引用 FK 表（artifact_node.parent_id）做隐式 DELETE 时触发 immediate FK 违约；重建后恢复外键。
+
+### Deferred（明确未实现，P08 起）
+- Artifact Tools（read/add/update/delete/move/validate/coverage）、Test Design Skill、Agent 调用 Artifact、AgentToolPolicy/Approval、MindMap、SourceRef 解析/追溯 UI、内容类型扩展（api_test_design 等）。全部按 §30 停止边界未进入 P08。

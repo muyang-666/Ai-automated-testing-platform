@@ -79,12 +79,13 @@
 - [ ] 消息、工具结果与摘要跨用户完全隔离（Artifact 的跨用户与并发编辑隔离在 P07 Artifact 域 / P09 UI 域验收，P06 不实现完整 Artifact）。
 
 ## Artifact 验收域（P07 Test Artifact Core）
-- [ ] Artifact 可独立创建；Tree 可读取；add/update/delete/move node 生效。
-- [ ] 每个逻辑写操作产生 Revision（线性连续），并产出结构化 Diff（add/update/delete/move）。
-- [ ] Undo（撤销上一 Revision / 恢复到 N）后 UI 与 DB 一致，历史不物理抹除。
-- [ ] stale revision 写入返回 409 / revision_conflict，不静默覆盖人工修改。
-- [ ] Batch operation 原子（全成功才 commit）；project/user owner 隔离。
-- [ ] Artifact Domain 全部可脱离 LLM 用确定性测试验收（构造 20 节点、移动、删除、diff、undo）。
+> 2026-09-05 P07：Test Artifact Core 已实现并经确定性测试（Service 36 + API 7 + Migration 5；E2E Revision 1..7，见 02 §2.27）。无 Artifact UI（属 P09）；「UI 与 DB 一致」中的 UI 联动部分移交 P09 UI 域验收。
+- [x] Artifact 可独立创建；Tree 可读取；add/update/delete/move node 生效。（Service/HTTP 确定性测试：创建即自动 root=Revision 1）
+- [x] 每个逻辑写操作产生 Revision（线性连续），并产出结构化 Diff（add/update/delete/move）。
+- [x] Undo（撤销上一 Revision / 恢复到 N）后 DB/Service 一致、历史不物理抹除（UI 联动在 P09 验收）。
+- [x] stale revision 写入返回 409 / revision_conflict，不静默覆盖人工修改。（Service 冲突 + HTTP 409 载荷 {error_code, expected_revision, current_revision}）
+- [x] Batch operation 原子（全成功才 commit）；project/user owner 隔离。
+- [x] Artifact Domain 全部可脱离 LLM 用确定性测试验收（构造 20 节点、移动、删除、diff、undo）。
 
 ## Conversational Editing 验收域（P08 Artifact Tools + Test Design Skill）
 - [ ] 从空 Artifact：先生成测试点，再展开其中几个为详细用例。

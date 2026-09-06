@@ -56,9 +56,19 @@ db_module.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_s
 
 @pytest.fixture()
 def db_session():
-    """每条测试独立重建全部表：测试之间互不污染、不依赖执行顺序。"""
-    Base.metadata.drop_all(bind=db_module.engine)
-    Base.metadata.create_all(bind=db_module.engine)
+    """每条测试独立重建全部表：测试之间互不污染、不依赖执行顺序。
+
+    说明：drop 前临时关闭外键——SQLite 的 DROP TABLE 会先执行隐式 DELETE，
+    自引用 FK 表（如 artifact_node.parent_id → artifact_node.id）逐行删除时
+    会触发 immediate FK 违约；重建后恢复外键并保持 PRAGMA 开启。
+    """
+    engine = db_module.engine
+    with engine.connect() as conn:
+        conn.exec_driver_sql("PRAGMA foreign_keys=OFF")
+        Base.metadata.drop_all(bind=conn)
+        conn.exec_driver_sql("PRAGMA foreign_keys=ON")
+        Base.metadata.create_all(bind=conn)
+        conn.commit()
     session = db_module.SessionLocal()
     try:
         # 确认外键已开启，避免再次漏掉 MySQL 才暴露的问题
