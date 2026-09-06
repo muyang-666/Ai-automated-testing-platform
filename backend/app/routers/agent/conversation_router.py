@@ -24,6 +24,7 @@ from app.routers.dependencies import get_current_user
 from app.schemas.agent.conversation_api import (
     CancelConversationRunResponse,
     ConversationCapabilities,
+    ConversationArtifactFocusResponse,
     ConversationUpdateRequest,
     ConversationCreateRequest,
     ConversationEventItem,
@@ -143,6 +144,27 @@ def get_conversation(conversation_id: int, db: Session = Depends(get_db),
     except AgentError as e:
         raise _http_error(e)
     return ConversationSnapshot(**snapshot)
+
+
+@router.post("/conversations/{conversation_id}/artifacts/{artifact_id}/focus",
+             response_model=ConversationArtifactFocusResponse)
+def focus_artifact(conversation_id: int, artifact_id: int,
+                   db: Session = Depends(get_db),
+                   current_user: User = Depends(get_current_user)):
+    _require_conversation(db, conversation_id, current_user)
+    try:
+        session = conversation_service.focus_conversation_artifact(
+            db, session_id=conversation_id, artifact_id=artifact_id,
+            requester=current_user,
+        )
+        db.commit()
+    except AgentError as err:
+        db.rollback()
+        raise _http_error(err) from err
+    return ConversationArtifactFocusResponse(
+        conversation_id=session.id, artifact_id=artifact_id,
+        project_id=session.project_id,
+    )
 
 
 @router.get("/conversations/{conversation_id}/messages",

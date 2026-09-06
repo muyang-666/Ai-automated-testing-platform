@@ -81,7 +81,8 @@ def _apply(db, artifact_id, expected, ops, user):
     return result
 
 
-def _add_op(parent_id, node_type, title, content=None, source_refs=None, ref=None):
+def _add_op(parent_id, node_type, title, content=None, source_refs=None, ref=None,
+            order_key=None):
     op = {"operation_type": "add_node", "parent_id": parent_id,
           "node_type": node_type, "title": title}
     if content is not None:
@@ -90,6 +91,8 @@ def _add_op(parent_id, node_type, title, content=None, source_refs=None, ref=Non
         op["source_refs"] = source_refs
     if ref is not None:
         op["ref"] = ref
+    if order_key is not None:
+        op["order_key"] = order_key
     return op
 
 
@@ -805,3 +808,107 @@ def test_p07_e2e_login_artifact_full_journey(db_session):
     assert _revision_nos(db_session, artifact.id) == [1, 2, 3, 4, 5, 6, 7]
     assert artifact_service.get_artifact(db_session, artifact_id=artifact.id,
                                          requester=a).current_revision == 7
+
+
+# ── P07.1 Hardening：get_tree 全层级排序 + restore Tree Integrity ──
+
+
+def _restore_snapshot(node_id, parent_id, node_type, title, order_key=1):
+    return {"id": node_id, "parent_id": parent_id, "order_key": order_key,
+            "node_type": node_type, "title": title, "content": None, "source_refs": None}
+
+
+def test_tree_nested_children_sorted_by_order_key(db_session):
+    """≥2 层嵌套：构树后所有层级 children 都按 (order_key, id) 排序，不依赖 DB 顺序。"""
+    a = _seed(db_session)
+    artifact = _create(db_session, a)
+    root_id = artifact.root_node_id
+    # 第 1 层：故意乱序插入（晚到的高 order 在前，早到的低 order 在后）
+    r2 = _apply(db_session, artifact.id, 1, [
+        _add_op(root_id, "group", "G-晚", order_key=30),
+        _add_op(root_id, "group", "G-早", order_key=10),
+    ], a)
+    g_early = _node(db_session, artifact.id, "G-早").id
+    # 第 2 层：point 乱序插入（B,A,C）
+    r3 = _apply(db_session, artifact.id, r2["new_revision"], [
+        _add_op(g_early, "test_point", "pt-B", order_key=30),
+        _add_op(g_early, "test_point", "pt-A", order_key=10),
+        _add_op(g_early, "test_point", "pt-C", order_key=20),
+    ], a)
+    pt_a = _node(db_session, artifact.id, "pt-A").id
+    # 第 3 层：test_case 乱序插入（TC-2 先于 TC-1）
+    _apply(db_session, artifact.id, r3["new_revision"], [
+        _add_op(pt_a, "test_case", "TC-2", order_key=20),
+        _add_op(pt_a, "test_case", "TC-1", order_key=10),
+    ], a)
+    tree = artifact_service.get_tree(db_session, artifact_id=artifact.id, requester=a)
+    assert [c["title"] for c in tree["root"]["children"]] == ["G-早", "G-晚"]
+    g_early_node = next(c for c in tree["root"]["children"] if c["title"] == "G-早")
+    assert [c["title"] for c in g_early_node["children"]] == ["pt-A", "pt-C", "pt-B"]
+    pt_a_node = next(c for c in g_early_node["children"] if c["title"] == "pt-A")
+    assert [c["title"] for c in pt_a_node["children"]] == ["TC-1", "TC-2"]
+
+
+def test_restore_rejects_group_under_visible_test_case(db_session):
+    a = _seed(db_session)
+    artifact = _create(db_session, a)
+    root_id = artifact.root_node_id
+    r2 = _apply(db_session, artifact.id, 1, [_add_op(root_id, "test_case", "TC")], a)
+    tc = _node(db_session, artifact.id, "TC").id
+    r3 = _apply(db_session, artifact.id, r2["new_revision"], [_add_op(root_id, "group", "G")], a)
+    g = _node(db_session, artifact.id, "G").id
+    r4 = _apply(db_session, artifact.id, r3["new_revision"],
+                [{"operation_type": "delete_node", "target_node_id": g}], a)
+    with pytest.raises(ArtifactValidationError):
+        _apply(db_session, artifact.id, r4["new_revision"], [{
+            "operation_type": "restore", "target_node_id": g,
+            "nodes": [_restore_snapshot(g, tc, "group", "G")],
+        }], a)
+    db_session.rollback()
+
+
+def test_restore_rejects_parent_test_case_being_restored(db_session):
+    a = _seed(db_session)
+    artifact = _create(db_session, a)
+    root_id = artifact.root_node_id
+    r2 = _apply(db_session, artifact.id, 1, [_add_op(root_id, "test_case", "TC")], a)
+    tc = _node(db_session, artifact.id, "TC").id
+    r3 = _apply(db_session, artifact.id, r2["new_revision"], [_add_op(root_id, "group", "G")], a)
+    g = _node(db_session, artifact.id, "G").id
+    r4 = _apply(db_session, artifact.id, r3["new_revision"],
+                [{"operation_type": "delete_node", "target_node_id": tc}], a)
+    r5 = _apply(db_session, artifact.id, r4["new_revision"],
+                [{"operation_type": "delete_node", "target_node_id": g}], a)
+    # 同批恢复 TC 与 G，但 G 快照把 TC（test_case）当父节点 → 拒绝
+    with pytest.raises(ArtifactValidationError):
+        _apply(db_session, artifact.id, r5["new_revision"], [{
+            "operation_type": "restore", "target_node_id": tc,
+            "nodes": [
+                _restore_snapshot(tc, root_id, "test_case", "TC"),
+                _restore_snapshot(g, tc, "group", "G"),
+            ],
+        }], a)
+    db_session.rollback()
+
+
+def test_restore_rejects_cycle_a_to_b(db_session):
+    a = _seed(db_session)
+    artifact = _create(db_session, a)
+    root_id = artifact.root_node_id
+    r2 = _apply(db_session, artifact.id, 1, [
+        _add_op(root_id, "group", "GA"), _add_op(root_id, "group", "GB")], a)
+    ga = _node(db_session, artifact.id, "GA").id
+    gb = _node(db_session, artifact.id, "GB").id
+    r3 = _apply(db_session, artifact.id, r2["new_revision"],
+                [{"operation_type": "delete_node", "target_node_id": ga}], a)
+    r4 = _apply(db_session, artifact.id, r3["new_revision"],
+                [{"operation_type": "delete_node", "target_node_id": gb}], a)
+    with pytest.raises(ArtifactValidationError):
+        _apply(db_session, artifact.id, r4["new_revision"], [{
+            "operation_type": "restore", "target_node_id": ga,
+            "nodes": [
+                _restore_snapshot(ga, gb, "group", "GA"),
+                _restore_snapshot(gb, ga, "group", "GB"),
+            ],
+        }], a)
+    db_session.rollback()

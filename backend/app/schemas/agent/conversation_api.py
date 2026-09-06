@@ -31,6 +31,13 @@ class ConversationSnapshot(BaseModel):
     queued_follow_ups: int = 0
     latest_event_sequence: int = 0
     latest_message_sequence: int = 0
+    focused_artifact_id: int | None = None
+
+
+class ConversationArtifactFocusResponse(BaseModel):
+    conversation_id: int
+    artifact_id: int
+    project_id: int | None = None
 
 
 class TurnSubmitRequest(BaseModel):

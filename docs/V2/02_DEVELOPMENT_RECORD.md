@@ -1,8 +1,8 @@
 # 新 V2 开发记录：对话式 Test Agent
 
 > 更新：2026-09-04。旧路线记录已原文归档，不删除其中最新修复与测试证据。
-> 当前状态：V2-R01 结构整理已完成；V2-P01～P04 已分别通过各自声明范围验收（P01 见 2.10、P02 见 2.14、P03 见 2.15、P04 见 2.16）。
-> 2026-09-04：P05 起按 [01_DEVELOPMENT_PLAN.md](01_DEVELOPMENT_PLAN.md)（V2-P05～P10 任务卡）实施，尚未开始；P05～P10 阶段主题已改为 Conversation Runtime 收敛 / Conversation API / Test Artifact Core / Artifact Tools / Chat+MindMap+Diff / Context+Approval+Recovery（不再沿用“Skill / 上下文 / 人工门禁”旧标题）。
+> 当前状态：V2-R01 与 V2-P01～P08 已完成各自声明范围验收；P09 为下一阶段，本轮未进入。
+> P05～P10 阶段主题为 Conversation Runtime 收敛 / Conversation API / Test Artifact Core / Artifact Tools / Chat+MindMap+Diff / Context+Approval+Recovery（不沿用旧“Skill / 上下文 / 人工门禁”标题）。
 
 ## 1. 当前任务状态
 
@@ -10,14 +10,14 @@
 |---|---|---|---|
 | V2-R01 | Agent / LLM 模块目录整理（结构，先于 P01） | 已完成 | 6 条结构测试 + 338 条受影响/回归通过，见 2.1 |
 | V2-P01 | 基线与数据合同 | 阶段验收通过（限定合同/纯校验范围） | Codex 实际 90 passed in 5.41s，见 2.10 |
-| V2-P02 | 流式 Provider | 部分实现，审查未通过，待集中修正 | Codex 复跑 24 项通过，合成反例确认基础缺口，见 2.13 |
+| V2-P02 | 流式 Provider | 阶段验收通过 | P02 54、P01 90、旧 Provider/Gateway 55，见 2.14 |
 | V2-P03 | Agent Loop / Tool Executor | 阶段验收通过（纯 Python/Fake 范围） | P03 30 项；P02 54、P01 90、旧 Provider/Gateway 55、ToolRegistry 4 项回归，见 2.15 |
 | V2-P04 | 会话存储与迁移 | 阶段验收通过（临时 SQLite/真实事务范围） | P04 20 项；P01 90、P02 54、P03 30、旧平台 100 项回归，见 2.16 |
-| V2-P05 | Conversation Runtime 收敛 + Workflow 退役 | 待实施 | 按 [01](01_DEVELOPMENT_PLAN.md) |
-| V2-P06 | Conversation API + SSE + 基础工作台 | 待实施 | 同上 |
-| V2-P07 | Test Artifact Core | 待实施 | 同上 |
-| V2-P08 | Artifact Tools + Test Design Skill | 待实施 | 同上 |
-| V2-P09 | Chat + MindMap + Diff 协作工作台 | 待实施 | 同上 |
+| V2-P05 | Conversation Runtime 收敛 + Workflow 退役 | 已完成 | B/C/D/E 验收，见 2.18～2.21 |
+| V2-P06 | Conversation API + SSE + 基础工作台 | 已完成声明范围 | 见 2.22～2.26 与 P06-R01/R02 |
+| V2-P07 | Test Artifact Core | 已完成 | P07/P07.1，见 2.27～2.28 |
+| V2-P08 | Artifact Tools + Test Design Skill | 已完成 | 23 项 Tool/Agent 场景 + 24 条 Scripted Eval，见 2.29 |
+| V2-P09 | Chat + MindMap + Diff 协作工作台 | 下一阶段，未开始 | 按 [01](01_DEVELOPMENT_PLAN.md) |
 | V2-P10 | Context / Approval / Recovery / E2E | 待实施 | 同上 |
 
 ## 2. 2026-09-03 — 重新划分 V2/V3 并阅读 Pi
@@ -700,6 +700,66 @@ run_agent_loop() / loop.py + tool_executor/policy/budget # 已实现，无生产
 - 真实模型短探测：合成“只回复 OK。”、max_tokens=64、禁用重试；放行网络后一次调用首字 1.364 秒、结束 1.366 秒、stop，无错误。该数字只代表模型接口探测，不是浏览器端到端耗时；首次沙箱探测返回 network_error，不作为模型性能样本。
 - 确认无 queued/running 任务后重启现有 API 和 Worker，新进程健康检查通过。浏览器端真实消息的端到端耗时未新增测量。
 
+## 2.29 2026-09-06 — V2-P08 Artifact Tools + Test Design Skill + 第一版 Agent Eval
+
+### A. Artifact Tool 清单
+
+- Read：`get_current_artifact`、`read_artifact_outline`（depth/max_nodes）、`read_artifact_nodes`（最多 20）、`search_artifact`（keyword/type/tag/limit）、`get_artifact_diff`（最近 1～10 Revision，输出变更上限）、`read_requirement`（仅绑定来源且正文有长度上限）。
+- Write：`add_artifact_node`、`update_artifact_node`（受控 patch）、`delete_artifact_node`、`move_artifact_node`、`batch_apply_artifact_operations`（最多 10 个增量 operation、一次 Revision）。没有注册 replace/save_full_tree/restore Tool。
+- Quality：`validate_test_artifact`、`find_duplicate_cases`、`analyze_test_coverage`。另有受控 `load_skill`；加既有 calculator 后 Conversation 白名单共 16 个 Tool。
+- Handler 参数均经 Pydantic strict + extra=forbid；成功/业务失败同时写入模型可见 JSON 文本与 `details`，ToolResult 的 call_id/name 仍由 P03 原调用闭合。
+
+### B. RuntimeContext / C. Artifact binding
+
+- `AgentSession.context_json.focused_artifact_id` 是可恢复的可信绑定；新增 `POST /agent/conversations/{conversation_id}/artifacts/{artifact_id}/focus`，owner、项目和 Artifact 可读性由服务端校验，Snapshot 返回 focused_artifact_id。
+- ConversationRunner 从持久化 Session 读取绑定，释放读事务后由 `build_artifact_runtime_context` 实时计算 Artifact read/write 权限，注入 user/conversation/project/artifact/run、worker_id/execution_token 和 Session factory。模型参数不能覆盖这些字段。
+- Tool 每次执行重新核对 Session owner、mode、focused Artifact；生产写入还在同一事务中复核 execution ownership。
+
+### D. Application Service 边界 / I. Events
+
+- Tool handler 不直接新增/修改 Artifact ORM；所有写入只调用 P07 `artifact_service.apply_operations()`，人工 API 与 Agent 共用同一写入口。Requirement 读取复用既有 requirement service。
+- Agent Revision 写入 actor_type=agent、actor_user_id、conversation_id、run_id、summary；同事务写 `artifact_revision_created` 与 `artifact_diff_created` 事件，Artifact Revision 不是聊天消息。
+
+### E. Revision conflict / F. Policy
+
+- stale expected_revision 返回 `{status:error,error_code:revision_conflict,data:{expected_revision,current_revision},retryable:true}`，不在 Tool Executor 内自动重试；Fake Agent 已验证收到冲突后 read 当前节点并有限重试成功。
+- Action Risk：read/quality 允许；单 add/update/move 允许；小删除允许；删除影响节点 >=10、batch 增加 >5 或总影响 >5 返回 `approval_required` + impact 且不落库。完整 Approval persistence/suspend/resume 留 P10。
+
+### G. Test Design Skill
+
+- `backend/skills/test-design/SKILL.md` 含测试维度与 read-before-write、minimal-edit、respect-user-structure、no-mandatory-path 等规则，没有 phase/next_step/固定 coverage 流程。
+- Skill Catalog 只加载注册名 `test-design`，校验 name/version/description、32KiB 上限、路径必须在白名单 root 内，记录 SHA256；`load_skill` 不接受任意路径、不执行脚本、不扩张 Tool 权限。System prompt 只注入摘要，正文按需加载一次。
+
+### H. Quality Tools
+
+- validate：空标题、test_case 缺 steps/expected 等规则型诊断；duplicate：规范化标题/关键字段后 exact 或 SequenceMatcher 阈值候选；coverage：positive/negative/boundary/state/permission/timing/idempotency/consistency 的标题与 tags 规则识别。
+- 三者只读取 Tree，不调用 apply_operations；测试同时断言 current_revision 不变。没有 embedding/vector DB/RAG。
+
+### J. 8 类对话与最终故事
+
+- 8 类 Fake Provider 场景逐项通过：空 Artifact 测试点、局部分支三用例、单节点最小修改、最近 Diff 定位“第二个”、move、只查重、coverage 后下一轮补缺口、直接补用例不强制测试点。
+- 最终故事通过：Revision 1→2（测试点）→3（三条边界）→4（删除第二条）→5（修改 TC021）；随后 duplicate/coverage 均保持 Revision 5。另测 revision conflict→read→retry→成功。
+
+### K. Eval
+
+- `backend/evals/p08/` 提供独立 24-case Scripted Eval 与指标计算：Task Success、Tool Selection、Tool Argument、Artifact Edit、Unintended Modification、Instruction Following、Revision Conflict Recovery、Quality Non-Mutation。
+- 本次 scripted baseline：case_count=24；除 unintended modification rate=0.0 外，其余指标=1.0。结果仅证明固定期望/脚本和指标基础设施可用，不代表真实模型效果；真实模型 Eval 留 P10。
+
+### L. Tests
+
+- P07/P07.1 前置复验：Service/API/Migration `53 passed`。
+- P08 Tool + Agent 场景：`23 passed`；最终故事与冲突恢复包含在内。
+- P08 + P07 + P03 + P05/P06 组合回归：`135 passed`（后续权限/输出收紧后 P08+P03+Conversation API 再跑 `64 passed`）。
+- isolation：`3 passed`。Eval：24 cases 全部满足 scripted baseline。
+- 完整 backend：首次 `664 passed, 1 failed`；失败为既有 SQLite 双线程 promotion 用例的 `results` 列表偶发为空，数据库仍只有一个 active_slot；该单项立即复跑 `1 passed`。不把它写成全绿，也不累计测试数。
+- `git diff --check` 通过。未调用真实模型、未修改真实 Artifact 数据。
+
+### M. Deferred / Stop boundary
+
+- P09：MindMap、Diff/History UI、Node Inspector、人工 Artifact 编辑 UI及实时联动。
+- P10：Context compaction、完整 Approval suspend/resume、真实模型 Eval、MySQL 并发/恢复最终验证。
+- 未实现 API 执行、RCA、Test Data、Defect Agent、RAG、multi-agent；这些属于 V3。P08 完成后停止，未进入 P09。
+
 ## 2.23 2026-09-05 — P06 Frontend UX Hardening + Visual Redesign（Turn 数据层/Bug 修复/契约补充）
 
 - 授权范围：修复 Conversation Chat UX/归属 Bug 并做开发者工作台风视觉收敛；不改 Agent Runtime/follow-up/Worker/AgentLoop 语义；不动 P07/MindMap。
@@ -848,3 +908,18 @@ v2-chat 已含浮动窗口（min/max/launcher）、SSE 订阅（eventStream.js �
 
 ### Deferred（明确未实现，P08 起）
 - Artifact Tools（read/add/update/delete/move/validate/coverage）、Test Design Skill、Agent 调用 Artifact、AgentToolPolicy/Approval、MindMap、SourceRef 解析/追溯 UI、内容类型扩展（api_test_design 等）。全部按 §30 停止边界未进入 P08。
+
+## 2.28 2026-09-05 — P07.1 TestArtifact Hardening（代码审查修正，无功能扩展、不进入 P08）
+
+### 1) get_tree 全层级排序
+- 构树完成后对**所有节点**的 children 统一 `sort(key=(order_key, id))`（原先只排 root/orphan 层，nested 层依赖 DB 返回顺序）。
+- 新增 ≥3 层嵌套乱序插入测试（root→group→test_point→test_case，显式 order_key 与插入序相反）验证每层顺序。
+
+### 2) restore Tree Integrity 与 add/move 一致
+- 抽出共享 `_require_parent()`（parent 存在/同 artifact/存活或本批恢复中/test_case 不可为父；None 仅 root 语义），add/move/restore 三处统一引用，防规则漂移。
+- `_apply_restore()` 补全：visible 父节点 node_type 检查、同批恢复中 test_case 父节点检查、root 不可经 restore 恢复、非 root 快照必须有父、parent 链环检测（A↔B 拒绝）。
+- restore 改为**内部操作**：`/operations` API 直接 400 拒绝客户端提交 arbitrary restore（undo_latest / restore_revision 端点内部生成并执行不受影响）；Service 层保留能力供 undo/restore 使用。
+
+### 测试（真实结果，SQLite）
+- service 40 + API 8 = **48 passed**（新增：嵌套多层级排序、restore 挂可见 test_case 拒绝、restore 挂同批恢复 test_case 拒绝、A↔B 环拒绝、public operations 拒绝 internal restore + undo 端点仍可用）。
+- 回归：migration 14 + structure + conversation API = **32 passed**。

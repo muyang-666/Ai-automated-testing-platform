@@ -84,6 +84,7 @@ class ConversationRunner:
     stream_limits: StreamLimits = field(default_factory=StreamLimits)
     policy: Any = None
     event_persister: Callable[[Any], None] | None = None  # P06：安全执行事件落库（Worker 注入）
+    application_context_factory: Callable[..., Any] | None = None
     id_factory: Callable[[], str] = field(default_factory=lambda: lambda: uuid.uuid4().hex)
     timestamp_factory: Callable[[], int] = field(default_factory=lambda: lambda: int(time.time() * 1000))
 
@@ -107,16 +108,35 @@ class ConversationRunner:
             restored = self._restore(db, session_id, actor_user_id, run,
                                        until_sequence_no=self._current_user_sequence(db, run))
             self._assert_history_ends_with_current_user_message(db, run, restored)
-            # P05-C：上面两次只读查询已 autobegin；进入 await run_agent_loop 前
-            # 显式结束读事务，确保 LLM 网络等待期间 DB Session 无 active transaction。
+            session_context = db.execute(
+                select(AgentSession.project_id, AgentSession.context_json)
+                .where(AgentSession.id == session_id)
+            ).first()
+            stored_context = session_context.context_json if session_context and isinstance(
+                session_context.context_json, dict) else {}
+            project_id = session_context.project_id if session_context else None
+            artifact_id = stored_context.get("focused_artifact_id")
+            if type(artifact_id) is not int or artifact_id <= 0:
+                artifact_id = None
+            # Release the Runner's read transaction before the context factory
+            # performs its own short permission lookup.
             db.rollback()
+            application_context = (self.application_context_factory(
+                user_id=actor_user_id, conversation_id=session_id, run_id=run_id,
+                artifact_id=artifact_id,
+                project_id=project_id,
+                worker_id=worker_id, execution_token=execution_token,
+            ) if self.application_context_factory is not None else None)
 
             context = AgentLoopContext(
                 system_prompt=self.system_prompt,
                 messages=restored,
                 tool_registry=self.tool_registry,
-                metadata={"conversation_id": session_id, "run_id": run_id},
-                application_context=None,
+                metadata={"user_id": actor_user_id, "conversation_id": session_id,
+                          "project_id": project_id,
+                          "artifact_id": artifact_id, "run_id": run_id,
+                          "permissions": sorted(getattr(application_context, "permissions", ()))},
+                application_context=application_context,
             )
             config = self._build_config(loop_events, cancel_event)
             result = await run_agent_loop(prompts=[], context=context, config=config)

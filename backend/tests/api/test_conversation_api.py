@@ -28,6 +28,7 @@ from app.models.user import User
 from app.routers.dependencies import get_current_user
 from app.services.agent import agent_run_service, conversation_service
 from app.services.agent.conversation_service import submit_conversation_turn
+from app.services.test_artifacts import artifact_service
 from app.workers.agent_worker import AgentWorker
 
 USER_A_ID = 101
@@ -214,6 +215,21 @@ def test_create_list_snapshot_and_turn_contracts(client, db_session):
     snap = detail.json()
     assert snap["queue_state"] in {"executable", "idle"}
     assert snap["latest_message_sequence"] >= 1
+
+
+def test_focus_artifact_is_persisted_and_owner_isolated(client, db_session):
+    cid = create(client).json()["id"]
+    artifact = artifact_service.create_artifact(
+        db_session, requester=db_session.get(User, USER_A_ID), title="登录测试",
+    )
+    db_session.commit()
+    focused = client.post(f"/agent/conversations/{cid}/artifacts/{artifact.id}/focus")
+    assert focused.status_code == 200
+    assert focused.json()["artifact_id"] == artifact.id
+    assert client.get(f"/agent/conversations/{cid}").json()["focused_artifact_id"] == artifact.id
+    switch_user(USER_B_ID)
+    assert client.post(f"/agent/conversations/{cid}/artifacts/{artifact.id}/focus").status_code == 404
+    switch_user(USER_A_ID)
 
 
 def test_cross_user_access_isolated(client, db_session):
@@ -473,7 +489,9 @@ def test_capabilities_no_secret(client):
     response = client.get("/agent/conversation-capabilities")
     assert response.status_code == 200
     body = response.json()
-    assert body["tools"] == ["calculator"]
+    assert len(body["tools"]) == 16
+    assert {"calculator", "load_skill", "get_current_artifact", "add_artifact_node",
+            "validate_test_artifact", "analyze_test_coverage"} <= set(body["tools"])
     assert "api_key" not in body and "secret" not in json.dumps(body).lower()
     assert body["model_ready"] is False  # 测试库未配置 agent_chat 场景
 

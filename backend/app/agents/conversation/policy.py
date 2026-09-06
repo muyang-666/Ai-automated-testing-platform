@@ -21,14 +21,16 @@ class ToolPolicyDecision:
     error_code: str | None = None
     arguments: dict[str, Any] | None = None
     terminate: bool = False
+    details: dict[str, Any] | None = None
 
     @classmethod
     def allow(cls, *, arguments: dict[str, Any] | None = None) -> "ToolPolicyDecision":
         return cls(allowed=True, arguments=arguments)
 
     @classmethod
-    def block(cls, error_code: str = "tool_policy_denied", *, terminate: bool = False) -> "ToolPolicyDecision":
-        return cls(allowed=False, error_code=error_code, terminate=terminate)
+    def block(cls, error_code: str = "tool_policy_denied", *, terminate: bool = False,
+              details: dict[str, Any] | None = None) -> "ToolPolicyDecision":
+        return cls(allowed=False, error_code=error_code, terminate=terminate, details=details)
 
 
 @dataclass(frozen=True)
@@ -38,6 +40,7 @@ class ToolPolicyContext:
     prepared: PreparedToolCall
     definition: ToolDefinition
     metadata: dict[str, Any]
+    application_context: Any = None
 
 
 class DefaultToolPolicy:

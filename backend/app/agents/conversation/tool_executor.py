@@ -37,6 +37,7 @@ _ERROR_TEXT = {
     "approval_required": "工具需要人工批准，当前未执行",
     "permission_required": "工具需要额外权限，当前未执行",
     "write_tool_blocked": "写入工具尚未开放，当前未执行",
+    "artifact_not_focused": "当前会话未绑定 TestArtifact，工具未执行",
     "invalid_policy": "工具策略配置无效，未执行",
     "tool_execution_failed": "工具执行失败",
     "tool_result_invalid": "工具返回结果无效",
@@ -60,6 +61,14 @@ class ToolExecutionResult:
     details: Any = None
     usage: Usage | None = None
     signal: Literal["continue", "stop", "wait"] = "continue"
+
+
+class ToolReportedError(Exception):
+    """A tool's safe, machine-readable business failure."""
+    def __init__(self, error_code: str, result: ToolExecutionResult):
+        self.error_code = error_code
+        self.result = result
+        super().__init__(error_code)
 
 
 @dataclass(frozen=True)
@@ -102,9 +111,15 @@ def _json_safe(value: Any) -> bool:
     return False
 
 
-def _fixed_result(code: str, *, signal: Literal["continue", "stop", "wait"] = "continue") -> ToolExecutionResult:
-    return ToolExecutionResult(content=[TextContent(text=_ERROR_TEXT.get(code, "工具执行失败"))],
-                               details={"error_code": code}, signal=signal)
+def _fixed_result(code: str, *, signal: Literal["continue", "stop", "wait"] = "continue",
+                  details: dict[str, Any] | None = None) -> ToolExecutionResult:
+    payload = {"error_code": code}
+    if details:
+        payload.update(details)
+    text = (json.dumps(payload, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+            if details else _ERROR_TEXT.get(code, "工具执行失败"))
+    return ToolExecutionResult(content=[TextContent(text=text)],
+                               details=payload, signal=signal)
 
 
 def _normalize_result(value: Any, output_model: Any) -> ToolExecutionResult:
@@ -221,7 +236,8 @@ async def execute_tool_call(
                     decision = await _await_handler(
                         evaluate_policy(policy or DefaultToolPolicy(), ToolPolicyContext(
                             assistant_message=assistant_message, tool_call=tool_call, prepared=prepared,
-                            definition=definition, metadata=dict(metadata or {}))),
+                            definition=definition, metadata=dict(metadata or {}),
+                            application_context=application_context)),
                         cancel_event=cancel_event, deadline=deadline,
                     )
                 except ToolExecutionStopped:
@@ -232,7 +248,8 @@ async def execute_tool_call(
                     decision = ToolPolicyDecision.block("invalid_policy", terminate=True)
                 if not decision.allowed:
                     code = decision.error_code or "tool_policy_denied"
-                    result = _fixed_result(code, signal="stop" if decision.terminate else "continue")
+                    result = _fixed_result(code, signal="stop" if decision.terminate else "continue",
+                                           details=decision.details)
                 else:
                     if decision.arguments is not None:
                         if not isinstance(decision.arguments, dict):
@@ -265,6 +282,8 @@ async def execute_tool_call(
                                 if deadline is not None and asyncio.get_running_loop().time() >= deadline:
                                     raise ToolExecutionStopped("deadline_exceeded")
                             result = _normalize_result(raw, definition.output_model)
+                        except ToolReportedError as exc:
+                            code, result = exc.error_code, exc.result
                         except ToolExecutionStopped:
                             raise
                         except asyncio.CancelledError:

@@ -14,6 +14,8 @@
 任何一步失败 → 调用方 rollback（本服务不 commit）。
 """
 
+import json
+
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
@@ -27,6 +29,7 @@ from app.services.test_artifacts import diff as diff_mod
 from app.services.test_artifacts import repository as repo
 from app.services.test_artifacts.domain import (
     ACTOR_TYPE_USER,
+    NODE_TYPE_ROOT,
     NODE_TYPE_TEST_CASE,
     OP_ADD_NODE,
     OP_DELETE_NODE,
@@ -134,6 +137,27 @@ def _require_visible_node(db: Session, artifact: TestArtifact, node_id: int | No
     return node
 
 
+def _require_parent(db: Session, artifact: TestArtifact, parent_id: int | None, *,
+                    restoring_ids: set[int] | None = None, what: str = "父节点") -> ArtifactNode | None:
+    """共享 parent Tree Integrity（add/move/restore 同规则，防三套规则漂移）。
+
+    - parent_id=None → 返回 None（root 专用，由调用方结合 root 规则判断）；
+    - parent 必须存在、同 artifact；
+    - parent 必须存活（deleted_revision IS NULL），或在 restoring_ids 中（本批正在恢复）；
+    - test_case 永远不能作父节点。
+    """
+    if parent_id is None:
+        return None
+    parent = repo.get_node(db, parent_id)
+    if parent is None or parent.artifact_id != artifact.id:
+        raise TestArtifactValidationError(f"{what} 不存在或不属于该 Artifact")
+    if parent.deleted_revision is not None and not (restoring_ids and parent.id in restoring_ids):
+        raise TestArtifactValidationError(f"{what} 已删除，不能作为父节点")
+    if parent.node_type == NODE_TYPE_TEST_CASE:
+        raise TestArtifactValidationError("test_case 节点不能作为父节点")
+    return parent
+
+
 def _descendant_ids(db: Session, artifact: TestArtifact, node_id: int) -> list[int]:
     """当前可见树中以 node 为根的子孙节点 id（不含 node 自身）。"""
     rows = repo.list_visible_nodes(db, artifact.id)
@@ -193,9 +217,7 @@ def _apply_add(db: Session, artifact: TestArtifact, new_no: int, request: dict,
     else:
         if parent_id is None:
             raise TestArtifactValidationError("非 root 节点必须提供 parent_id")
-        parent_row = _require_visible_node(db, artifact, parent_id, what="父节点")
-        if parent_row.node_type == NODE_TYPE_TEST_CASE:
-            raise TestArtifactValidationError("test_case 节点不能作为父节点")
+        parent_row = _require_parent(db, artifact, parent_id)
     if order_key is not None and order_key < 0:
         raise TestArtifactValidationError("order_key 不能为负数")
 
@@ -249,9 +271,9 @@ def _apply_move(db: Session, artifact: TestArtifact, request: dict) -> dict:
     new_parent_id = request.get("new_parent_id")
     if new_parent_id is None:
         raise TestArtifactValidationError("move_node 必须提供 new_parent_id")
-    new_parent = _require_visible_node(db, artifact, new_parent_id, what="目标父节点")
-    if new_parent.node_type == NODE_TYPE_TEST_CASE:
-        raise TestArtifactValidationError("test_case 节点不能作为父节点")
+    new_parent = _require_parent(db, artifact, new_parent_id, what="目标父节点")
+    if new_parent is None:  # move 不允许悬空（root 专属 None）
+        raise TestArtifactValidationError("move_node 必须提供 new_parent_id")
     if new_parent_id == node.id or new_parent_id in _descendant_ids(db, artifact, node.id):
         raise TestArtifactValidationError("不能移动到自身或其子孙节点下（会形成环）")
 
@@ -317,23 +339,47 @@ def _apply_restore(db: Session, artifact: TestArtifact, request: dict) -> dict:
         if snap_id in visible_ids:
             raise TestArtifactValidationError(f"节点 {snap_id} 不是已删除节点，不能重复恢复")
         restored_ids.add(snap_id)
-    # 完整性：父引用必须指向“本批恢复节点”或“当前存活节点”，且不得指向自身
-    allowed_parents = set(ids) | visible_ids
-    for snap in raw_nodes:
+    # ── 完整 Tree Integrity（与 add/move 共用 _require_parent 规则） ──
+    # parent 存在/同 artifact/（存活 或 本批恢复中）；test_case 不可为父；root 规则；
+    # 禁止 self-parent；恢复快照内 parent 链不得成环。
+    snap_by_id = {int(item["id"]): item for item in raw_nodes if isinstance(item, dict) and item.get("id") is not None}
+    if set(snap_by_id) != set(ids):
+        raise TestArtifactValidationError("restore 快照必须覆盖全部待恢复节点")
+    for snap_id in ids:
+        row = by_id[snap_id]
+        if row.node_type == NODE_TYPE_ROOT:
+            raise TestArtifactValidationError("root 节点不可通过 restore 恢复（数据异常）")
+    allowed_parent_ids = restored_ids | visible_ids
+    for snap_id in ids:
+        snap = snap_by_id[snap_id]
         parent = snap.get("parent_id")
-        snap_id = int(snap["id"])
-        if parent is not None and parent not in allowed_parents:
+        row = by_id[snap_id]
+        if parent is None:
+            if row.node_type != NODE_TYPE_ROOT:
+                raise TestArtifactValidationError("非 root 节点的 restore 快照必须有父节点")
+            continue
+        if parent not in allowed_parent_ids:
             raise TestArtifactValidationError("restore 父节点不存在/已删除/跨 Artifact")
         if parent == snap_id:
             raise TestArtifactValidationError("restore 节点不能以自身为父节点")
-        row = by_id[snap_id]
-        if row.node_type == NODE_TYPE_TEST_CASE and parent is not None:
-            parent_row = by_id.get(parent)
-            if parent_row is not None and parent_row.node_type == NODE_TYPE_TEST_CASE:
-                raise TestArtifactValidationError("test_case 节点不能作为父节点")
+        parent_row = repo.get_node(db, parent)
+        if parent_row is None or parent_row.artifact_id != artifact.id:
+            raise TestArtifactValidationError("restore 父节点不存在或不属于该 Artifact")
+        if parent_row.node_type == NODE_TYPE_TEST_CASE:
+            raise TestArtifactValidationError("test_case 节点不能作为父节点")
         if not isinstance(snap.get("title"), str):
             raise TestArtifactValidationError("restore 快照缺少合法 title")
         _validated_content(row.node_type, snap.get("content"))  # 防御：快照内容必须匹配节点类型
+    # 环检测：仅沿“本批恢复节点”的 parent 链行走，重入即环（A→B→A）
+    parent_of: dict[int, int | None] = {sid: snap_by_id[sid].get("parent_id") for sid in ids}
+    for start in ids:
+        seen: set[int] = set()
+        cursor: int | None = start
+        while cursor is not None and cursor in parent_of:
+            if cursor in seen:
+                raise TestArtifactValidationError("restore 快照的 parent 链形成环")
+            seen.add(cursor)
+            cursor = parent_of[cursor]
     # 先解除删除标记（全部），再按快照回填字段
     for row in by_id.values():
         row.deleted_revision = None
@@ -521,6 +567,16 @@ def get_artifact(db: Session, *, artifact_id: int, requester) -> TestArtifact:
     return _load_readable(db, artifact_id, requester)
 
 
+def permissions_for_artifact(db: Session, *, artifact_id: int, requester) -> frozenset[str]:
+    artifact = repo.get_artifact(db, artifact_id)
+    if artifact is None or not _readable(db, artifact, requester):
+        return frozenset()
+    permissions = {"artifact:read"}
+    if _writable(db, artifact, requester):
+        permissions.add("artifact:write")
+    return frozenset(permissions)
+
+
 def _tree_node(node: ArtifactNode) -> dict:
     return {
         "id": node.id,
@@ -542,13 +598,91 @@ def get_tree(db: Session, *, artifact_id: int, requester) -> dict:
     for row in nodes:
         if row.parent_id is not None and row.parent_id in items:
             items[row.parent_id]["children"].append(items[row.id])
-    for row in nodes:
-        if row.parent_id is None or row.parent_id not in items:
-            items[row.id]["children"].sort(key=lambda n: (n["order_key"], n["id"]))
+    # 构树完成后对所有层级的 children 统一按 (order_key, id) 排序，
+    # 不依赖 DB 返回顺序（nested group/test_point 同样稳定有序）。
+    for item in items.values():
+        item["children"].sort(key=lambda child: (child["order_key"], child["id"]))
     root = None
     if artifact.root_node_id is not None and artifact.root_node_id in items:
         root = items[artifact.root_node_id]
     return {"artifact_id": artifact.id, "current_revision": artifact.current_revision, "root": root}
+
+
+def get_nodes(db: Session, *, artifact_id: int, node_ids: list[int], requester,
+              max_nodes: int = 20) -> list[dict]:
+    """Read a bounded, caller-ordered set of visible nodes."""
+    artifact = _load_readable(db, artifact_id, requester)
+    if not isinstance(node_ids, list) or not node_ids or len(node_ids) > max_nodes:
+        raise TestArtifactValidationError(f"node_ids 必须包含 1～{max_nodes} 个节点")
+    if any(type(node_id) is not int or node_id <= 0 for node_id in node_ids):
+        raise TestArtifactValidationError("node_ids 必须为正整数")
+    if len(set(node_ids)) != len(node_ids):
+        raise TestArtifactValidationError("node_ids 不允许重复")
+    rows = {row.id: row for row in repo.list_visible_nodes(db, artifact.id)}
+    if any(node_id not in rows for node_id in node_ids):
+        raise TestArtifactValidationError("节点不存在、已删除或不属于该 Artifact")
+    return [node_snapshot(rows[node_id]) | {"created_revision": rows[node_id].created_revision}
+            for node_id in node_ids]
+
+
+def search_nodes(db: Session, *, artifact_id: int, requester, keyword: str | None = None,
+                 node_type: str | None = None, tag: str | None = None,
+                 limit: int = 20) -> list[dict]:
+    """Deterministic bounded search; no embeddings or external index."""
+    artifact = _load_readable(db, artifact_id, requester)
+    if not 1 <= limit <= 50:
+        raise TestArtifactValidationError("limit 必须在 1～50 之间")
+    if node_type is not None and node_type not in NODE_TYPES:
+        raise TestArtifactValidationError("node_type 无效")
+    needle = (keyword or "").strip().casefold()
+    wanted_tag = (tag or "").strip().casefold()
+    if not needle and not node_type and not wanted_tag:
+        raise TestArtifactValidationError("keyword、node_type、tag 至少提供一个")
+    matches: list[ArtifactNode] = []
+    for row in repo.list_visible_nodes(db, artifact.id):
+        content = row.content_json if isinstance(row.content_json, dict) else {}
+        tags = content.get("tags") if isinstance(content.get("tags"), list) else []
+        haystack = f"{row.title} {json.dumps(content, ensure_ascii=False, sort_keys=True)}".casefold()
+        if needle and needle not in haystack:
+            continue
+        if node_type and row.node_type != node_type:
+            continue
+        if wanted_tag and not any(isinstance(item, str) and item.casefold() == wanted_tag for item in tags):
+            continue
+        matches.append(row)
+    matches.sort(key=lambda row: (row.order_key, row.id))
+    return [{"id": row.id, "node_type": row.node_type, "title": row.title,
+             "parent_id": row.parent_id, "order_key": row.order_key,
+             "created_revision": row.created_revision}
+            for row in matches[:limit]]
+
+
+def get_delete_impact(db: Session, *, artifact_id: int, node_id: int, requester) -> dict:
+    artifact = _load_readable(db, artifact_id, requester)
+    node = _require_visible_node(db, artifact, node_id, what="节点")
+    descendants = _descendant_ids(db, artifact, node.id)
+    rows = {row.id: row for row in repo.list_visible_nodes(db, artifact.id)}
+    summary: dict[str, int] = {}
+    for affected_id in [node.id, *descendants]:
+        kind = rows[affected_id].node_type
+        summary[kind] = summary.get(kind, 0) + 1
+    return {
+        "target_node_id": node.id,
+        "descendant_count": len(descendants),
+        "total_affected_nodes": len(descendants) + 1,
+        "node_types": dict(sorted(summary.items())),
+    }
+
+
+def get_recent_diff(db: Session, *, artifact_id: int, requester,
+                    revision_count: int = 1) -> dict:
+    artifact = _load_readable(db, artifact_id, requester)
+    if not 1 <= revision_count <= 10:
+        raise TestArtifactValidationError("revision_count 必须在 1～10 之间")
+    to_revision = artifact.current_revision
+    from_revision = max(0, to_revision - revision_count)
+    return get_diff(db, artifact_id=artifact.id, from_revision=from_revision,
+                    to_revision=to_revision, requester=requester)
 
 
 # ── Revision / Diff ──
@@ -753,5 +887,6 @@ def _desired_depth(desired: dict[int, dict]) -> dict[int, int]:
 __all__ = [
     "create_artifact", "list_artifacts", "get_artifact", "get_tree", "apply_operations",
     "list_revisions", "get_revision", "get_diff", "undo_latest", "restore_revision",
-    "node_snapshot",
+    "node_snapshot", "get_nodes", "search_nodes", "get_delete_impact", "get_recent_diff",
+    "permissions_for_artifact",
 ]

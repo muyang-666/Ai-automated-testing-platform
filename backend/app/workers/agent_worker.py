@@ -389,7 +389,11 @@ def main(argv=None) -> None:
 
     # conversation 执行依赖（P06 收敛）：统一 LLMGateway + 配置中心 agent_chat 场景快照
     # （按 Run 解析）；工具白名单只暴露 conversation_safe_tools，不暴露 legacy 业务工具。
-    from app.agents.tools.conversation_safe_tools import build_conversation_tool_registry
+    from app.agents.tools.conversation_safe_tools import (
+        build_conversation_system_prompt, build_conversation_tool_registry,
+    )
+    from app.agents.tools.artifacts.policy import ArtifactToolPolicy
+    from app.agents.tools.artifacts.runtime import build_artifact_runtime_context
     from app.services.agent.conversation_provider import resolve_conversation_snapshot
     conversation_gateway = LLMGateway()
     conversation_tools = build_conversation_tool_registry()
@@ -406,6 +410,10 @@ def main(argv=None) -> None:
             gateway=conversation_gateway,
             snapshot=None,  # 每个 Run 执行前由 worker 经 conversation_snapshot_factory 注入
             tool_registry=conversation_tools,
+            system_prompt=build_conversation_system_prompt(),
+            policy=ArtifactToolPolicy(),
+            application_context_factory=lambda **values: build_artifact_runtime_context(
+                SessionLocal, **values),
         )
 
     worker = AgentWorker(

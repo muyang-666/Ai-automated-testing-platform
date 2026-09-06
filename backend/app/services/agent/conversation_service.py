@@ -249,6 +249,36 @@ def list_conversations_for_user(db: Session, requester_user_id: int) -> list[Age
     ).order_by(AgentSession.id.desc()).all())
 
 
+def focused_artifact_id(session: AgentSession) -> int | None:
+    context = session.context_json if isinstance(session.context_json, dict) else {}
+    value = context.get("focused_artifact_id")
+    return value if type(value) is int and value > 0 else None
+
+
+def focus_conversation_artifact(db: Session, *, session_id: int,
+                                artifact_id: int, requester) -> AgentSession:
+    """Persist a trusted current Artifact binding on the Conversation."""
+    from app.services.test_artifacts import artifact_service
+    from app.services.test_artifacts.errors import TestArtifactError
+
+    session = _owned_conversation(db, session_id, requester.id, require_active=False)
+    try:
+        artifact = artifact_service.get_artifact(
+            db, artifact_id=artifact_id, requester=requester,
+        )
+    except TestArtifactError:
+        raise AgentPermissionError("Artifact 不存在或无权访问") from None
+    if session.project_id is not None and artifact.project_id != session.project_id:
+        raise ConversationConflict("Artifact 与 Conversation 项目不一致")
+    if session.project_id is None and artifact.project_id is not None:
+        session.project_id = artifact.project_id
+    context = dict(session.context_json) if isinstance(session.context_json, dict) else {}
+    context["focused_artifact_id"] = artifact.id
+    session.context_json = context
+    db.flush()
+    return session
+
+
 def conversation_snapshot(db: Session, *, session_id: int,
                           requester_user_id: int) -> dict:
     """P06 会话快照：元数据 + 当前 run + queue 状态 + 最新游标。不带消息正文。"""
@@ -297,6 +327,7 @@ def conversation_snapshot(db: Session, *, session_id: int,
         "queued_follow_ups": queue["queued_follow_ups"],
         "latest_event_sequence": int(latest_event),
         "latest_message_sequence": int(latest_message),
+        "focused_artifact_id": focused_artifact_id(session),
     }
 
 

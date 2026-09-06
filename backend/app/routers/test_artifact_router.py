@@ -171,6 +171,10 @@ def get_tree(artifact_id: int, db: Session = Depends(get_db),
 @router.post("/{artifact_id}/operations", response_model=AppliedOperationsResponse)
 def apply_operations(artifact_id: int, payload: OperationSubmitRequest,
                      db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    # restore 是内部操作（含 arbitrary 恢复快照），只允许 undo_latest / restore_revision
+    # 在 Application Service 内部生成并执行；普通 UI/API/未来 Agent Tool 不可自行提交。
+    if any(op.operation_type == "restore" for op in payload.operations):
+        raise HTTPException(status_code=400, detail="restore 为内部操作，请使用 undo/restore 端点")
     try:
         result = artifact_service.apply_operations(
             db,

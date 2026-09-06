@@ -1,7 +1,7 @@
 # V2 开发主计划（Development Plan）
 
 > 生效：2026-09-03（Pi 架构 Python 实现路线）；2026-09-04 起调整 P05 及之后路线为“对话式 Test Agent + TestArtifact 协作编辑”。方向决策已执行，ADR 原文归档为 archive/V2_DIRECTION_ADR_2026-09-04.md。
-> 状态：V2-P01～P06 已完成（P05：Conversation Runtime 收敛 + Legacy Workflow 退役 + follow-up 队列，2026-09-04；P06：Conversation API + SSE + 前端持续聊天工作台，浏览器人工验收已推进至 P07）；当前阶段 P07（Test Artifact Core，实现完成，待复审验收，2026-09-05）。
+> 状态：V2-P01～P08 已完成各自声明范围验收；P07/P07.1 Artifact Core 与 Hardening、P08 Artifact Tools + Test Design Skill + Scripted Eval 已于 2026-09-06 验收。下一阶段为 P09（Chat + MindMap + Diff），本轮不进入。
 > 本文件是 V2 **唯一开发路线 Source of Truth**：P01～P10 的 Goal / Scope / Key implementation / Acceptance / Stop boundary 全部在此。实现级数据模型与工具合同见 [05_TECHNICAL_DESIGN.md](05_TECHNICAL_DESIGN.md)，产品行为见 [04_PRODUCT_PRD.md](04_PRODUCT_PRD.md)。
 > 本文件替代旧 V2.1/V2.2/V2.3 任务路线，不代表 Pi 全功能复刻或官方 Python 移植。
 
@@ -71,9 +71,9 @@ TestMind 已有但不等于完整对话内核：
 | V2-P04 | 无项目会话、Turn 持久化、并发/幂等迁移 | P01、P03 | 阶段验收通过，见 reviews/V2-P04_ACCEPTANCE.md |
 | V2-P05 | Conversation Runtime 收敛：Worker/租约/取消/队列，Workflow 退役 | P03、P04 | 已完成（2026-09-04，含 follow-up 队列） |
 | V2-P06 | Conversation API + SSE + 基础持续聊天工作台 | P02、P04、P05 | 后端完成并测试；前端已接入且 build 通过；浏览器人工验收已推进至 P07（记录见 02 §2.22–§2.26） |
-| V2-P07 | Test Artifact Core：Case Tree / Node / Revision / Operation / Diff / Undo / 乐观锁 | P04、P06 | 实现完成（2026-09-05，确定性 Service 36 + API 7 + Migration 5，E2E Revision 1..7，见 02 §2.27）；待复审验收 |
-| V2-P08 | Artifact Tools + Test Design Skill：read/add/update/delete/move/validate/coverage | P07 | 待实施 |
-| V2-P09 | Chat + MindMap + Diff 协作工作台 | P06、P07、P08 | 待实施 |
+| V2-P07 | Test Artifact Core：Case Tree / Node / Revision / Operation / Diff / Undo / 乐观锁 | P04、P06 | 已完成（P07/P07.1，53 项复验通过，见 02 §2.27–§2.28） |
+| V2-P08 | Artifact Tools + Test Design Skill：read/add/update/delete/move/validate/coverage | P07 | 已完成（2026-09-06，23 项 Tool/Agent 场景 + 24 条 Scripted Eval，见 02 §2.29） |
+| V2-P09 | Chat + MindMap + Diff 协作工作台 | P06、P07、P08 | 下一阶段，未开始 |
 | V2-P10 | Context / Compaction / Approval / Conflict / Recovery / E2E | P05～P09 | 待实施 |
 
 里程碑 A：P03 后，Fake 模型能多轮聊天并调用无副作用工具（已完成）。

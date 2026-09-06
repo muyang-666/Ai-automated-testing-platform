@@ -80,6 +80,7 @@
 
 ## Artifact 验收域（P07 Test Artifact Core）
 > 2026-09-05 P07：Test Artifact Core 已实现并经确定性测试（Service 36 + API 7 + Migration 5；E2E Revision 1..7，见 02 §2.27）。无 Artifact UI（属 P09）；「UI 与 DB 一致」中的 UI 联动部分移交 P09 UI 域验收。
+> 2026-09-05 P07.1 Hardening：get_tree 全层级 children 按 (order_key,id) 排序；restore 与 add/move 共用 Tree Integrity（parent/kind/root/环），并收口为内部操作（/operations API 拒绝、undo/restore 端点可用）；Service 40 + API 8 全绿（见 02 §2.28）。
 - [x] Artifact 可独立创建；Tree 可读取；add/update/delete/move node 生效。（Service/HTTP 确定性测试：创建即自动 root=Revision 1）
 - [x] 每个逻辑写操作产生 Revision（线性连续），并产出结构化 Diff（add/update/delete/move）。
 - [x] Undo（撤销上一 Revision / 恢复到 N）后 DB/Service 一致、历史不物理抹除（UI 联动在 P09 验收）。
@@ -88,13 +89,14 @@
 - [x] Artifact Domain 全部可脱离 LLM 用确定性测试验收（构造 20 节点、移动、删除、diff、undo）。
 
 ## Conversational Editing 验收域（P08 Artifact Tools + Test Design Skill）
-- [ ] 从空 Artifact：先生成测试点，再展开其中几个为详细用例。
-- [ ] 不生成测试点也能直接补用例；修改指定节点只影响该节点。
-- [ ] “第二个不要”类多轮指代，可结合 Message + 最近 Diff 正确定位并删除。
-- [ ] 人工修改 Artifact 后，Agent 下一轮读到的是最新 Revision，而不是缓存旧版。
-- [ ] coverage / dedup 是可调用能力而非必经步骤：仅改一条预期时不会强制跑 coverage。
-- [ ] Agent 不做无关重写（改 TC003 预期时不会重写整个登录模块；不擅自改分类/重命名）。
-- [ ] 8 类对话场景（01 V2-P08）用 Fake Provider 验收通过；写 Tool 契约（expected_revision / audit / Tool Policy）有效。
+> 2026-09-06 P08：Artifact/Skill Tool 共 15 个（加既有 calculator 为 Conversation 16 个）；13 项确定性 Tool 测试、8 类 Fake 场景、最终 Revision 1→5 故事及 conflict→re-read→retry 测试通过。24 条 Scripted Eval 只代表固定行为基线，不代表真实模型质量。
+- [x] 从空 Artifact：先生成测试点，再展开其中几个为详细用例。
+- [x] 不生成测试点也能直接补用例；修改指定节点只影响该节点。
+- [x] “第二个不要”类多轮指代，可结合 Message + 最近 Diff 正确定位并删除。
+- [x] 人工修改 Artifact 后，Agent 下一轮读到的是最新 Revision；过期写返回 revision_conflict，模型重新读取后有限重试成功。
+- [x] coverage / dedup 是可调用能力而非必经步骤；两者均为只读并保持 Revision 不变。
+- [x] Agent 不做无关重写（改 TC003 时 Diff 仅含 TC003，旁支快照不变）。
+- [x] 8 类对话场景用 Fake Provider 验收通过；写 Tool 的 expected_revision、可信身份、审计、Action Risk Policy 有效。
 
 ## UI 验收域（P09 Chat + MindMap + Diff 工作台）
 - [ ] Chat 与 MindMap 展示同一 Artifact；AI 添加节点无需刷新即出现。

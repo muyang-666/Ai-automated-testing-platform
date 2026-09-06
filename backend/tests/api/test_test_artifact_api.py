@@ -194,3 +194,36 @@ def test_undo_and_restore_endpoints(client):
     assert [c["title"] for c in tree_final["root"]["children"]] == ["TC1"]
     revisions = test_client.get(f"/test-artifacts/{artifact['id']}/revisions").json()
     assert [r["revision_no"] for r in revisions] == [1, 2, 3, 4, 5, 6]
+
+
+def test_public_operations_cannot_submit_internal_restore(client):
+    """restore 为内部操作：普通 /operations API 直接拒绝（undo/restore 端点仍可用）。"""
+    test_client, a, b, switch = client
+    artifact = _create_artifact(test_client).json()
+    root = _root_id(test_client, artifact["id"])
+    tc = test_client.post(f"/test-artifacts/{artifact['id']}/operations", json={
+        "expected_revision": 1,
+        "operations": [{"operation_type": "add_node", "parent_id": root,
+                        "node_type": "test_case", "title": "TC1"}],
+    }).json()
+    tree = test_client.get(f"/test-artifacts/{artifact['id']}/tree").json()
+    tc_id = tree["root"]["children"][0]["id"]
+    test_client.post(f"/test-artifacts/{artifact['id']}/operations", json={
+        "expected_revision": 2,
+        "operations": [{"operation_type": "delete_node", "target_node_id": tc_id}],
+    })
+    rejected = test_client.post(f"/test-artifacts/{artifact['id']}/operations", json={
+        "expected_revision": 3,
+        "operations": [{
+            "operation_type": "restore", "target_node_id": tc_id,
+            "nodes": [{"id": tc_id, "parent_id": root, "order_key": 1,
+                       "node_type": "test_case", "title": "TC1"}],
+        }],
+    })
+    assert rejected.status_code == 400
+    assert "内部操作" in rejected.json()["detail"]
+    # undo 端点（内部生成 restore）仍正常
+    undo = test_client.post(f"/test-artifacts/{artifact['id']}/undo").json()
+    assert undo["new_revision"] == 4
+    tree_after = test_client.get(f"/test-artifacts/{artifact['id']}/tree").json()
+    assert [c["title"] for c in tree_after["root"]["children"]] == ["TC1"]
