@@ -99,7 +99,7 @@
 - [x] 8 类对话场景用 Fake Provider 验收通过；写 Tool 的 expected_revision、可信身份、审计、Action Risk Policy 有效。
 
 ## UI 验收域（P09 Chat + MindMap + Diff 工作台）
-> 2026-09-06 产品方向调整（01/02 §2.34）：不再扩展独立 Chat+Artifact Workspace；改为「功能用例管理」页内嵌 Module Tree + Case List（同源 Functional TestArtifact），AI 未来以 Drawer 嵌入。P09.1 + P09.1.1 已完成代码与确定性测试（backend 708 passed / npm 40 / lint 0 / build ok）；浏览器人工验收待执行（需对真实 MySQL 执行 alembic upgrade head 至 0007 后按新验收流程走查）。以下整体 UI 项仍属 P09.2/P09.3 待办。
+> 2026-09-06 产品方向调整（01/02 §2.34）：不再扩展独立 Chat+Artifact Workspace；改为「功能用例管理」页内嵌 Module Tree + Case List（同源 Functional TestArtifact），AI 未来以 Drawer 嵌入。P09.1/P09.1.1 + P09.2 前端实现（backend 710 passed / npm 45 / lint 0 / build ok）；P09.2 浏览器人工与双浏览器验收仍待执行，验收通过前不标记 P09.2 complete（需对真实 MySQL 执行 alembic upgrade head 至 0007 后按新验收流程走查）。以下整体 UI 项仍属 P09.2/P09.3 待办。
 > 2026-09-06 P09.1：Conversation + Focused TestArtifact + Artifact Tree 已同窗（Workspace 布局、Artifact API Client/Store、Create/List/Focus、只读 MindMap、Node Selection、只读 Inspector、View State；npm test 36 passed、lint 0 errors、build 通过，见 02 §2.33）。人工编辑/Diff/History/Undo/Agent 实时联动属 P09.2/P09.3，下列整体 UI 项仍待浏览器人工验收。
 - [ ] Chat 与 MindMap 展示同一 Artifact；AI 添加节点无需刷新即出现。
 - [ ] AI 修改后同时产出：Chat 解释 + Changes/Diff 卡 + 脑图更新，三者来自同一 Revision。

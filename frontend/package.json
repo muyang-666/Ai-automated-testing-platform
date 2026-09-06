@@ -8,7 +8,7 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "node --test tests/turnModel.test.mjs tests/chatState.test.mjs tests/markdownRender.test.mjs tests/mindMapModel.test.mjs tests/caseView.test.mjs"
+    "test": "node --test tests/turnModel.test.mjs tests/chatState.test.mjs tests/markdownRender.test.mjs tests/mindMapModel.test.mjs tests/caseView.test.mjs tests/caseEditorModel.test.mjs"
   },
   "dependencies": {
     "@xyflow/react": "^12.11.6",

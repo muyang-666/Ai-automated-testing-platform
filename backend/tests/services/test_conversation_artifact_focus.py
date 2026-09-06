@@ -180,8 +180,7 @@ def test_requirement_binding_snapshotted_into_new_turn(db_session):
                                  is_deleted=False)
     db_session.add_all([project, requirement])
     db_session.commit()
-    art = artifact_service.create_artifact(db_session, requester=user, title="P资产",
-                                           project_id=8701)
+    art = artifact_service.ensure_project_functional_artifact(db_session, project_id=8701, requester=user, title='"P资产"')
     session = conversation_service.create_conversation_session(
         db_session, requester_user_id=USER_A, title="会话", project_id=8701)
     db_session.commit()
@@ -216,8 +215,7 @@ def test_requirement_rebind_after_submit_does_not_change_run_snapshot(db_session
                             requirement_type="功能需求", status="confirmed", is_deleted=False)
     db_session.add_all([project, req_r1, req_r2])
     db_session.commit()
-    art = artifact_service.create_artifact(db_session, requester=user, title="P资产",
-                                           project_id=8704)
+    art = artifact_service.ensure_project_functional_artifact(db_session, project_id=8704, requester=user, title='"P资产"')
     session = conversation_service.create_conversation_session(
         db_session, requester_user_id=USER_A, title="会话", project_id=8704)
     db_session.commit()
@@ -280,8 +278,7 @@ def test_bind_requirement_project_invariant_artifact_requirement_order(db_sessio
     assert conversation_service.context_bound_requirement_id(
         db_session.get(type(session), session.id)) is None
 
-    art_p1 = artifact_service.create_artifact(db_session, requester=user, title="P1资产",
-                                              project_id=8705)
+    art_p1 = artifact_service.ensure_project_functional_artifact(db_session, project_id=8705, requester=user, title='"P1资产"')
     session_p = conversation_service.create_conversation_session(
         db_session, requester_user_id=USER_A, title="会话P", project_id=8705)
     db_session.commit()
@@ -300,8 +297,7 @@ def test_bind_requirement_project_invariant_artifact_requirement_order(db_sessio
     conversation_service.focus_conversation_requirement(
         db_session, session_id=session_r.id, requirement_id=req_p1.id, requester=user)
     db_session.commit()
-    art_p2 = artifact_service.create_artifact(db_session, requester=user, title="P2资产",
-                                              project_id=8706)
+    art_p2 = artifact_service.ensure_project_functional_artifact(db_session, project_id=8706, requester=user, title='"P2资产"')
     with pytest.raises(ConversationConflict):
         conversation_service.focus_conversation_artifact(
             db_session, session_id=session_r.id, artifact_id=art_p2.id, requester=user)

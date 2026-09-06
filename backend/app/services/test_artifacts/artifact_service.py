@@ -612,25 +612,21 @@ def apply_operations(db: Session, *, artifact_id: int, expected_revision: int,
 def create_artifact(db: Session, *, requester, title: str, artifact_type: str = "test_design",
                     project_id: int | None = None,
                     actor_type: str = ACTOR_TYPE_USER, conversation_id: int | None = None,
-                    run_id: int | None = None) -> TestArtifact:
+                    run_id: int | None = None,
+                    allow_project: bool = False) -> TestArtifact:
     title = (title or "").strip()
     if not title:
         raise TestArtifactValidationError("title 不能为空")
     if artifact_type != "test_design":
         raise TestArtifactValidationError("首期仅支持 artifact_type=test_design")
+    # P09.2 Preflight B：project-scoped primary artifact 只允许 ensure-project-functional 创建；
+    # 普通 create 仅用于 projectless Artifact（内部 ensure 显式放行）。
+    if project_id is not None and not allow_project:
+        raise TestArtifactValidationError(
+            "project-scoped Artifact 请通过 ensure-project-functional 创建",
+            error_code="artifact_project_ensure_required")
     if project_id is not None and not can_operate_project(db, requester, project_id):
         raise TestArtifactPermissionError("没有该项目的操作权限")
-    if project_id is not None and artifact_type == FUNCTIONAL_ARTIFACT_TYPE:
-        existing_row = db.execute(
-            select(TestArtifact.id).where(
-                TestArtifact.project_id == project_id,
-                TestArtifact.artifact_type == FUNCTIONAL_ARTIFACT_TYPE,
-            ).limit(1)
-        ).scalar_one_or_none()
-        if existing_row is not None:
-            raise TestArtifactValidationError(
-                "项目已存在主 Functional Artifact，请使用 ensure-project-functional",
-                error_code="artifact_already_exists")
     artifact = TestArtifact(
         owner_user_id=requester.id,
         project_id=project_id,
@@ -826,14 +822,17 @@ def ensure_project_functional_artifact(db: Session, *, project_id: int, requeste
     existing = get_project_functional_artifact(db, project_id=project_id, requester=requester)
     if existing is not None:
         return existing
-    # P09.1.1：Application Service 不在内部 commit；并发冲突由调用方事务回滚后重试/复读
+    # P09.2 Preflight A：内部不使用外层 rollback——SAVEPOINT 只回滚本次尝试，
+    # 调用方未提交的其它修改不受影响；冲突后复读既有 Artifact 返回。
     try:
-        return create_artifact(
-            db, requester=requester, title=(title or "功能测试").strip() or "功能测试",
-            artifact_type=FUNCTIONAL_ARTIFACT_TYPE, project_id=project_id,
-        )
+        with db.begin_nested():
+            artifact = create_artifact(
+                db, requester=requester, title=(title or "功能测试").strip() or "功能测试",
+                artifact_type=FUNCTIONAL_ARTIFACT_TYPE, project_id=project_id,
+                allow_project=True,
+            )
+        return artifact
     except IntegrityError:
-        db.rollback()
         existing = get_project_functional_artifact(db, project_id=project_id, requester=requester)
         if existing is not None:
             return existing
@@ -860,19 +859,20 @@ def get_or_create_default_module(db: Session, *, artifact_id: int, requester) ->
         if existing is not None:
             return existing
         try:
-            apply_operations(
-                db,
-                artifact_id=artifact.id,
-                expected_revision=artifact.current_revision,
-                operations=[{
-                    "operation_type": OP_ADD_NODE,
-                    "parent_id": artifact.root_node_id,
-                    "node_type": NODE_TYPE_MODULE,
-                    "title": DEFAULT_MODULE_TITLE,
-                }],
-                requester=requester,
-                summary="确保默认模块",
-            )
+            with db.begin_nested():
+                apply_operations(
+                    db,
+                    artifact_id=artifact.id,
+                    expected_revision=artifact.current_revision,
+                    operations=[{
+                        "operation_type": OP_ADD_NODE,
+                        "parent_id": artifact.root_node_id,
+                        "node_type": NODE_TYPE_MODULE,
+                        "title": DEFAULT_MODULE_TITLE,
+                    }],
+                    requester=requester,
+                    summary="确保默认模块",
+                )
             return db.execute(
                 select(ArtifactNode).where(
                     ArtifactNode.artifact_id == artifact.id,
@@ -883,7 +883,6 @@ def get_or_create_default_module(db: Session, *, artifact_id: int, requester) ->
                 ).limit(1)
             ).scalar_one()
         except RevisionConflictError:
-            db.rollback()
             continue
     raise TestArtifactDataError("并发创建默认模块失败，请重试") from None
 

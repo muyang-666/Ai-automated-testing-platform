@@ -45,8 +45,8 @@ def _seed(db, extra_role="tester", grant_membership=True, uid=OWNER):
 
 def test_owner_removed_from_project_loses_read_write(db_session):
     user = _seed(db_session)
-    artifact = artifact_service.create_artifact(db_session, requester=user,
-                                                title="P资产", project_id=PROJECT_P)
+    artifact = artifact_service.ensure_project_functional_artifact(
+        db_session, project_id=PROJECT_P, requester=user, title="P资产")
     db_session.commit()
     # 移除项目成员资格后：owner 不再例外
     db_session.query(UserProjectPermission).filter(
@@ -66,8 +66,8 @@ def test_owner_removed_from_project_loses_read_write(db_session):
 
 def test_viewer_read_allowed_write_denied(db_session):
     user = _seed(db_session)  # tester owner w/ membership 创建
-    artifact = artifact_service.create_artifact(db_session, requester=user,
-                                                title="P资产", project_id=PROJECT_P)
+    artifact = artifact_service.ensure_project_functional_artifact(
+        db_session, project_id=PROJECT_P, requester=user, title="P资产")
     db_session.commit()
     viewer = User(id=OWNER + 1, username="acl-viewer", password_hash="x", salt="y",
                   status="active", is_deleted=False)
@@ -103,12 +103,40 @@ def test_projectless_owner_permission_unaffected(db_session):
 
 def test_second_project_functional_artifact_create_rejected(db_session):
     user = _seed(db_session)
-    first = artifact_service.create_artifact(db_session, requester=user,
-                                             title="主", project_id=PROJECT_P)
+    first = artifact_service.ensure_project_functional_artifact(
+        db_session, project_id=PROJECT_P, requester=user, title="主")
     db_session.commit()
+    # 普通 create 对任何 project-scoped artifact 一律拒绝（确保唯一入口）
     with pytest.raises(ArtifactValidationError) as exc:
         artifact_service.create_artifact(db_session, requester=user,
                                          title="第二份", project_id=PROJECT_P)
     db_session.rollback()
-    assert exc.value.error_code == "artifact_already_exists"
+    assert exc.value.error_code == "artifact_project_ensure_required"
     assert first.id is not None
+    again = artifact_service.ensure_project_functional_artifact(
+        db_session, project_id=PROJECT_P, requester=user)
+    assert again.id == first.id
+
+
+def test_ensure_conflict_does_not_rollback_caller_uncommitted_work(db_session, monkeypatch):
+    """P09.2 Preflight A：SAVEPOINT 冲突只回滚内部尝试，不波及外层未提交修改。"""
+    from sqlalchemy.exc import IntegrityError
+
+    from app.services.test_artifacts.errors import TestArtifactDataError as DataError
+
+    user = _seed(db_session)
+    # caller 未提交的一条修改（marker，projectless artifact）
+    marker = artifact_service.create_artifact(db_session, requester=user, title="标记")
+    db_session.flush()
+    assert marker.id is not None
+
+    def _boom(*_args, **_kwargs):
+        raise IntegrityError("stmt", {}, Exception("duplicate"))
+
+    monkeypatch.setattr(artifact_service, "create_artifact", _boom)
+    with pytest.raises(DataError):
+        artifact_service.ensure_project_functional_artifact(
+            db_session, project_id=PROJECT_P, requester=user)
+    # 外层事务仍健康：marker 未丢，可提交
+    db_session.commit()
+    assert artifact_service.list_artifacts(db_session, requester=user)  # marker 可读

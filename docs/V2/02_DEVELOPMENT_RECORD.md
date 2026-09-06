@@ -1120,3 +1120,26 @@ P09 停止「独立 Chat + Artifact 右栏」扩展；新形态：V1「功能用
 ### 回归（真实结果）
 - 后端全量（排除同名 isolation 收集冲突）：**708 passed**（另 worker 并发时序抖动用例单跑通过，与改动无关）；isolation 3 passed；Eval 24/24。
 - 前端：npm test 40 passed、lint 0 errors（8 warnings 既有）、build 通过。
+
+## 2.36 2026-09-06 — P09.2（Module/Case Editing + MindMap + Revision Workspace）实现记录
+
+### Preflight（P09.1.1 遗留）
+- Service 外层事务保护：`ensure_project_functional_artifact` / `get_or_create_default_module` 内部改用 `db.begin_nested()`（SAVEPOINT）；不再对调用方 Session 执行 `db.rollback()`；补「caller 未提交修改在并发冲突后不被回滚」测试。
+- 创建入口统一：普通 `POST /test-artifacts` 对 `project_id != null` 一律 400 `artifact_project_ensure_required`；project primary artifact 只经 `ensure-project-functional`（内部 `allow_project=True`）。测试与全部 fixture 切换到 ensure 入口。
+
+### Frontend（已实现并 build/lint/test）
+- `FunctionCasePage` 重写为编辑工作台：
+  - List/MindMap 视图切换；MindMap 复用 `ArtifactMindMap`（@xyflow/react，ReactFlowProvider），按 `scopeId` 显示整棵或 module subtree；Scope 切换在 List/MindMap 间保持。
+  - Module CRUD：Tree 节点 hover/右键菜单（新增子模块/重命名/移动/删除）；删除确认显示子模块数与用例数；移动父候选排除自身子树；全部经 `/operations`。
+  - Case CRUD：结构化 Editor Modal（名称/所属模块/优先级/Tags/前置/步骤增删排序/预期 step_no 引用），无 Module 时可自动进默认模块；行点击直接进入编辑。
+  - 写合同：保存携带 expected_revision；409 → Conflict Modal（显示 版本10/11），保留草稿 + “加载最新版本”；不覆盖。
+  - History Drawer（actor/summary/time）→ Diff；最近变更；Undo latest 确认；Restore（新 Revision 提示）；Diff 渲染 added/updated/deleted/moved（真实后端 diff）。
+  - Viewer：只读（不显示写按钮/操作），保留 List/MindMap/History/Diff。
+  - MindMap 节点 test_case 显示 `TC-000123`。
+- API client 扩展：applyArtifactOperations/getArtifactRevisions/getArtifactDiff/undoArtifact/restoreArtifact。
+- 纯模型 `caseEditorModel.js`（steps 补号唯一/编辑→Operation/Module ops/父候选/scopeRoot）+ 新测试。
+
+### 测试/构建（真实结果）
+- 后端全量（排除同名 isolation 冲突）：**710 passed**（Preflight 后含新增 SAVEPOINT/入口/ACL 测试）。
+- 前端：npm test **45 passed**（含 caseEditorModel）；npm run lint **0 errors**（7-8 条既有 warnings）；npm run build 通过；headless 整页加载无异常。
+- 尚未执行：浏览器人工验收（§37 流程）与双浏览器冲突验收（§38）→ 因此 P09.2 未标记 complete（待验收后更新 01/02/03）。

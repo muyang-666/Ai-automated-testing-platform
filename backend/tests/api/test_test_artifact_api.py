@@ -258,5 +258,5 @@ def test_plain_create_project_duplicate_returns_409(client):
                                json={"project_id": 9602})
     assert ensured.status_code == 200
     second = test_client.post("/test-artifacts", json={"title": "重复", "project_id": 9602})
-    assert second.status_code == 409
-    assert "ensure" in second.json()["detail"]
+    assert second.status_code == 400
+    assert "ensure-project-functional" in second.json()["detail"]

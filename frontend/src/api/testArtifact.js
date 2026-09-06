@@ -22,3 +22,23 @@ export function getArtifact(id) {
 export function getArtifactTree(id) {
   return request.get(`/test-artifacts/${id}/tree`);
 }
+// P09.2 编辑/历史能力
+export function applyArtifactOperations(id, payload) {
+  return request.post(`/test-artifacts/${id}/operations`, payload);
+}
+
+export function getArtifactRevisions(id) {
+  return request.get(`/test-artifacts/${id}/revisions`);
+}
+
+export function getArtifactDiff(id, params) {
+  return request.get(`/test-artifacts/${id}/diff`, { params });
+}
+
+export function undoArtifact(id) {
+  return request.post(`/test-artifacts/${id}/undo`);
+}
+
+export function restoreArtifact(id, targetRevision) {
+  return request.post(`/test-artifacts/${id}/restore`, { target_revision: targetRevision });
+}

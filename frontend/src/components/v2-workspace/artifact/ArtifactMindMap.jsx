@@ -6,6 +6,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { buildMindMapView, shortTitle } from "../mindMapModel";
+import { formatCaseNumber } from "../caseNumber";
 
 function MindMapNodeView({ data, selected }) {
   const { node_type: type, title, hiddenDescendants, collapsed } = data;
@@ -15,7 +16,7 @@ function MindMapNodeView({ data, selected }) {
       <Handle type="target" position={Position.Top} className="v2w-node-handle" />
       <div className="v2w-node-title" title={title}>{shortTitle({ title })}</div>
       <div className="v2w-node-meta">
-        {type}
+        {type === "test_case" ? formatCaseNumber(data.nodeId) : type}
         {collapsed && hiddenDescendants > 0 ? ` · +${hiddenDescendants}` : ""}
       </div>
       <Handle type="source" position={Position.Bottom} className="v2w-node-handle" />

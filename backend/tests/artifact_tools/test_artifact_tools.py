@@ -134,8 +134,8 @@ def test_read_requirement_node_source_refs_do_not_authorize(project_runtime_fixt
     assert added.message.is_error is False
     # 会话未绑定任何 requirement 的项目 Artifact：即使 node 引用存在也不可读
     user = db_session.get(User, USER_A)
-    artifact_free = artifact_service.create_artifact(db_session, requester=user,
-                                                     title="P2无绑定Artifact", project_id=9302)
+    artifact_free = artifact_service.ensure_project_functional_artifact(
+        db_session, project_id=9302, requester=user, title="P2无绑定Artifact")
     session_free = conversation_service.create_conversation_session(
         db_session, requester_user_id=USER_A, title="无绑定会话", project_id=9302)
     db_session.commit()
@@ -352,8 +352,8 @@ def project_runtime_fixture(db_session):
                            requirement_type="功能需求", status="confirmed", is_deleted=False)
     db_session.add_all([project_a, project_b, req_a, req_b])
     db_session.commit()
-    artifact = artifact_service.create_artifact(db_session, requester=user,
-                                                title="P1资产", project_id=9301)
+    artifact = artifact_service.ensure_project_functional_artifact(
+        db_session, project_id=9301, requester=user, title="P1资产")
     session = conversation_service.create_conversation_session(
         db_session, requester_user_id=USER_A, title="P08-项目会话", project_id=9301,
         context_json={"source_type": "requirement", "source_id": req_a.id},

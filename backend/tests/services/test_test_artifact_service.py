@@ -67,8 +67,12 @@ def _user(db, uid):
 
 
 def _create(db, user, title="登录测试", project_id=None):
-    artifact = artifact_service.create_artifact(db, requester=user, title=title,
-                                                project_id=project_id)
+    if project_id is not None:
+        artifact = artifact_service.ensure_project_functional_artifact(
+            db, project_id=project_id, requester=user, title=title)
+    else:
+        artifact = artifact_service.create_artifact(db, requester=user, title=title,
+                                                    project_id=None)
     db.commit()
     return artifact
 
