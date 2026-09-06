@@ -66,19 +66,32 @@ def _normalized(node: dict) -> str:
     return re.sub(r"[\W_]+", "", " ".join(parts).casefold(), flags=re.UNICODE)
 
 
+# SequenceMatcher 全量两两比较为 O(n²)：候选数超过该上限时只分析前 N 个
+# 确定性候选（保持树序遍历顺序），并在结果中明确 truncated（P08.1 规模保护）。
+MAX_DUPLICATE_CANDIDATES = 200
+
+
 def find_duplicates(db: Session, *, artifact_id: int, requester,
                     root_node_id: int | None = None, threshold: float = 0.88,
-                    limit: int = 20) -> dict:
+                    limit: int = 20, candidate_cap: int | None = None) -> dict:
     tree = artifact_service.get_tree(db, artifact_id=artifact_id, requester=requester)
     nodes = [node for node in _scope(_flatten(tree["root"]), root_node_id)
              if node.get("node_type") == "test_case"]
-    pairs: list[dict] = []
-    for index, left in enumerate(nodes):
-        a = _normalized(left)
-        if not a:
+    total_cases = len(nodes)
+    cap = MAX_DUPLICATE_CANDIDATES if candidate_cap is None else candidate_cap
+    candidates: list[tuple[dict, str]] = []
+    for node in nodes:
+        normalized = _normalized(node)
+        if not normalized:
             continue
-        for right in nodes[index + 1:]:
-            b = _normalized(right)
+        if len(candidates) >= cap:
+            break
+        candidates.append((node, normalized))
+    analyzed_cases = len(candidates)
+    truncated = total_cases > cap
+    pairs: list[dict] = []
+    for index, (left, a) in enumerate(candidates):
+        for right, b in candidates[index + 1:]:
             score = 1.0 if a == b else SequenceMatcher(None, a, b).ratio()
             if score >= threshold:
                 pairs.append({"node_a": left["id"], "node_b": right["id"],
@@ -86,7 +99,8 @@ def find_duplicates(db: Session, *, artifact_id: int, requester,
                               "score": round(score, 4)})
     pairs.sort(key=lambda pair: (-pair["score"], pair["node_a"], pair["node_b"]))
     return {"artifact_id": artifact_id, "revision": tree["current_revision"],
-            "pairs": pairs[:limit]}
+            "total_cases": total_cases, "analyzed_cases": analyzed_cases,
+            "truncated": truncated, "pairs": pairs[:limit]}
 
 
 _DIMENSIONS = {

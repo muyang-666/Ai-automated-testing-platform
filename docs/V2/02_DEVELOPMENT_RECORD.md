@@ -923,3 +923,36 @@ v2-chat 已含浮动窗口（min/max/launcher）、SSE 订阅（eventStream.js �
 ### 测试（真实结果，SQLite）
 - service 40 + API 8 = **48 passed**（新增：嵌套多层级排序、restore 挂可见 test_case 拒绝、restore 挂同批恢复 test_case 拒绝、A↔B 环拒绝、public operations 拒绝 internal restore + undo 端点仍可用）。
 - 回归：migration 14 + structure + conversation API = **32 passed**。
+
+## 2.30 2026-09-06 — P08.1 Hardening（代码审查修正；无新 Agent 能力、未进入 P09）
+
+### 1) focus guard：运行中禁止切换 focused Artifact
+- `focus_conversation_artifact` 增加 active-run guard（P08.1）：存在 queued/running 的 active head（active_slot=1）时，
+  切换到不同 Artifact → `ConversationConflict`（409 conversation_conflict）；同 Artifact 重聚焦 → 幂等成功；run 终态后允许切换。
+- 新增 Service 3 例 + HTTP API 2 例（含 owner 404）。
+
+### 2) SourceRef ≠ Requirement 读取授权
+- 写入口（add/update/restore 的 source_refs）增加 Requirement 项目绑定校验：`requirement/requirement_doc` 类型引用必须指向
+  当前 Artifact 项目的存续 Requirement（数字 source_id；projectless Artifact 一律拒绝）——SourceRef 保持 provenance 语义，
+  模型写入任意 source_id 不能扩大读取范围。
+- `read_requirement` 权威改为「Conversation context 明确绑定的 Requirement + effective project（Artifact.project）复验 +
+  can_read_project」；不再把 node 树上的 source_refs 当作 allowed ids。
+- 测试：同项目绑定可读；跨项目引用写/读均拒；双项目权限用户不能借 Artifact A 读 Project B；forged source_ref 不扩权。
+
+### 3) NodePatch null 合同
+- 合同：title/content/source_refs 显式 null 一律拒绝（schema `reject_explicit_null` + Service `_apply_update` 双防线）；
+  `source_refs=[]` 表示清空；未出现字段不改动。
+- Handler（单条与 batch 共用 NodePatch）只剔除“未设置字段的模型默认 None”，不再可能静默吞掉用户语义。
+- 测试：单条/batch 显式 null 均拒且 Revision 不推进；`source_refs=[]` 单条与 batch 均清空；title+source_refs=[] 同 patch 同时生效。
+
+### 4) duplicate 规模保护
+- `find_duplicates` 增加 `MAX_DUPLICATE_CANDIDATES=200`（可传 candidate_cap 覆盖）；超限只分析前 N 个确定性候选，
+  返回新增 `total_cases / analyzed_cases / truncated`。不引入 embedding/vector DB。
+- 大 fixture 测试：65 cases、cap=40 → analyzed 40、truncated=True、cap 内重复对发现、cap 外重复对（61/62）不出现；cap=400 → 全量分析。
+
+### 回归（真实结果）
+- 受影响套件（P07 service/API、artifact tool、focus service/API、quality）：67 passed。
+- 全后端 `pytest tests`（排除同名 test_isolation.py 文件冲突的既有基建问题）：680 passed；
+  `tests/conversation/test_isolation.py` 单独 3 passed；并发 promotion 用例在满载后有 1 次时序抖动，连跑 3 次均通过（非本次改动路径）。
+- P08 Scripted Eval `python -m evals.p08.run_eval`：24 cases，task_success/tool_selection/tool_argument/artifact_edit/
+  instruction_following/revision_conflict_recovery/quality_tool_non_mutation 全部 1.0，unintended_modification_rate 0。

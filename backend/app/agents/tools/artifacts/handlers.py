@@ -187,44 +187,47 @@ def get_artifact_diff(arguments, runtime):
                    f"{diff['from_revision']}..{diff['to_revision']}")
 
 
-def _requirement_ids(tree: dict, session: AgentSession) -> set[int]:
-    ids: set[int] = set()
+def _context_bound_requirement_id(session: AgentSession) -> int | None:
+    """Conversation 建立时明确绑定的 Requirement（可信来源）。
+
+    SourceRef = provenance metadata，不是 permission/capability：Artifact node 上的
+    source_refs（即使是模型写入的）绝不扩大 Requirement 读取范围。
+    """
     context = session.context_json if isinstance(session.context_json, dict) else {}
-    if context.get("source_type") in {"requirement", "requirement_doc"} and type(context.get("source_id")) is int:
-        ids.add(context["source_id"])
-    stack = [tree["root"]] if tree.get("root") else []
-    while stack:
-        node = stack.pop()
-        for ref in node.get("source_refs") or []:
-            if ref.get("source_type") in {"requirement", "requirement_doc"}:
-                try:
-                    ids.add(int(ref.get("source_id")))
-                except (TypeError, ValueError):
-                    pass
-        stack.extend(node.get("children") or [])
-    return ids
+    if context.get("source_type") in {"requirement", "requirement_doc"}:
+        value = context.get("source_id")
+        if type(value) is int and value > 0:
+            return value
+    return None
 
 
 def read_requirement(arguments, runtime):
     runtime = _trusted(runtime)
     with _context(runtime) as (db, user, session):
-        tree = artifact_service.get_tree(db, artifact_id=runtime.artifact_id, requester=user)
-        allowed_ids = _requirement_ids(tree, session)
+        row = artifact_service.get_artifact(db, artifact_id=runtime.artifact_id, requester=user)
+        bound_id = _context_bound_requirement_id(session)
+        if bound_id is None:
+            raise _reported("requirement_not_bound", "This Conversation has no bound requirement.")
         requested = arguments.get("requirement_id")
         if requested is None:
-            if len(allowed_ids) != 1:
-                raise _reported("requirement_not_bound", "A single bound requirement is required.")
-            requested = next(iter(allowed_ids))
-        if requested not in allowed_ids:
-            raise _reported("requirement_not_bound", "The requirement is not bound to this Artifact.")
-        row = requirement_doc_service.get_requirement_doc_by_id(db, requested)
-        if row is None or not can_read_project(db, user, row.project_id):
+            requested = bound_id
+        # 唯一权威：Conversation 明确绑定的 Requirement。模型写入的 source_refs 不参与。
+        if requested != bound_id:
+            raise _reported("requirement_not_bound", "The requirement is not bound to this Conversation.")
+        requirement = requirement_doc_service.get_requirement_doc_by_id(db, requested)
+        # effective project scope = 当前 Artifact 的 project（focus 已保证 Artifact 与
+        # Conversation 项目一致）；服务端再次验证 Requirement 归属与用户可读。
+        # projectless Artifact（effective_project=None）一律拒绝读取项目 Requirement。
+        if requirement is None or row.project_id is None \
+                or requirement.project_id != row.project_id or requirement.is_deleted \
+                or not can_read_project(db, user, requirement.project_id):
             raise _reported("requirement_not_found", "Bound requirement is unavailable.")
-        content = row.content or ""
-        return _ok("Bound requirement", {"requirement_id": row.id, "title": row.title,
+        content = requirement.content or ""
+        return _ok("Bound requirement", {"requirement_id": requirement.id,
+            "title": requirement.title,
             "content": content[:arguments["max_chars"]],
             "truncated": len(content) > arguments["max_chars"],
-            "status": row.status, "project_id": row.project_id})
+            "status": requirement.status, "project_id": requirement.project_id})
 
 
 def _node_operation(node: dict, *, parent_id=None, order_key=None, ref=None) -> dict:
@@ -273,6 +276,9 @@ def add_artifact_node(arguments, runtime):
 
 
 def update_artifact_node(arguments, runtime):
+    # P08.1 null 合同：NodePatch schema 已拒绝"显式 null"；验证通过的 patch 中残留的
+    # None 只可能是未设置字段的模型默认值 → 这里剔除默认值，不会静默吞掉任何用户语义
+    # （source_refs=[] 是清空语义，[] 不是 None，不会被剔除）。
     patch = {key: value for key, value in arguments["patch"].items() if value is not None}
     return _apply_write(runtime, arguments["expected_revision"], [{
         "operation_type": "update_node", "target_node_id": arguments["target_node_id"],
@@ -302,6 +308,7 @@ def batch_apply_artifact_operations(arguments, runtime):
             operations.append(_node_operation(item["node"], parent_id=item["parent_id"],
                 order_key=item.get("order_key"), ref=item.get("ref")))
         elif item["operation_type"] == "update_node":
+            # 与 update_artifact_node 同一 null 合同：schema 拒显式 null，这里只剔除缺省 None
             patch = {key: value for key, value in item["patch"].items() if value is not None}
             operations.append({"operation_type": "update_node", "target_node_id": item["target_node_id"],
                                "patch": patch})

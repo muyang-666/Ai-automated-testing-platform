@@ -121,23 +121,41 @@ def test_add_read_search_outline_and_recent_diff(runtime_fixture, db_session):
     assert diff.message.details["data"]["changes"][0]["change"] == "added"
 
 
-def test_read_requirement_only_uses_bound_source(runtime_fixture, db_session):
-    runtime, artifact_id, root_id = runtime_fixture
-    project = Project(id=9101, name="需求项目", status="active", is_deleted=False)
-    requirement = RequirementDoc(id=9102, project_id=project.id, title="登录需求",
-                                 content="连续失败五次锁定账号", status="confirmed", is_deleted=False)
-    db_session.add_all([project, requirement])
-    artifact_service.apply_operations(db_session, artifact_id=artifact_id,
-        expected_revision=1, requester=db_session.get(User, USER_A), operations=[{
-            "operation_type": "update_node", "target_node_id": root_id,
-            "patch": {"source_refs": [{"source_type": "requirement",
-                       "source_id": str(requirement.id)}]},
-        }])
+def test_read_requirement_node_source_refs_do_not_authorize(project_runtime_fixture, db_session):
+    """P08.1：read_requirement 只认 Conversation 绑定；node 上的 source_refs（即使是模型
+    写入且属于同项目）不授予读取能力——SourceRef = provenance，不是 permission。"""
+    runtime, artifact_id, root_id, req_a, req_b = project_runtime_fixture
+    # 在 node 上写入"属于本项目 req_a"的引用（模型可写），但 read 仍只认会话绑定
+    added, _ = _execute("add_artifact_node", {
+        "expected_revision": 1, "parent_id": root_id,
+        "node": {"node_type": "test_case", "title": "TC-REF",
+                 "source_refs": [{"source_type": "requirement", "source_id": str(req_a)}]},
+    }, runtime)
+    assert added.message.is_error is False
+    # 会话未绑定任何 requirement 的项目 Artifact：即使 node 引用存在也不可读
+    user = db_session.get(User, USER_A)
+    artifact_free = artifact_service.create_artifact(db_session, requester=user,
+                                                     title="P1无绑定Artifact", project_id=9301)
+    session_free = conversation_service.create_conversation_session(
+        db_session, requester_user_id=USER_A, title="无绑定会话", project_id=9301)
     db_session.commit()
-    result, _ = _execute("read_requirement", {"requirement_id": requirement.id}, runtime)
-    assert result.message.details["data"]["content"] == "连续失败五次锁定账号"
-    rejected, _ = _execute("read_requirement", {"requirement_id": requirement.id + 1}, runtime)
-    assert rejected.error_code == "requirement_not_bound"
+    conversation_service.focus_conversation_artifact(
+        db_session, session_id=session_free.id, artifact_id=artifact_free.id, requester=user)
+    db_session.commit()
+    runtime_free = ArtifactRuntimeContext(
+        session_factory=SessionLocal, user_id=USER_A, conversation_id=session_free.id,
+        run_id=None, artifact_id=artifact_free.id, project_id=9301,
+        permissions=frozenset({"artifact:read", "artifact:write"}),
+    )
+    ref_added, _ = _execute("add_artifact_node", {
+        "expected_revision": 1, "parent_id": artifact_free.root_node_id,
+        "node": {"node_type": "test_case", "title": "TC-REF2",
+                 "source_refs": [{"source_type": "requirement", "source_id": str(req_a)}]},
+    }, runtime_free)
+    assert ref_added.message.is_error is False
+    unbound, _ = _execute("read_requirement", {"requirement_id": req_a}, runtime_free)
+    assert unbound.message.is_error is True
+    assert unbound.error_code == "requirement_not_bound"
 
 
 def test_batch_add_update_move_and_single_revision(runtime_fixture, db_session):
@@ -300,3 +318,155 @@ def test_load_skill_is_allowlisted_versioned_and_path_safe(runtime_fixture):
     assert invalid.error_code == "invalid_arguments"
     unknown, _ = _execute("load_skill", {"name": "not-registered"}, runtime)
     assert unknown.error_code == "unknown_skill"
+
+
+# ── P08.1：Requirement 绑定（SourceRef ≠ 授权）+ NodePatch null 合同 ──
+
+
+@pytest.fixture()
+def project_runtime_fixture(db_session):
+    from app.models.requirement_doc import RequirementDoc
+    from app.models.user_role import UserRole
+
+    role = db_session.query(Role).filter(Role.code == "system_admin").first()
+    if role is None:
+        role = Role(code="system_admin", name="system_admin", status="active")
+        db_session.add(role)
+    db_session.flush()
+    user = db_session.get(User, USER_A)
+    if user is None:
+        user = User(id=USER_A, username="p08-project-a", password_hash="x", salt="y",
+                    status="active", is_deleted=False)
+        db_session.add(user)
+        db_session.flush()
+    if not db_session.query(UserRole).filter(UserRole.user_id == USER_A).first():
+        db_session.add(UserRole(user_id=USER_A, role_id=role.id))
+    project_a = Project(id=9301, name="项目A", status="active", is_deleted=False)
+    project_b = Project(id=9302, name="项目B", status="active", is_deleted=False)
+    req_a = RequirementDoc(project_id=9301, title="项目A需求", content="需求A：用户可登录",
+                           requirement_type="功能需求", status="confirmed", is_deleted=False)
+    req_b = RequirementDoc(project_id=9302, title="项目B需求", content="需求B：账户可锁定",
+                           requirement_type="功能需求", status="confirmed", is_deleted=False)
+    db_session.add_all([project_a, project_b, req_a, req_b])
+    db_session.commit()
+    artifact = artifact_service.create_artifact(db_session, requester=user,
+                                                title="P1资产", project_id=9301)
+    session = conversation_service.create_conversation_session(
+        db_session, requester_user_id=USER_A, title="P08-项目会话", project_id=9301,
+        context_json={"source_type": "requirement", "source_id": req_a.id},
+    )
+    db_session.commit()
+    conversation_service.focus_conversation_artifact(
+        db_session, session_id=session.id, artifact_id=artifact.id, requester=user)
+    db_session.commit()
+    runtime = ArtifactRuntimeContext(
+        session_factory=SessionLocal, user_id=USER_A, conversation_id=session.id,
+        run_id=None, artifact_id=artifact.id, project_id=9301,
+        permissions=frozenset({"artifact:read", "artifact:write"}),
+    )
+    return runtime, artifact.id, artifact.root_node_id, req_a.id, req_b.id
+
+
+def test_read_requirement_same_project_bound_allowed(project_runtime_fixture, db_session):
+    runtime, artifact_id, root_id, req_a, req_b = project_runtime_fixture
+    outcome, _ = _execute("read_requirement", {}, runtime)
+    assert outcome.message.is_error is False
+    data = outcome.message.details["data"]
+    assert data["requirement_id"] == req_a
+    assert data["project_id"] == 9301
+    assert "需求A" in data["content"]
+
+
+def test_read_requirement_other_requirement_rejected_even_same_user(project_runtime_fixture):
+    runtime, artifact_id, root_id, req_a, req_b = project_runtime_fixture
+    outcome, _ = _execute("read_requirement", {"requirement_id": req_b}, runtime)
+    assert outcome.message.is_error is True
+    assert outcome.message.details["error_code"] == "requirement_not_bound"
+
+
+def test_forged_source_ref_cannot_expand_requirement_read(project_runtime_fixture, db_session):
+    runtime, artifact_id, root_id, req_a, req_b = project_runtime_fixture
+    # 模型把 source_ref 指向项目 B 的 Requirement → 写入口拒绝（SourceRef≠授权）
+    outcome, _ = _execute("add_artifact_node", {
+        "expected_revision": 1, "parent_id": root_id,
+        "node": {"node_type": "test_case", "title": "TC-FORGE",
+                 "source_refs": [{"source_type": "requirement", "source_id": str(req_b)}]},
+    }, runtime)
+    assert outcome.message.is_error is True
+    assert outcome.message.details["error_code"] == "invalid_operation"
+    assert _revision(db_session, artifact_id) == 1
+    # 即使模型把 source_ref 指向本项目的 req_a，也不能因此读取——read 只认会话绑定
+    added, _ = _execute("add_artifact_node", {
+        "expected_revision": 1, "parent_id": root_id,
+        "node": {"node_type": "test_case", "title": "TC-BOUND",
+                 "source_refs": [{"source_type": "requirement", "source_id": str(req_a)}]},
+    }, runtime)
+    assert added.message.is_error is False
+    # 更换会话绑定后原 node 的 ref 不授予读取其他需求（此处绑定仍 req_a，读 req_a 可、req_b 不可）
+    read_ok, _ = _execute("read_requirement", {}, runtime)
+    assert read_ok.message.is_error is False and read_ok.message.details["data"]["requirement_id"] == req_a
+    read_other, _ = _execute("read_requirement", {"requirement_id": req_b}, runtime)
+    assert read_other.message.is_error is True
+
+
+def test_read_requirement_projectless_artifact_not_bound(runtime_fixture):
+    runtime, artifact_id, root_id = runtime_fixture
+    outcome, _ = _execute("read_requirement", {}, runtime)
+    assert outcome.message.is_error is True
+    assert outcome.message.details["error_code"] == "requirement_not_bound"
+
+
+def _add_manual_ref_case(runtime, db_session, root_id, title="TC1"):
+    outcome, _ = _execute("add_artifact_node", {
+        "expected_revision": 1, "parent_id": root_id,
+        "node": {"node_type": "test_case", "title": title,
+                 "source_refs": [{"source_type": "manual", "source_id": "M-1"}]},
+    }, runtime)
+    assert outcome.message.is_error is False
+    node_id = outcome.message.details["data"]["affected_node_ids"][0]
+    return node_id, outcome.message.details["data"]["revision"]
+
+
+def test_update_patch_null_rejected_and_empty_array_clears(runtime_fixture, db_session):
+    runtime, artifact_id, root_id = runtime_fixture
+    node_id, revision = _add_manual_ref_case(runtime, db_session, root_id)
+    # 单条 update：显式 null → 拒绝（schema 层），Revision 不推进
+    nulled, _ = _execute("update_artifact_node", {
+        "expected_revision": revision, "target_node_id": node_id,
+        "patch": {"source_refs": None},
+    }, runtime)
+    assert nulled.message.is_error is True
+    assert _revision(db_session, artifact_id) == revision
+    # batch update：显式 null 同样拒绝
+    batch_null, _ = _execute("batch_apply_artifact_operations", {
+        "expected_revision": revision,
+        "operations": [{"operation_type": "update_node", "target_node_id": node_id,
+                        "patch": {"title": None}}],
+    }, runtime)
+    assert batch_null.message.is_error is True
+    assert _revision(db_session, artifact_id) == revision
+    # source_refs=[] 清空（单条），patch 不被 Handler 静默变空：title 与 source_refs 同时生效
+    cleared, _ = _execute("update_artifact_node", {
+        "expected_revision": revision, "target_node_id": node_id,
+        "patch": {"title": "TC1-改名", "source_refs": []},
+    }, runtime)
+    assert cleared.message.is_error is False
+    assert _revision(db_session, artifact_id) == revision + 1
+    db_session.expire_all()
+    row = db_session.get(ArtifactNode, node_id)
+    assert row.title == "TC1-改名"
+    assert row.source_refs_json is None
+
+
+def test_batch_update_empty_array_clears(runtime_fixture, db_session):
+    runtime, artifact_id, root_id = runtime_fixture
+    node_id, revision = _add_manual_ref_case(runtime, db_session, root_id)
+    cleared, _ = _execute("batch_apply_artifact_operations", {
+        "expected_revision": revision,
+        "operations": [{"operation_type": "update_node", "target_node_id": node_id,
+                        "patch": {"source_refs": []}}],
+    }, runtime)
+    assert cleared.message.is_error is False
+    assert _revision(db_session, artifact_id) == revision + 1
+    db_session.expire_all()
+    assert db_session.get(ArtifactNode, node_id).source_refs_json is None

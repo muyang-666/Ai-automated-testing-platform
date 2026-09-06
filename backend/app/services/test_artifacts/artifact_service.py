@@ -19,6 +19,7 @@ import json
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
+from app.models.requirement_doc import RequirementDoc
 from app.models.test_artifact.artifact_node import ArtifactNode
 from app.models.test_artifact.artifact_operation import ArtifactOperation
 from app.models.test_artifact.artifact_revision import ArtifactRevision
@@ -130,6 +131,38 @@ def _validated_refs(raw):
         raise TestArtifactValidationError(str(exc)) from None
 
 
+# SourceRef = provenance metadata，不等于 Requirement 读取授权（P08.1）。
+# requirement/requirement_doc 类型的引用写入时，服务端必须再次验证目标
+# Requirement 属于当前 Artifact 的 project scope；projectless Artifact 仅凭
+# 模型写入 source_id 不能获得任何项目 Requirement 的读取能力。
+_REQUIREMENT_SOURCE_TYPES = ("requirement", "requirement_doc")
+
+
+def _validated_node_refs(db: Session, artifact: TestArtifact, raw):
+    """解析并校验节点 source_refs（含 Requirement 项目绑定规则）。"""
+    refs = _validated_refs(raw)
+    if not refs:
+        return refs
+    requirement_refs = [ref for ref in refs if ref["source_type"] in _REQUIREMENT_SOURCE_TYPES]
+    if not requirement_refs:
+        return refs
+    scope = artifact.project_id
+    if scope is None:
+        raise TestArtifactValidationError(
+            "未绑定项目的 Artifact 不能引用 Requirement（SourceRef 不授予读取权限）")
+    for ref in requirement_refs:
+        try:
+            requirement_id = int(ref["source_id"])
+        except (TypeError, ValueError):
+            raise TestArtifactValidationError(
+                "requirement 类型引用的 source_id 必须是数字 Requirement ID") from None
+        row = db.get(RequirementDoc, requirement_id)
+        if row is None or row.project_id != scope or row.is_deleted:
+            raise TestArtifactValidationError(
+                "引用的 Requirement 不存在、不属于当前 Artifact 项目或已删除")
+    return refs
+
+
 def _require_visible_node(db: Session, artifact: TestArtifact, node_id: int | None, *, what: str) -> ArtifactNode:
     node = repo.get_node(db, node_id) if node_id is not None else None
     if node is None or node.artifact_id != artifact.id or node.deleted_revision is not None:
@@ -206,7 +239,7 @@ def _apply_add(db: Session, artifact: TestArtifact, new_no: int, request: dict,
     parent_id = request.get("parent_id")
     title = request.get("title") or ""
     content = _validated_content(node_type, request.get("content"))
-    source_refs = _validated_refs(request.get("source_refs"))
+    source_refs = _validated_node_refs(db, artifact, request.get("source_refs"))
     order_key = request.get("order_key")
 
     if node_type == "root":
@@ -245,11 +278,14 @@ def _apply_update(db: Session, artifact: TestArtifact, request: dict) -> dict:
     patch = request.get("patch")
     if not isinstance(patch, dict) or not patch:
         raise TestArtifactValidationError("update_node 必须提供非空 patch")
-    for key in patch:
+    for key, value in patch.items():
         if key in SERVER_CONTROLLED_FIELDS:
             raise TestArtifactValidationError(f"服务端控制字段不可被客户端 patch: {key}")
         if key not in WRITABLE_NODE_FIELDS:
             raise TestArtifactValidationError(f"不可 patch 的字段: {key}")
+        if value is None:
+            raise TestArtifactValidationError(
+                f"patch.{key} 不能为 null（null 不代表清空；source_refs=[] 表示清空）")
     before = node_snapshot(node)
     if "title" in patch:
         value = patch["title"]
@@ -259,7 +295,7 @@ def _apply_update(db: Session, artifact: TestArtifact, request: dict) -> dict:
     if "content" in patch:
         node.content_json = _validated_content(node.node_type, patch["content"])
     if "source_refs" in patch:
-        node.source_refs_json = _validated_refs(patch["source_refs"])
+        node.source_refs_json = _validated_node_refs(db, artifact, patch["source_refs"])
     db.flush()
     return {"target_node_id": node.id, "payload": {"patch": patch}, "before": before, "after": node_snapshot(node)}
 
@@ -393,7 +429,7 @@ def _apply_restore(db: Session, artifact: TestArtifact, request: dict) -> dict:
         row.order_key = snap.get("order_key", row.order_key)
         row.title = snap.get("title", row.title)
         row.content_json = _validated_content(row.node_type, snap.get("content"))
-        row.source_refs_json = _validated_refs(snap.get("source_refs"))
+        row.source_refs_json = _validated_node_refs(db, artifact, snap.get("source_refs"))
     db.flush()
     after = [node_snapshot(restored_by_id[sid]) for sid in ids]
     return {"target_node_id": target_id, "payload": {"affected_node_ids": ids}, "before": None, "after": after}

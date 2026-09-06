@@ -255,9 +255,27 @@ def focused_artifact_id(session: AgentSession) -> int | None:
     return value if type(value) is int and value > 0 else None
 
 
+def focused_artifact_active_run(db: Session, session_id: int) -> AgentRun | None:
+    """会话当前正在执行/待执行的 active head（queued/running）。"""
+    return db.execute(
+        select(AgentRun).where(
+            AgentRun.session_id == session_id,
+            AgentRun.workflow_code == "conversation",
+            AgentRun.active_slot == 1,
+            AgentRun.status.in_(("queued", "running")),
+        ).order_by(AgentRun.id.desc()).limit(1)
+    ).scalar_one_or_none()
+
+
 def focus_conversation_artifact(db: Session, *, session_id: int,
                                 artifact_id: int, requester) -> AgentSession:
-    """Persist a trusted current Artifact binding on the Conversation."""
+    """Persist a trusted current Artifact binding on the Conversation.
+
+    P08.1：正在运行的 Turn 不允许静默切换 focused Artifact —— 切换只影响新 Turn。
+    - 已聚焦同一 Artifact → 幂等成功（不打断当前 Turn）；
+    - 存在 queued/running active run 且切换到不同 Artifact → 409 conversation_conflict；
+    - active run 终态后（无 queued/running head）才允许切换。
+    """
     from app.services.test_artifacts import artifact_service
     from app.services.test_artifacts.errors import TestArtifactError
 
@@ -268,6 +286,11 @@ def focus_conversation_artifact(db: Session, *, session_id: int,
         )
     except TestArtifactError:
         raise AgentPermissionError("Artifact 不存在或无权访问") from None
+    current_focus = focused_artifact_id(session)
+    if current_focus == artifact.id:
+        return session  # 幂等：同 Artifact 重聚焦不构成切换
+    if focused_artifact_active_run(db, session.id) is not None:
+        raise ConversationConflict("正在运行的 Turn 不允许切换 Artifact；请等待完成或取消后再切换")
     if session.project_id is not None and artifact.project_id != session.project_id:
         raise ConversationConflict("Artifact 与 Conversation 项目不一致")
     if session.project_id is None and artifact.project_id is not None:

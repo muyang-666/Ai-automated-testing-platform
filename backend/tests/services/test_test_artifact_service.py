@@ -714,23 +714,101 @@ def test_32_server_controlled_fields_cannot_be_forged(db_session):
 
 
 def test_source_refs_contract(db_session):
+    """非 Requirement 类型的 source_refs 是纯 provenance，可在 projectless Artifact 存续。"""
     a = _seed(db_session)
     artifact = _create(db_session, a)
     r = _apply(db_session, artifact.id, 1, [{
         "operation_type": "add_node", "parent_id": artifact.root_node_id,
         "node_type": "test_case", "title": "TC-REQ",
-        "source_refs": [{"source_type": "requirement", "source_id": "REQ-123",
+        "source_refs": [{"source_type": "manual", "source_id": "DOC-123",
                          "fragment_id": "clause-7", "snapshot_hash": "abc"}],
     }], a)
     tc = _node(db_session, artifact.id, "TC-REQ")
-    assert tc.source_refs_json == [{"source_type": "requirement", "source_id": "REQ-123",
+    assert tc.source_refs_json == [{"source_type": "manual", "source_id": "DOC-123",
                                     "fragment_id": "clause-7", "snapshot_hash": "abc"}]
     with pytest.raises(ArtifactValidationError):
         _apply(db_session, artifact.id, r["new_revision"], [{
             "operation_type": "update_node", "target_node_id": tc.id,
-            "patch": {"source_refs": [{"source_type": "requirement"}]},
+            "patch": {"source_refs": [{"source_type": "manual"}]},
         }], a)
     db_session.rollback()
+
+
+def test_requirement_refs_require_same_project_binding(db_session):
+    """P08.1：requirement 类型 SourceRef 写入必须属于 Artifact 项目；SourceRef ≠ 授权。"""
+    from app.models.requirement_doc import RequirementDoc
+
+    a = _seed(db_session)
+    other_project = Project(id=PROJECT_P + 100, name="项目Q", status="active", is_deleted=False)
+    db_session.add(other_project)
+    req_p = RequirementDoc(project_id=PROJECT_P, title="本项目需求", content="内容",
+                           requirement_type="功能需求", status="confirmed", is_deleted=False)
+    req_q = RequirementDoc(project_id=PROJECT_P + 100, title="跨项目需求", content="内容",
+                           requirement_type="功能需求", status="confirmed", is_deleted=False)
+    db_session.add_all([req_p, req_q])
+    db_session.commit()
+
+    artifact_p = _create(db_session, a, title="项目内Artifact", project_id=PROJECT_P)
+    root_p = artifact_p.root_node_id
+    # 同项目 Requirement → 允许
+    r2 = _apply(db_session, artifact_p.id, 1, [{
+        "operation_type": "add_node", "parent_id": root_p, "node_type": "test_case",
+        "title": "TC-OK",
+        "source_refs": [{"source_type": "requirement", "source_id": str(req_p.id)}],
+    }], a)
+    tc = _node(db_session, artifact_p.id, "TC-OK")
+    assert tc.source_refs_json[0]["source_id"] == str(req_p.id)
+    # 其他项目 Requirement → 拒绝（即使同用户可见该项目也不行——跨项目绑定不成立）
+    with pytest.raises(ArtifactValidationError):
+        _apply(db_session, artifact_p.id, r2["new_revision"], [{
+            "operation_type": "update_node", "target_node_id": tc.id,
+            "patch": {"source_refs": [{"source_type": "requirement",
+                                       "source_id": str(req_q.id)}]},
+        }], a)
+    db_session.rollback()
+    # 非数字 source_id → 拒绝
+    with pytest.raises(ArtifactValidationError):
+        _apply(db_session, artifact_p.id, r2["new_revision"], [{
+            "operation_type": "update_node", "target_node_id": tc.id,
+            "patch": {"source_refs": [{"source_type": "requirement",
+                                       "source_id": "REQ-ABC"}]},
+        }], a)
+    db_session.rollback()
+    # projectless Artifact → 一律拒绝 requirement 引用（SourceRef 不授予读取权限）
+    artifact_free = _create(db_session, a, title="无项目Artifact")
+    with pytest.raises(ArtifactValidationError):
+        _apply(db_session, artifact_free.id, 1, [{
+            "operation_type": "add_node", "parent_id": artifact_free.root_node_id,
+            "node_type": "test_case", "title": "TC-FORGE",
+            "source_refs": [{"source_type": "requirement", "source_id": str(req_p.id)}],
+        }], a)
+    db_session.rollback()
+
+
+def test_update_patch_null_contract_rejected(db_session):
+    """P08.1：patch 显式 null 一律拒绝；source_refs=[] 表示清空。"""
+    a = _seed(db_session)
+    artifact = _create(db_session, a)
+    r2 = _apply(db_session, artifact.id, 1, [{
+        "operation_type": "add_node", "parent_id": artifact.root_node_id,
+        "node_type": "test_case", "title": "TC1",
+        "source_refs": [{"source_type": "manual", "source_id": "M-1"}],
+    }], a)
+    tc = _node(db_session, artifact.id, "TC1").id
+    for patch in ({"title": None}, {"content": None}, {"source_refs": None}):
+        with pytest.raises(ArtifactValidationError):
+            _apply(db_session, artifact.id, r2["new_revision"], [{
+                "operation_type": "update_node", "target_node_id": tc,
+                "patch": patch,
+            }], a)
+        db_session.rollback()
+    # source_refs=[] 清空
+    r3 = _apply(db_session, artifact.id, r2["new_revision"], [{
+        "operation_type": "update_node", "target_node_id": tc,
+        "patch": {"source_refs": []},
+    }], a)
+    assert r3["new_revision"] == 3
+    assert db_session.get(ArtifactNode, tc).source_refs_json is None
 
 
 # ── §28 完整 P07 E2E（无 Agent，Revision 1..7） ──

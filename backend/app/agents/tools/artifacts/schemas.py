@@ -81,6 +81,13 @@ class AddNodeInput(StrictModel):
 
 
 class NodePatch(StrictModel):
+    """Node 补丁合同（P08.1）：null 不代表清空。
+
+    - 显式出现但值为 null 的字段 → 整体拒绝（避免单/批 Handler 静默丢弃语义）；
+    - 未出现的字段 = 不改动；
+    - 清空来源引用用 source_refs=[]。
+    """
+
     title: str | None = Field(default=None, min_length=1, max_length=500)
     content: TestCaseContentInput | None = None
     source_refs: list[SourceRefInput] | None = Field(default=None, max_length=20)
@@ -89,6 +96,14 @@ class NodePatch(StrictModel):
     def not_empty(self):
         if not self.model_fields_set:
             raise ValueError("patch 不能为空")
+        return self
+
+    @model_validator(mode="after")
+    def reject_explicit_null(self):
+        for field_name in ("title", "content", "source_refs"):
+            if field_name in self.model_fields_set and getattr(self, field_name) is None:
+                raise ValueError(
+                    f"patch.{field_name} 不能为 null（null 不代表清空；source_refs=[] 表示清空）")
         return self
 
 
