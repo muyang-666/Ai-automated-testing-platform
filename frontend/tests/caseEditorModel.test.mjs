@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  editorToCaseOperations, moduleOps, moduleParentCandidates, normalizeEditorSteps, scopedRoot,
+  editorToCaseOperations, moduleOps, moduleParentCandidates, normalizeEditorSteps,
+  renumberStepsAndExpected, scopedRoot,
 } from "../src/components/v2-workspace/caseEditorModel.js";
 
 function node(id, node_type, title, children = []) {
@@ -61,4 +62,51 @@ test("scopedRoot: root/scope 切换保持同一视图源", () => {
   assert.equal(scopedRoot(sampleRoot, null), sampleRoot);
   assert.equal(scopedRoot(sampleRoot, 10).title, "登录");
   assert.equal(scopedRoot(sampleRoot, 99).title, "功能");
+});
+
+test("renumberStepsAndExpected: 3→1 移动后重编号且 expected 跟随逻辑步骤", () => {
+  const steps = [
+    { step_no: 1, action: "甲" },
+    { step_no: 2, action: "乙" },
+    { step_no: 3, action: "丙" },
+  ];
+  const expected = [
+    { step_no: 3, expected: "丙的预期" },
+    { step_no: 1, expected: "甲的预期" },
+  ];
+  // 模拟“把第 3 行移动到第 1 行”：行内容随位置移动，step_no 仍是旧值
+  const moved = [steps[2], steps[0], steps[1]];
+  const result = renumberStepsAndExpected(moved, expected);
+  assert.deepEqual(result.steps.map((s) => s.action), ["丙", "甲", "乙"]);
+  assert.deepEqual(result.steps.map((s) => s.step_no), [1, 2, 3]);
+  // 绑定丙的预期原 step_no=3 → 现在丙在第 1 位 → step_no=1
+  assert.deepEqual(
+    result.expected.find((e) => e.expected === "丙的预期").step_no, 1);
+  assert.deepEqual(
+    result.expected.find((e) => e.expected === "甲的预期").step_no, 2);
+});
+
+test("renumberStepsAndExpected: 删除步骤后绑定降级为整体并连续编号", () => {
+  const steps = [
+    { step_no: 1, action: "甲" },
+    { step_no: 2, action: "乙" },
+    { step_no: 3, action: "丙" },
+  ];
+  const expected = [{ step_no: 2, expected: "乙的预期" }];
+  // 删除第 2 行（step_no=2）
+  const removedNo = 2;
+  const remaining = steps.filter((s) => s.step_no !== removedNo);
+  const cleared = expected.map((e) => (e.step_no === removedNo ? { ...e, step_no: null } : e));
+  const result = renumberStepsAndExpected(remaining, cleared);
+  assert.deepEqual(result.steps.map((s) => s.step_no), [1, 2]);
+  assert.deepEqual(result.steps.map((s) => s.action), ["甲", "丙"]);
+  assert.equal(result.expected[0].step_no, null);
+});
+
+test("renumberStepsAndExpected: 新增步骤编号连续", () => {
+  const steps = [{ step_no: 1, action: "甲" }, { step_no: 2, action: "乙" }];
+  const result = renumberStepsAndExpected(
+    [...steps, { step_no: null, action: "新增" }], []);
+  assert.deepEqual(result.steps.map((s) => s.step_no), [1, 2, 3]);
+  assert.deepEqual(result.steps[2].action, "新增");
 });

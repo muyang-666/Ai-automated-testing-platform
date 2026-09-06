@@ -69,14 +69,21 @@ function actorName(actor) {
   return actor || "—";
 }
 
-function DiffLine({ line }) {
+function lineLabel(line, treeIndex) {
+  const type = line.node_type ?? (treeIndex?.get ? treeIndex.get(line.node_id)?.node_type : null);
+  if (type === "test_case") return formatCaseNumber(line.node_id);
+  return line.title || (type === "module" ? "module" : "");
+}
+
+function DiffLine({ line, treeIndex }) {
+  const label = lineLabel(line, treeIndex);
   if (line.change === "added") {
-    return <div className="diff-line add">+ {formatCaseNumber(line.node_id)} {line.title || ""}</div>;
+    return <div className="diff-line add">+ {label || line.title}</div>;
   }
   if (line.change === "deleted") {
     return (
       <div className="diff-line del">
-        - {formatCaseNumber(line.node_id)} {line.title || ""}
+        - {label || line.title || `#${line.node_id}`}
         {line.descendant_count != null ? `（affected: ${line.descendant_count} nodes）` : ""}
       </div>
     );
@@ -84,7 +91,7 @@ function DiffLine({ line }) {
   if (line.change === "moved") {
     return (
       <div className="diff-line move">
-        {formatCaseNumber(line.node_id)}: parent/order {line.before?.parent_id ?? "—"}
+        {label || `#${line.node_id}`}: parent/order {line.before?.parent_id ?? "—"}
         {" → "}{line.after?.parent_id ?? "—"}
       </div>
     );
@@ -92,7 +99,7 @@ function DiffLine({ line }) {
   if (line.change === "updated") {
     return (
       <div className="diff-line update">
-        {formatCaseNumber(line.node_id)}
+        {label || `#${line.node_id}`}
         {Object.entries(line.fields || {}).map(([key, pair]) => (
           <div key={key} className="diff-fields">
             <span className="diff-fields-key">{key}</span>
@@ -119,7 +126,7 @@ export default function FunctionCasePage() {
   const [priority, setPriority] = useState(undefined);
   const [viewMode, setViewMode] = useState("list");
   const [collapsed, setCollapsed] = useState([]);
-  const [selectedNode, setSelectedNode] = useState(null); // mindmap/inspector selection
+  const [selectedNodeId, setSelectedNodeId] = useState(null);
   const [writeBusy, setWriteBusy] = useState(false);
 
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -174,7 +181,7 @@ export default function FunctionCasePage() {
         setArtifact(artifactRow.data);
         await refreshContent(artifactRow.data.id);
         setScopeId(null);
-        setSelectedNode(null);
+        setSelectedNodeId(null);
       }
     } catch (err) {
       if (token !== seq.current) return;
@@ -208,6 +215,9 @@ export default function FunctionCasePage() {
   }, [projectId, load]);
 
   const index = useMemo(() => (tree ? buildNodeIndex(tree.root) : new Map()), [tree]);
+  const selectedNode = useMemo(
+    () => (selectedNodeId != null ? index.get(selectedNodeId) ?? null : null),
+    [selectedNodeId, index]);
   const moduleTree = useMemo(() => (tree ? buildModuleTree(tree.root) : null), [tree]);
   const rows = useMemo(() => (tree ? collectScopeCases(tree.root, scopeId) : []), [tree, scopeId]);
   const scopedRoot = useMemo(() => {
@@ -307,6 +317,16 @@ export default function FunctionCasePage() {
     }
   }, [artifact, tree, refreshContent]);
 
+
+  const applyStepReflow = (nextSteps, expectedOverride = null) => {
+    setCaseDlg((d) => {
+      if (!d) return d;
+      const remapped = caseEditorModel.renumberStepsAndExpected(
+        nextSteps, expectedOverride ?? d.expected);
+      return { ...d, steps: remapped.steps, expected: remapped.expected };
+    });
+  };
+
   const saveModule = async () => {
     if (!moduleDlg) return;
     const title = (moduleDlg.title || "").trim();
@@ -353,6 +373,7 @@ export default function FunctionCasePage() {
     const ok = await runWrite(ops, `删除 ${deleteDlg.node.node_type === "module" ? "模块" : "用例"} ${deleteDlg.node.title}`);
     if (ok) {
       if (scopeId === deleteDlg.node.id) setScopeId(null);
+      if (selectedNodeId === deleteDlg.node.id) setSelectedNodeId(null);
       setDeleteDlg(null);
     }
   };
@@ -376,13 +397,13 @@ export default function FunctionCasePage() {
     if (!artifact) return;
     try {
       setWriteBusy(true);
-      await undoArtifact(artifact.id);
+      await undoArtifact(artifact.id, tree?.current_revision);
       await refreshContent(artifact.id);
       setUndoVisible(false);
     } catch (err) {
       const d = err?.response?.data?.detail;
       if (err?.response?.status === 409 && d && typeof d === "object") {
-        setConflict({ expected: null, current: d.current_revision ?? null });
+        setConflict({ expected: d.expected_revision ?? null, current: d.current_revision ?? null });
       } else {
         setError(d || err?.message || "撤销失败");
       }
@@ -395,11 +416,16 @@ export default function FunctionCasePage() {
     if (!artifact || restoreTarget == null) return;
     try {
       setWriteBusy(true);
-      await restoreArtifact(artifact.id, restoreTarget);
+      await restoreArtifact(artifact.id, restoreTarget, tree?.current_revision);
       await refreshContent(artifact.id);
       setRestoreTarget(null);
     } catch (err) {
-      setError(err?.response?.data?.detail || err?.message || "恢复失败");
+      const d = err?.response?.data?.detail;
+      if (err?.response?.status === 409 && d && typeof d === "object") {
+        setConflict({ expected: d.expected_revision ?? null, current: d.current_revision ?? null });
+      } else {
+        setError(d || err?.message || "恢复失败");
+      }
     } finally {
       setWriteBusy(false);
     }
@@ -450,11 +476,11 @@ export default function FunctionCasePage() {
       </span>
     );
     if (!writeVisible) {
-      return <span className="module-row" onClick={() => { setScopeId(node.id); setSelectedNode(node); }}>{content}</span>;
+      return <span className="module-row" onClick={() => { setScopeId(node.id); setSelectedNodeId(node.id); }}>{content}</span>;
     }
     return (
       <Dropdown trigger={["contextMenu", "hover"]} menu={moduleMenu(node)}>
-        <span className="module-row" onClick={(e) => { e.stopPropagation(); setScopeId(node.id); setSelectedNode(node); }}>
+        <span className="module-row" onClick={(e) => { e.stopPropagation(); setScopeId(node.id); setSelectedNodeId(node.id); }}>
           {content}
         </span>
       </Dropdown>
@@ -519,7 +545,7 @@ export default function FunctionCasePage() {
             )}
           </div>
           <button type="button" className={scopeId == null ? "case-module-all active" : "case-module-all"}
-            onClick={() => { setScopeId(null); setSelectedNode(null); }}>
+            onClick={() => { setScopeId(null); setSelectedNodeId(null); }}>
             全部模块
           </button>
           {loading && <div className="case-loading">加载中…</div>}
@@ -530,10 +556,10 @@ export default function FunctionCasePage() {
               treeData={treeData}
               titleRender={titleRender}
               onSelect={(keys) => {
-                if (!keys.length) { setScopeId(null); setSelectedNode(null); return; }
+                if (!keys.length) { setScopeId(null); setSelectedNodeId(null); return; }
                 const id = Number(keys[0]);
                 setScopeId(id);
-                setSelectedNode(index.get(id) || null);
+                setSelectedNodeId(id);
               }}
             />
           )}
@@ -559,7 +585,7 @@ export default function FunctionCasePage() {
                     style: { cursor: "pointer" },
                     onClick: () => writeVisible
                       ? openCaseEditor("edit", row)
-                      : setDiffOpen(false) || setSelectedNode(index.get(row.nodeId) || null),
+                      : setSelectedNodeId(row.nodeId),
                   })} />
               )}
               {!loading && !artifact && (
@@ -577,8 +603,8 @@ export default function FunctionCasePage() {
                     onSelect={(id) => {
                       const node = index.get(id);
                       if (!node) return;
-                      setSelectedNode(node);
-                      if (node.node_type === "module") setScopeId(node.id);
+                      setSelectedNodeId(id);
+                      if (node.node_type === "module") setScopeId(id);
                     }}
                     onToggleCollapse={(id) => setCollapsed((prev) => (
                       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
@@ -633,9 +659,13 @@ export default function FunctionCasePage() {
           style={{ width: "100%" }} placeholder="选择目标模块"
           value={moveDlg?.parentId ?? undefined}
           onChange={(v) => setMoveDlg((d) => ({ ...d, parentId: v }))}
-          options={moduleOptions
-            .filter((m) => !subtreeIds(tree?.root, moveDlg?.node?.id).has(m.id))
-            .map((m) => ({ value: m.id, label: `${"　".repeat(Math.min(m.depth, 6))}${m.title}` }))}
+          options={[
+            ...(moveDlg?.kind === "module" && tree?.root
+              ? [{ value: tree.root.id, label: "项目根（一级模块）" }] : []),
+            ...moduleOptions
+              .filter((m) => !subtreeIds(tree?.root, moveDlg?.node?.id).has(m.id))
+              .map((m) => ({ value: m.id, label: `${"　".repeat(Math.min(m.depth, 6))}${m.title}` })),
+          ]}
         />
         <Typography.Paragraph type="secondary" style={{ marginTop: 8, fontSize: 12 }}>
           后端会校验 parent 类型/环/Revision。
@@ -705,9 +735,9 @@ export default function FunctionCasePage() {
             <div className="editor-sec">
               <Space style={{ width: "100%", justifyContent: "space-between" }}>
                 <strong>步骤</strong>
-                <Button size="small" onClick={() => setCaseDlg({
-                  ...caseDlg, steps: [...caseDlg.steps, { step_no: null, action: "", data: null }],
-                })}>＋ 步骤</Button>
+                <Button size="small" onClick={() => applyStepReflow([
+                  ...caseDlg.steps, { step_no: null, action: "", data: null },
+                ])}>＋ 步骤</Button>
               </Space>
               {caseDlg.steps.map((step, i) => (
                 <div key={i} className="editor-row steps-row">
@@ -729,18 +759,22 @@ export default function FunctionCasePage() {
                       onClick={() => {
                         const steps = [...caseDlg.steps];
                         [steps[i - 1], steps[i]] = [steps[i], steps[i - 1]];
-                        setCaseDlg({ ...caseDlg, steps });
+                        applyStepReflow(steps);
                       }}>↑</Button>
                     <Button size="small" type="text" disabled={i === caseDlg.steps.length - 1}
                       onClick={() => {
                         const steps = [...caseDlg.steps];
                         [steps[i + 1], steps[i]] = [steps[i], steps[i + 1]];
-                        setCaseDlg({ ...caseDlg, steps });
+                        applyStepReflow(steps);
                       }}>↓</Button>
                     <Button size="small" type="text" danger
-                      onClick={() => setCaseDlg({
-                        ...caseDlg, steps: caseDlg.steps.filter((_, j) => j !== i),
-                      })}>✕</Button>
+                      onClick={() => {
+                        const removedNo = caseDlg.steps[i]?.step_no ?? null;
+                        const nextSteps = caseDlg.steps.filter((_, j) => j !== i);
+                        const clearedExpected = caseDlg.expected.map((e) =>
+                          e.step_no === removedNo ? { ...e, step_no: null } : e);
+                        applyStepReflow(nextSteps, clearedExpected);
+                      }}>✕</Button>
                   </Space>
                 </div>
               ))}
@@ -847,7 +881,7 @@ export default function FunctionCasePage() {
 
       {/* Diff viewer */}
       <Drawer title={diffData?.title || "Diff"} width={640} open={diffOpen} onClose={() => setDiffOpen(false)}>
-        {diffData?.changes?.map((line, i) => <DiffLine key={i} line={line} />)}
+        {diffData?.changes?.map((line, i) => <DiffLine key={i} line={line} treeIndex={index} />)}
         {diffData && !diffData.changes?.length && <Empty description="无变更" />}
       </Drawer>
 

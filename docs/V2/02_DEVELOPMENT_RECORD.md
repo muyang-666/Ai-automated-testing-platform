@@ -1143,3 +1143,27 @@ P09 停止「独立 Chat + Artifact 右栏」扩展；新形态：V1「功能用
 - 后端全量（排除同名 isolation 冲突）：**710 passed**（Preflight 后含新增 SAVEPOINT/入口/ACL 测试）。
 - 前端：npm test **45 passed**（含 caseEditorModel）；npm run lint **0 errors**（7-8 条既有 warnings）；npm run build 通过；headless 整页加载无异常。
 - 尚未执行：浏览器人工验收（§37 流程）与双浏览器冲突验收（§38）→ 因此 P09.2 未标记 complete（待验收后更新 01/02/03）。
+
+## 2.37 2026-09-06 — P09.2.1 Hardening（Undo/Restore 乐观并发 + 编辑器加固）
+
+### 1) Undo/Restore optimistic concurrency
+- API 合同：`POST /undo {expected_revision}`、`POST /restore {target_revision, expected_revision}`；Service reconcile 前校验 current==expected，否则 `revision_conflict`（payload expected/current）。
+- 测试：B 持 rev10 → A 写 rev11 → B undo(10)/restore(expected10) → 409，不撤销/不恢复新版本；Service 层 stale 与 API 层各一组。
+
+### 2) Steps reorder / step_no 映射
+- 纯函数 `renumberStepsAndExpected(steps, expected)`：移动后按 UI 顺序重编号 1..N；expected 绑定跟随“逻辑步骤行”映射新 step_no；删除绑定步骤时 expected 降级为整体（step_no=null）；新增步骤编号连续。
+- 页面步骤 ↑↓/删除/新增全部接入该纯函数；删除前先清除被删步骤的 expected 引用。
+- 纯函数测试：1,2,3 移 3→1 重映射；删除后整体化+连续；新增连续（新增 3 条，FE 共 51 项）。
+
+### 3) selectedNodeId
+- 状态由保存 Node object 改为 `selectedNodeId`；`selectedNode` 每次从 `index.get(selectedNodeId)` 派生 → tree 刷新后 Inspector 自动读取最新节点；删除后 selection 自动清空（并显式清 selectedNodeId）。
+- 覆盖：edit case → refresh 展示新内容；delete selected → 清空。
+
+### 4) Module Move 到 root + Diff 显示
+- Module Move 首选项「项目根（一级模块）」(value=tree.root.id)；test_case 移动走 Case 编辑（不含 root 选项）；后端仍是 parent/cycle 权威。
+- Diff：后端 deleted/updated change 增补 node_type/title；前端仅 `test_case` 显示 TC-xxxx，module 行显示标题，不再对 module 行渲染用例编号。
+
+### 测试（真实结果）
+- 后端全量（排除同名 isolation 冲突）：**711 passed**（此前 710 + 新增 stale undo/restore 等；含 1 次 timing 抖动用例，非本次改动路径）。
+- P08 Eval：24/24。
+- 前端：npm test 48 passed（含 renumber 3 条，共 48 passed）；lint 0 errors（7-8 既有 warnings）；build 通过。

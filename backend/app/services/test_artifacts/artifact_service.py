@@ -958,22 +958,28 @@ def _reconcile_to(db: Session, *, artifact: TestArtifact, target_revision: int, 
     }
 
 
-def undo_latest(db: Session, *, artifact_id: int, requester) -> dict:
+def undo_latest(db: Session, *, artifact_id: int, requester,
+                expected_revision: int | None = None) -> dict:
     artifact = _load_writable(db, artifact_id, requester)
     if artifact.current_revision <= 1:
         raise TestArtifactValidationError("没有可撤销的修订（仅剩根创建 Revision 1）")
+    if expected_revision is not None and artifact.current_revision != expected_revision:
+        raise RevisionConflictError(expected_revision, artifact.current_revision)
     return _reconcile_to(
         db, artifact=artifact, target_revision=artifact.current_revision - 1, requester=requester,
         action_summary=f"撤销修订 {artifact.current_revision}",
     )
 
 
-def restore_revision(db: Session, *, artifact_id: int, target_revision: int, requester) -> dict:
+def restore_revision(db: Session, *, artifact_id: int, target_revision: int, requester,
+                     expected_revision: int | None = None) -> dict:
     artifact = _load_writable(db, artifact_id, requester)
     if target_revision < 1 or target_revision >= artifact.current_revision:
         raise TestArtifactValidationError(
             f"restore 目标必须在 [1, {artifact.current_revision}) 之间"
         )
+    if expected_revision is not None and artifact.current_revision != expected_revision:
+        raise RevisionConflictError(expected_revision, artifact.current_revision)
     return _reconcile_to(
         db, artifact=artifact, target_revision=target_revision, requester=requester,
         action_summary=f"恢复到修订 {target_revision}",

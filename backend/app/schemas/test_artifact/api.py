@@ -134,8 +134,13 @@ class UndoResponse(TestArtifactSchemaBase):
     summary: str = ""
 
 
+class UndoRequest(TestArtifactSchemaBase):
+    expected_revision: int = Field(..., ge=1, description="乐观并发：必须等于当前 revision")
+
+
 class RestoreRequest(TestArtifactSchemaBase):
     target_revision: int = Field(..., ge=1)
+    expected_revision: int = Field(..., ge=1, description="乐观并发：必须等于当前 revision")
 
 
 class RestoreResponse(TestArtifactSchemaBase):

@@ -138,7 +138,7 @@ def test_owner_isolation_404(client):
     switch(b)
     assert test_client.get(f"/test-artifacts/{artifact['id']}").status_code == 404
     assert test_client.get(f"/test-artifacts/{artifact['id']}/tree").status_code == 404
-    assert test_client.post(f"/test-artifacts/{artifact['id']}/undo").status_code == 404
+    assert test_client.post(f"/test-artifacts/{artifact['id']}/undo", json={"expected_revision": 1}).status_code == 404
 
 
 def test_server_controlled_field_forged_400(client):
@@ -178,7 +178,8 @@ def test_undo_and_restore_endpoints(client):
         "expected_revision": 2,
         "operations": [{"operation_type": "delete_node", "target_node_id": tc_id}],
     })
-    undo = test_client.post(f"/test-artifacts/{artifact['id']}/undo").json()
+    undo = test_client.post(f"/test-artifacts/{artifact['id']}/undo",
+                            json={"expected_revision": 3}).json()
     assert undo["new_revision"] == 4
     tree_after = test_client.get(f"/test-artifacts/{artifact['id']}/tree").json()
     assert [c["title"] for c in tree_after["root"]["children"]] == ["默认模块"]
@@ -191,7 +192,7 @@ def test_undo_and_restore_endpoints(client):
         "operations": [{"operation_type": "delete_node", "target_node_id": tc}],
     })
     restore = test_client.post(f"/test-artifacts/{artifact['id']}/restore",
-                               json={"target_revision": 2}).json()
+                               json={"target_revision": 2, "expected_revision": 5}).json()
     assert restore["new_revision"] == 6
     tree_final = test_client.get(f"/test-artifacts/{artifact['id']}/tree").json()
     assert [c["title"] for c in tree_final["root"]["children"]] == ["默认模块"]
@@ -228,7 +229,8 @@ def test_public_operations_cannot_submit_internal_restore(client):
     assert rejected.status_code == 400
     assert "内部操作" in rejected.json()["detail"]
     # undo 端点（内部生成 restore）仍正常
-    undo = test_client.post(f"/test-artifacts/{artifact['id']}/undo").json()
+    undo = test_client.post(f"/test-artifacts/{artifact['id']}/undo",
+                            json={"expected_revision": 3}).json()
     assert undo["new_revision"] == 4
     tree_after = test_client.get(f"/test-artifacts/{artifact['id']}/tree").json()
     assert [c["title"] for c in tree_after["root"]["children"]] == ["默认模块"]
@@ -260,3 +262,46 @@ def test_plain_create_project_duplicate_returns_409(client):
     second = test_client.post("/test-artifacts", json={"title": "重复", "project_id": 9602})
     assert second.status_code == 400
     assert "ensure-project-functional" in second.json()["detail"]
+
+
+def test_undo_restore_stale_expected_409(client):
+    """P09.2.1：undo/restore 过期 expected → 409 revision_conflict（不撤销/不恢复新版本）。"""
+    test_client, a, b, switch = client
+    created = _create_artifact(test_client, title="并发资产").json()
+    root = _root_id(test_client, created["id"])
+    add = test_client.post(f"/test-artifacts/{created['id']}/operations", json={
+        "expected_revision": 1,
+        "operations": [{"operation_type": "add_node", "parent_id": root,
+                        "node_type": "module", "title": "M"}],
+    })
+    assert add.status_code == 200
+    assert add.json()["new_revision"] == 2
+
+    stale_undo = test_client.post(f"/test-artifacts/{created['id']}/undo",
+                                  json={"expected_revision": 1})
+    assert stale_undo.status_code == 409
+    body = stale_undo.json()["detail"]
+    assert body["error_code"] == "revision_conflict"
+    assert body["expected_revision"] == 1 and body["current_revision"] == 2
+
+    ok_undo = test_client.post(f"/test-artifacts/{created['id']}/undo",
+                               json={"expected_revision": 2})
+    assert ok_undo.status_code == 200 and ok_undo.json()["new_revision"] == 3
+    # 再新增一条用例（默认模块）→ current=4
+    tree_now = test_client.get(f"/test-artifacts/{created['id']}/tree").json()
+    add_case = test_client.post(f"/test-artifacts/{created['id']}/operations", json={
+        "expected_revision": 3,
+        "operations": [{"operation_type": "add_node", "parent_id": tree_now["root"]["id"],
+                        "node_type": "test_case", "title": "TC"}],
+    })
+    assert add_case.status_code == 200 and add_case.json()["new_revision"] == 4
+
+    stale_restore = test_client.post(f"/test-artifacts/{created['id']}/restore",
+                                     json={"target_revision": 1, "expected_revision": 2})
+    assert stale_restore.status_code == 409
+    body2 = stale_restore.json()["detail"]
+    assert body2["current_revision"] == 4
+
+    ok_restore = test_client.post(f"/test-artifacts/{created['id']}/restore",
+                                  json={"target_revision": 1, "expected_revision": 4})
+    assert ok_restore.status_code == 200 and ok_restore.json()["new_revision"] == 5

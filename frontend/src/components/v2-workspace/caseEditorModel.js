@@ -91,3 +91,27 @@ export function scopedRoot(root, scopeId) {
   }
   return root;
 }
+
+// P09.2.1：步骤重排序/增删后的稳定重编号与 expected 引用重映射。
+// 语义：绑定跟随“逻辑步骤行”（重排时整行移动），删除某步时绑定该步的
+// expected 降级为整体（step_no=null），不留下悬空引用。
+export function renumberStepsAndExpected(steps, expectedResults) {
+  const used = new Set(steps.map((s) => s.step_no).filter((n) => Number.isInteger(n)));
+  const filled = steps.map((step) => {
+    if (Number.isInteger(step.step_no)) return { ...step, step_no: step.step_no };
+    let candidate = 1;
+    while (used.has(candidate)) candidate += 1;
+    used.add(candidate);
+    return { ...step, step_no: candidate };
+  });
+  const oldToNew = new Map();
+  const renumbered = filled.map((step, idx) => {
+    oldToNew.set(step.step_no, idx + 1);
+    return { ...step, step_no: idx + 1 };
+  });
+  const expected = expectedResults.map((item) => {
+    if (item.step_no == null) return { ...item, step_no: null };
+    return { ...item, step_no: oldToNew.get(item.step_no) ?? null };
+  });
+  return { steps: renumbered, expected };
+}

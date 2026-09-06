@@ -23,6 +23,7 @@ from app.schemas.test_artifact.api import (
     OperationSubmitRequest,
     RestoreRequest,
     RevisionDetail,
+    UndoRequest,
     RevisionItem,
     TreeResponse,
     UndoResponse,
@@ -260,10 +261,13 @@ def get_diff(artifact_id: int,
 
 
 @router.post("/{artifact_id}/undo", response_model=UndoResponse)
-def undo_latest(artifact_id: int, db: Session = Depends(get_db),
+def undo_latest(artifact_id: int, payload: UndoRequest,
+                db: Session = Depends(get_db),
                 current_user: User = Depends(get_current_user)):
     try:
-        result = artifact_service.undo_latest(db, artifact_id=artifact_id, requester=current_user)
+        result = artifact_service.undo_latest(
+            db, artifact_id=artifact_id, requester=current_user,
+            expected_revision=payload.expected_revision)
         db.commit()
     except TestArtifactError as err:
         db.rollback()
@@ -277,7 +281,7 @@ def restore_revision(artifact_id: int, payload: RestoreRequest,
     try:
         result = artifact_service.restore_revision(
             db, artifact_id=artifact_id, target_revision=payload.target_revision,
-            requester=current_user)
+            requester=current_user, expected_revision=payload.expected_revision)
         db.commit()
     except TestArtifactError as err:
         db.rollback()

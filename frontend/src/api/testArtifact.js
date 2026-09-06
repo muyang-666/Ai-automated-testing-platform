@@ -35,10 +35,12 @@ export function getArtifactDiff(id, params) {
   return request.get(`/test-artifacts/${id}/diff`, { params });
 }
 
-export function undoArtifact(id) {
-  return request.post(`/test-artifacts/${id}/undo`);
+export function undoArtifact(id, expectedRevision) {
+  return request.post(`/test-artifacts/${id}/undo`, { expected_revision: expectedRevision });
 }
 
-export function restoreArtifact(id, targetRevision) {
-  return request.post(`/test-artifacts/${id}/restore`, { target_revision: targetRevision });
+export function restoreArtifact(id, targetRevision, expectedRevision) {
+  return request.post(`/test-artifacts/${id}/restore`, {
+    target_revision: targetRevision, expected_revision: expectedRevision,
+  });
 }

@@ -113,7 +113,9 @@ def derive_changes(ops) -> list[dict]:
             patch = payload.get("patch") if isinstance(payload.get("patch"), dict) else {}
             for key in patch.keys():
                 fields[key] = {"before": before.get(key), "after": after.get(key)}
-            changes.append({"change": "updated", "node_id": op.target_node_id, "fields": fields or None})
+            changes.append({"change": "updated", "node_id": op.target_node_id,
+                            "node_type": after.get("node_type"),
+                            "title": after.get("title"), "fields": fields or None})
         elif t == OP_MOVE_NODE:
             changes.append({
                 "change": "moved",
@@ -125,6 +127,8 @@ def derive_changes(ops) -> list[dict]:
             changes.append({
                 "change": "deleted",
                 "node_id": op.target_node_id,
+                "node_type": before.get("node_type"),
+                "title": before.get("title"),
                 "descendant_count": payload.get("descendant_count"),
             })
         elif t == OP_RESTORE:

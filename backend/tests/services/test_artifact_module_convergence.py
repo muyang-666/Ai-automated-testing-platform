@@ -295,3 +295,42 @@ def test_case_content_rejects_duplicate_step_and_unknown_expected_ref(db_session
         ArtifactNode.artifact_id == artifact.id,
         ArtifactNode.node_type == "test_case",
         ArtifactNode.deleted_revision.is_(None)).count() == 0
+
+
+def test_undo_restore_optimistic_conflict(db_session):
+    """P09.2.1：undo/restore 携带 expected_revision；过期 → revision_conflict，不得撤销新版本。"""
+    from app.services.test_artifacts.errors import RevisionConflictError
+
+    user = _seed(db_session)
+    artifact = artifact_service.ensure_project_functional_artifact(
+        db_session, project_id=PROJECT_P, requester=user)
+    db_session.commit()
+    artifact_service.apply_operations(
+        db_session, artifact_id=artifact.id, expected_revision=1, requester=user,
+        operations=[{"operation_type": "add_node", "parent_id": artifact.root_node_id,
+                     "node_type": "module", "title": "A"}])
+    db_session.commit()  # current=2
+    with pytest.raises(RevisionConflictError) as exc:
+        artifact_service.undo_latest(db_session, artifact_id=artifact.id, requester=user,
+                                     expected_revision=1)
+    db_session.rollback()
+    assert exc.value.detail == {"expected_revision": 1, "current_revision": 2}
+    undo = artifact_service.undo_latest(db_session, artifact_id=artifact.id, requester=user,
+                                        expected_revision=2)
+    db_session.commit()
+    assert undo["new_revision"] == 3  # 撤销 rev2 → root
+    artifact_service.apply_operations(
+        db_session, artifact_id=artifact.id, expected_revision=3, requester=user,
+        operations=[{"operation_type": "add_node", "parent_id": artifact.root_node_id,
+                     "node_type": "test_case", "title": "TC"}])
+    db_session.commit()  # current=4（默认模块+case）
+    with pytest.raises(RevisionConflictError):
+        artifact_service.restore_revision(db_session, artifact_id=artifact.id,
+                                          target_revision=1, requester=user,
+                                          expected_revision=2)  # stale（current=4）
+    db_session.rollback()
+    restored = artifact_service.restore_revision(db_session, artifact_id=artifact.id,
+                                                 target_revision=1, requester=user,
+                                                 expected_revision=4)
+    db_session.commit()
+    assert restored["new_revision"] == 5

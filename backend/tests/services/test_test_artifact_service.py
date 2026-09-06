@@ -497,7 +497,9 @@ def test_22_diff_delete_subtree(db_session):
     diff = artifact_service.get_diff(db_session, artifact_id=artifact.id,
                                      from_revision=r3["new_revision"], to_revision=r4["new_revision"],
                                      requester=a)
-    assert diff["changes"] == [{"change": "deleted", "node_id": tp, "descendant_count": 2}]
+    change = diff["changes"][0]
+    assert {k: change.get(k) for k in ("change", "node_id", "descendant_count")} ==         {"change": "deleted", "node_id": tp, "descendant_count": 2}
+    assert change["node_type"] == "module"
 
 
 # ── Undo / Restore（23-26） ──
