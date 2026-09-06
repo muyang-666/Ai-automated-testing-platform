@@ -83,11 +83,11 @@ def world(db_session):
     return user, artifact, session
 
 
-def _run(db, session, responses, *, text, key):
+def _run(db, session, responses, *, text, key, workspace_context=None):
     submission = conversation_service.submit_conversation_turn(
         db, session_id=session.id, requester_user_id=USER_ID, content=text,
         client_request_id=key, message_id_factory=lambda: f"user-{key}",
-        timestamp_ms_factory=lambda: 1,
+        timestamp_ms_factory=lambda: 1, workspace_context=workspace_context,
     )
     gateway = ScriptedGateway(responses)
     ids = itertools.count(1)
@@ -360,3 +360,54 @@ def test_revision_conflict_returns_to_model_then_rereads_and_recovers(world, db_
                     if getattr(message, "role", None) == "toolResult"]
     assert any(message.is_error and message.details.get("error_code") == "revision_conflict"
                for message in tool_results)
+
+
+def test_workspace_here_reads_selected_module_before_any_write(world, db_session):
+    user, artifact, session = world
+    _apply(db_session, artifact, user, [{"operation_type": "add_node",
+        "parent_id": artifact.root_node_id, "node_type": "module", "title": "账号锁定"}])
+    module = db_session.query(ArtifactNode).filter(ArtifactNode.title == "账号锁定").one()
+    gateway = _run(db_session, session, [
+        _call("w1", "w1", "read_artifact_nodes", {"node_ids": [module.id]}), _final("wf"),
+    ], text="这里有哪些用例？", key="workspace-here", workspace_context={
+        "selected_module_id": module.id, "selected_case_id": None, "current_view": "mindmap"})
+    assert f"selected module node id: {module.id}" in gateway.requests[0].system_prompt
+    assert gateway.requests[1].messages[-1].tool_name == "read_artifact_nodes"
+
+
+def test_ambiguous_scope_reads_outline_and_asks_without_writing(world, db_session):
+    user, artifact, session = world
+    _apply(db_session, artifact, user, [
+        {"operation_type": "add_node", "parent_id": artifact.root_node_id,
+         "node_type": "module", "title": "登录"},
+        {"operation_type": "add_node", "parent_id": artifact.root_node_id,
+         "node_type": "module", "title": "支付"},
+    ])
+    before = _revision(db_session, artifact, user)
+    gateway = _run(db_session, session, [
+        _call("a1", "a1", "read_artifact_outline", {"root_node_id": None,
+                                                     "max_depth": 3, "max_nodes": 20}),
+        _final("af", "当前有登录和支付模块，你想完善哪部分？"),
+    ], text="帮我完善一下测试", key="workspace-ambiguous", workspace_context={
+        "selected_module_id": None, "selected_case_id": None, "current_view": "list"})
+    assert _revision(db_session, artifact, user) == before
+    tool_names = [block.name for request in gateway.requests for message in request.messages
+                  if isinstance(message, AssistantMessage) for block in message.content
+                  if isinstance(block, ToolCall)]
+    assert tool_names == ["read_artifact_outline"]
+
+
+def test_explicit_unique_module_reads_and_works_without_forced_question(world, db_session):
+    user, artifact, session = world
+    _apply(db_session, artifact, user, [{"operation_type": "add_node",
+        "parent_id": artifact.root_node_id, "node_type": "module", "title": "登录"}])
+    module = db_session.query(ArtifactNode).filter(ArtifactNode.title == "登录").one()
+    before = _revision(db_session, artifact, user)
+    _run(db_session, session, [
+        _call("e1", "e1", "read_artifact_nodes", {"node_ids": [module.id]}),
+        _call("e2", "e2", "add_artifact_node", {"expected_revision": before,
+            "parent_id": module.id, "node": {"node_type": "test_case", "title": "登录边界"}}),
+        _final("ef", "已在登录模块补充边界用例。"),
+    ], text="给登录模块补边界", key="workspace-explicit", workspace_context={
+        "selected_module_id": None, "selected_case_id": None, "current_view": "list"})
+    assert _revision(db_session, artifact, user) == before + 1

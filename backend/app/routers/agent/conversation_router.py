@@ -57,15 +57,21 @@ _ERROR_STATUS = {
     "agent_session_mode_mismatch": 400,
     "conversation_conflict": 409,
     "conversation_data_invalid": 400,
+    "invalid_workspace_context": 400,
     "configuration_not_ready": 503,
     "agent_invalid_state_transition": 409,
 }
 
 
 def _http_error(e: AgentError) -> HTTPException:
-    status = _ERROR_STATUS.get(getattr(e, "error_code", "") or "", 500)
+    code = getattr(e, "error_code", "") or ""
+    status = _ERROR_STATUS.get(code, 500)
     if status == 500:
         return HTTPException(status_code=500, detail="服务内部错误")
+    if code == "invalid_workspace_context":
+        return HTTPException(status_code=400, detail={
+            "error_code": code, "message": str(e),
+        })
     return HTTPException(status_code=status, detail=str(e))
 
 
@@ -224,7 +230,9 @@ def submit_turn(conversation_id: int, payload: TurnSubmitRequest,
         submission = submit_conversation_turn(
             db, session_id=conversation_id, requester_user_id=current_user.id,
             content=payload.content, client_request_id=payload.client_request_id,
-            queue_mode=payload.queue_mode)
+            queue_mode=payload.queue_mode,
+            workspace_context=(payload.workspace_context.model_dump(mode="python")
+                               if payload.workspace_context is not None else None))
         snapshot = conversation_snapshot(db, session_id=conversation_id,
                                          requester_user_id=current_user.id)
     except AgentError as e:

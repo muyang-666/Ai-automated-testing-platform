@@ -121,3 +121,12 @@
 ## 高级测试能力门禁归属
 基础测试设计 / 测试点 / 用例协作编辑现在是 V2 纵向闭环的一部分，其验收在上述 Artifact / Conversational Editing / UI / E2E 域中。
 API 测试执行、失败根因、造数与缺陷辅助等更高级测试领域的效果与安全门禁移至 [V3 清单](../V3/03_ACCEPTANCE_CHECKLIST.md)。
+
+#### P09.3A Conversation × Functional Artifact Context（2026-09-06，代码与针对性测试完成；浏览器人工与真实 MySQL alembic→0008 验收待执行）
+- [x] workspace_context（selected_module_id/selected_case_id/current_view）随 submit Turn 持久化且不可被后续 UI 选择变异；同 key 不同 workspace → conflict（service+api 测试）。
+- [x] selected module/case 校验：属于 focused artifact、node_type 正确、未删除、case 必须是所选 module 直接子节点；跨 artifact/错误类型/删除 → 400 invalid_workspace_context。
+- [x] Conversation focus：同 Artifact 幂等；queued/running head 时切不同 Artifact → 409；owner 隔离；Artifact/Requirement 与 Conversation 项目一致。
+- [x] Runner 从 Run.workspace_context_json 恢复并只注入 short runtime hint；artifact/project/run 仍来自 immutable Run snapshot。
+- [x] Agent 场景：selected module 时“这里”先 read 再写；scope 不明确读 outline 后询问；唯一模块直接 read 不强迫询问。
+- [x] 前端：App 级 FunctionalWorkspaceProvider/共享 context；FunctionCasePage 发布/离开清除 selection；V2ChatPanel 轻量 ContextIndicator（focus authority + workspace selection 区分，mismatch 不误导，invalid 后清除 stale）；npm tests/lint 通过。
+- [ ] P09.3A 浏览器人工流程（§54）与真实 MySQL alembic upgrade head 至 0008 走查（待授权环境）。P09.3B（实时刷新/Change Summary/View Changes/Conflict UX）不勾选。

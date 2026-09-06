@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as conversationApi from "./conversationApi";
 import { runErrorMessage } from "./conversationErrors.js";
+import { planWorkspaceSubmission } from "./chatContextModel.js";
 import {
   canSendMessage, conversationState, createUnsavedConversation, isUnsavedConversation,
   mergeConversationSummaries, renameActiveConversation, renameConversationSummaries,
@@ -36,7 +37,8 @@ export function blocksToText(content) {
   return "";
 }
 
-export default function useConversationChat(userId) {
+export default function useConversationChat(userId, functionalWorkspace = null) {
+  const workspace = functionalWorkspace?.state ?? null;
   const [conversations, setConversations] = useState([]);
   const [active, setActive] = useState(null); // {id,title,...}
   const [snapshot, setSnapshot] = useState(null);
@@ -243,16 +245,13 @@ export default function useConversationChat(userId) {
     }
   }, [refresh, connectEvents, stopAll]);
 
-  // “新对话”只是本地草稿；首次真正发送时才创建服务端 Conversation。
-  const newConversation = useCallback(() => {
-    openUnsavedConversation();
-  }, [openUnsavedConversation]);
-
   const persistUnsavedConversation = useCallback(() => {
     if (draftCreation.current) return draftCreation.current;
     const scope = generation.current;
     setBusy(true);
-    const pending = conversationApi.createConversation({ title: "新对话", project_id: null })
+    const workspaceProjectId = workspace?.page === "functionCases" && workspace.artifactId != null
+      ? workspace.projectId : null;
+    const pending = conversationApi.createConversation({ title: "新对话", project_id: workspaceProjectId })
       .then((created) => {
         if (scope !== generation.current) return null;
         const conversation = created.data;
@@ -271,7 +270,25 @@ export default function useConversationChat(userId) {
       });
     draftCreation.current = pending;
     return pending;
-  }, [connectEvents]);
+  }, [connectEvents, workspace]);
+
+  // 普通页面仍保留本地草稿；功能用例页的新 Conversation 立即持久化并 focus
+  // 当前主 Artifact，让 Context Indicator 与后续 Turn 都有服务端 authority。
+  const newConversation = useCallback(async () => {
+    openUnsavedConversation();
+    if (workspace?.page !== "functionCases" || workspace.artifactId == null) return;
+    const scope = generation.current;
+    try {
+      const target = await persistUnsavedConversation();
+      if (!target || scope !== generation.current) return;
+      await conversationApi.focusConversationArtifact(target.id, workspace.artifactId);
+      if (scope === generation.current) await refresh(target.id);
+    } catch (err) {
+      if (scope === generation.current) {
+        setError(String(err?.response?.data?.detail || err?.message || "绑定功能用例失败"));
+      }
+    }
+  }, [openUnsavedConversation, persistUnsavedConversation, refresh, workspace]);
 
   // 重命名可能晚于“本地草稿 → 持久化会话”的状态切换完成。
   // 必须用 functional update 读取最新状态，禁止闭包里的旧 active 把会话回滚成草稿。
@@ -381,16 +398,48 @@ export default function useConversationChat(userId) {
     }
     setError("");
     setRunError("");
+    if (workspace?.page === "functionCases" && workspace.artifactId == null) {
+      setError("当前项目的功能用例正在加载，请稍后再发送。");
+      return;
+    }
     const scope = generation.current;
     try {
-      const target = isUnsavedConversation(active) ? await persistUnsavedConversation() : active;
+      const wasUnsaved = isUnsavedConversation(active);
+      const target = wasUnsaved ? await persistUnsavedConversation() : active;
       if (!target || scope !== generation.current) return;
+      const plan = planWorkspaceSubmission({
+        isUnsaved: wasUnsaved, snapshotReady: wasUnsaved || snapshot != null,
+        focusedArtifactId: wasUnsaved ? null : snapshot?.focused_artifact_id,
+        phase, workspace, message: text,
+      });
+      if (plan.action === "loading") {
+        setError("正在读取 Agent 当前绑定的功能用例，请稍后再发送。");
+        return;
+      }
+      if (plan.action === "workspace-loading") {
+        setError("当前项目的功能用例正在加载，请稍后再发送。");
+        return;
+      }
+      if (plan.action === "busy") {
+        setError("Agent 当前任务尚未结束，不能切换到页面中的功能用例。");
+        return;
+      }
+      if (plan.action === "mismatch") {
+        setError("Agent 当前绑定的功能用例与页面不同。请新建对话，或回到原项目继续。");
+        return;
+      }
+      if (plan.action === "focus-then-submit") {
+        await conversationApi.focusConversationArtifact(target.id, workspace.artifactId);
+        if (scope !== generation.current) return;
+        await refresh(target.id);
+      }
       // queue_mode=follow_up：A running 时提交 B 会入队，不在 UI 层猜测状态；
       // 顶部 phase 由下方 refresh（snapshot）派生，B 的 queued 由 turnModel 显示。
       await conversationApi.submitTurn(target.id, {
         content: text.trim(),
         client_request_id: uid(),
         queue_mode: "follow_up",
+        ...(plan.workspaceContext ? { workspace_context: plan.workspaceContext } : {}),
       });
       if (scope !== generation.current) return;
       const result = await refresh(target.id);
@@ -400,10 +449,17 @@ export default function useConversationChat(userId) {
         void renameIfNeeded(target.id, firstUser ? extractText(firstUser.content) : text);
       }
     } catch (err) {
-      if (scope === generation.current) setError(String(err?.response?.data?.detail || err.message));
+      if (scope === generation.current) {
+        const detail = err?.response?.data?.detail;
+        if (err?.response?.status === 400 && detail?.error_code === "invalid_workspace_context") {
+          functionalWorkspace?.clearSelection?.("之前选择的模块或用例已失效，请重新选择。");
+        }
+        setError(String(detail?.message || detail || err.message));
+      }
     }
     // 注意：这里不设 busy——网络请求在途时依然允许继续输入/发送 follow-up。
-  }, [active, phase, capabilities?.model_ready, persistUnsavedConversation, refresh, renameIfNeeded]);
+  }, [active, phase, capabilities?.model_ready, persistUnsavedConversation, refresh,
+    renameIfNeeded, snapshot, workspace, functionalWorkspace]);
 
   return {
     turns,

@@ -226,7 +226,10 @@ def test_focus_artifact_is_persisted_and_owner_isolated(client, db_session):
     focused = client.post(f"/agent/conversations/{cid}/artifacts/{artifact.id}/focus")
     assert focused.status_code == 200
     assert focused.json()["artifact_id"] == artifact.id
-    assert client.get(f"/agent/conversations/{cid}").json()["focused_artifact_id"] == artifact.id
+    snapshot = client.get(f"/agent/conversations/{cid}").json()
+    assert snapshot["focused_artifact_id"] == artifact.id
+    assert snapshot["focused_artifact"]["id"] == artifact.id
+    assert snapshot["focused_artifact"]["title"] == "登录测试"
     switch_user(USER_B_ID)
     assert client.post(f"/agent/conversations/{cid}/artifacts/{artifact.id}/focus").status_code == 404
     switch_user(USER_A_ID)

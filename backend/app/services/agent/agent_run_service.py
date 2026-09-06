@@ -35,6 +35,8 @@ def create_run(
     user_message_id: int | None = None,
     active_slot: int | None = None,
     artifact_context_json: dict | None = None,
+    workspace_context_json: dict | None = None,
+    input_hash: str | None = None,
 ) -> AgentRun:
     """创建 queued Run；conversation 与旧 Workflow 的模式不可混用。"""
     if project_id != session.project_id:
@@ -59,7 +61,7 @@ def create_run(
         workflow_version=workflow_version,
         status="queued",
         input_json=input_json,
-        input_hash=_canonical_hash(input_json),
+        input_hash=input_hash if input_hash is not None else _canonical_hash(input_json),
         idempotency_key=idempotency_key,
         user_message_id=user_message_id,
         active_slot=active_slot,
@@ -70,6 +72,7 @@ def create_run(
         prompt_tokens=0,
         completion_tokens=0,
         artifact_context_json=artifact_context_json,
+        workspace_context_json=workspace_context_json,
     )
     db.add(run)
     db.flush()

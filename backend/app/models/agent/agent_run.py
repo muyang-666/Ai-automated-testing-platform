@@ -44,6 +44,8 @@ class AgentRun(Base):
     execution_token = Column(Integer, nullable=True, comment="P05-D fencing 执行代次：每次 claim 单调 +1；旧代次写操作被拒")
     artifact_context_json = Column(JSON, nullable=True,
                                    comment="P08.2 Turn 可信快照：{artifact_id, project_id, requirement_id}；Runner 只使用 Run 快照而非可变的会话 focus")
+    workspace_context_json = Column(JSON, nullable=True,
+                                    comment="P09.3A Turn UI 选择快照：{selected_module_id, selected_case_id, current_view}")
     started_at = Column(DateTime(timezone=True), nullable=True, comment="开始时间")
     finished_at = Column(DateTime(timezone=True), nullable=True, comment="结束时间")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), comment="创建时间")

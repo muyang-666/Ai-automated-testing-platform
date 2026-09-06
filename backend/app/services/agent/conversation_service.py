@@ -59,8 +59,61 @@ def _owned_conversation(db: Session, session_id: int, requester_user_id: int,
     return session
 
 
-def _request_hash(content: str) -> str:
-    return agent_run_service._canonical_hash({"content": content})
+def _request_hash(content: str, workspace_context: dict | None = None) -> str:
+    payload = {"content": content}
+    if workspace_context is not None:
+        payload["workspace_context"] = workspace_context
+    return agent_run_service._canonical_hash(payload)
+
+
+class InvalidWorkspaceContext(AgentError):
+    error_code = "invalid_workspace_context"
+
+
+def _workspace_shape(value: dict | None) -> dict | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) - {
+            "selected_module_id", "selected_case_id", "current_view"}:
+        raise InvalidWorkspaceContext("Workspace Context 格式无效")
+    module_id = value.get("selected_module_id")
+    case_id = value.get("selected_case_id")
+    current_view = value.get("current_view")
+    for item in (module_id, case_id):
+        if item is not None and (type(item) is not int or item <= 0):
+            raise InvalidWorkspaceContext("Workspace Context 节点 ID 无效")
+    if current_view not in (None, "list", "mindmap"):
+        raise InvalidWorkspaceContext("Workspace Context current_view 无效")
+    return {"selected_module_id": module_id, "selected_case_id": case_id,
+            "current_view": current_view}
+
+
+def validate_workspace_context(db: Session, session: AgentSession,
+                               workspace_context: dict | None) -> dict | None:
+    context = _workspace_shape(workspace_context)
+    if context is None:
+        return None
+    module_id, case_id = context["selected_module_id"], context["selected_case_id"]
+    if module_id is None and case_id is None:
+        return context
+    artifact_id = focused_artifact_id(session)
+    if artifact_id is None:
+        raise InvalidWorkspaceContext("当前 Conversation 尚未绑定功能用例 Artifact")
+    from app.models.test_artifact.artifact_node import ArtifactNode
+
+    ids = {node_id for node_id in (module_id, case_id) if node_id is not None}
+    rows = db.execute(select(ArtifactNode).where(
+        ArtifactNode.id.in_(ids), ArtifactNode.artifact_id == artifact_id,
+        ArtifactNode.deleted_revision.is_(None),
+    )).scalars().all()
+    by_id = {row.id: row for row in rows}
+    if module_id is not None and (module_id not in by_id or by_id[module_id].node_type != "module"):
+        raise InvalidWorkspaceContext("选中的 Module 不存在、不属于当前 Artifact 或类型无效")
+    if case_id is not None and (case_id not in by_id or by_id[case_id].node_type != "test_case"):
+        raise InvalidWorkspaceContext("选中的 Test Case 不存在、不属于当前 Artifact 或类型无效")
+    if module_id is not None and case_id is not None and by_id[case_id].parent_id != module_id:
+        raise InvalidWorkspaceContext("选中的 Test Case 不在所选 Module 下")
+    return context
 
 
 def _existing_submission(db: Session, run: AgentRun, request_hash: str) -> ConversationTurnSubmission:
@@ -80,6 +133,7 @@ def _existing_submission(db: Session, run: AgentRun, request_hash: str) -> Conve
 def submit_conversation_turn(db: Session, *, session_id: int, requester_user_id: int,
                              content: str, client_request_id: str,
                              queue_mode: str = "reject",
+                             workspace_context: dict | None = None,
                              message_id_factory: Callable[[], str] | None = None,
                              timestamp_ms_factory: Callable[[], int] | None = None) -> ConversationTurnSubmission:
     """Atomically save user message, queued Run and the idempotency key.
@@ -97,7 +151,8 @@ def submit_conversation_turn(db: Session, *, session_id: int, requester_user_id:
         raise ConversationDataError("消息内容无效")
     if not isinstance(client_request_id, str) or not client_request_id.strip() or len(client_request_id) > 128:
         raise ConversationDataError("client_request_id 无效")
-    key, request_hash = client_request_id.strip(), _request_hash(content)
+    workspace_shape = _workspace_shape(workspace_context)
+    key, request_hash = client_request_id.strip(), _request_hash(content, workspace_shape)
     make_id = message_id_factory or (lambda: uuid.uuid4().hex)
     make_timestamp = timestamp_ms_factory or (lambda: int(time.time() * 1000))
 
@@ -107,6 +162,7 @@ def submit_conversation_turn(db: Session, *, session_id: int, requester_user_id:
             existing = conversation_repository.find_idempotent_run(db, session.id, key)
             if existing is not None:
                 return _existing_submission(db, existing, request_hash)
+            workspace_snapshot = validate_workspace_context(db, session, workspace_shape)
             active = conversation_repository.find_active_conversation_run(db, session.id)
             if active is not None:
                 # Another transaction may have committed between the first
@@ -118,7 +174,7 @@ def submit_conversation_turn(db: Session, *, session_id: int, requester_user_id:
                     raise ConversationConflict("会话已有正在处理的 Turn")
                 # follow_up：head 运行期间入队，active_slot 留空，等待原子提升
                 return _persist_follow_up(db, session, requester_user_id, content, key,
-                                          request_hash, make_id, make_timestamp)
+                                          request_hash, workspace_snapshot, make_id, make_timestamp)
 
             message = UserMessage(message_id=make_id(), timestamp=make_timestamp(),
                                   role="user", content=content)
@@ -132,7 +188,8 @@ def submit_conversation_turn(db: Session, *, session_id: int, requester_user_id:
             run = agent_run_service.create_run(db, session, "conversation", requester_user_id,
                 session.project_id, input_json={"content": content}, idempotency_key=key,
                 user_message_id=row.id, active_slot=1,
-                artifact_context_json=snapshot_artifact_context(session))
+                artifact_context_json=snapshot_artifact_context(session),
+                workspace_context_json=workspace_snapshot, input_hash=request_hash)
             row.run_id = run.id
             db.flush()
             db.commit()
@@ -157,6 +214,7 @@ def submit_conversation_turn(db: Session, *, session_id: int, requester_user_id:
 
 def _persist_follow_up(db: Session, session: AgentSession, requester_user_id: int,
                        content: str, key: str, request_hash: str,
+                       workspace_context: dict | None,
                        make_id: Callable[[], str],
                        make_timestamp: Callable[[], int]) -> ConversationTurnSubmission:
     """follow_up 路径：UserMessage + queued Run（active_slot=NULL）同事务落库。"""
@@ -172,7 +230,8 @@ def _persist_follow_up(db: Session, session: AgentSession, requester_user_id: in
     run = agent_run_service.create_run(db, session, "conversation", requester_user_id,
         session.project_id, input_json={"content": content}, idempotency_key=key,
         user_message_id=row.id, active_slot=None,  # queued follow-up：不可执行
-        artifact_context_json=snapshot_artifact_context(session))
+        artifact_context_json=snapshot_artifact_context(session),
+        workspace_context_json=workspace_context, input_hash=request_hash)
     row.run_id = run.id
     db.flush()
     db.commit()
@@ -287,6 +346,15 @@ def artifact_context_from_run(run) -> dict:
     return result
 
 
+def workspace_context_from_run(run) -> dict:
+    raw = run.workspace_context_json if isinstance(run.workspace_context_json, dict) else {}
+    try:
+        return _workspace_shape(raw) or {
+            "selected_module_id": None, "selected_case_id": None, "current_view": None}
+    except InvalidWorkspaceContext:
+        return {"selected_module_id": None, "selected_case_id": None, "current_view": None}
+
+
 def focus_conversation_requirement(db: Session, *, session_id: int,
                                       requirement_id: int, requester) -> AgentSession:
     """P08.2：Conversation 可信 Requirement 绑定（唯一生产入口，禁止客户端直写 context_json）。
@@ -376,6 +444,21 @@ def conversation_snapshot(db: Session, *, session_id: int,
     """P06 会话快照：元数据 + 当前 run + queue 状态 + 最新游标。不带消息正文。"""
     from sqlalchemy import func as sa_func
     session = _owned_conversation(db, session_id, requester_user_id, require_active=False)
+    focused_id = focused_artifact_id(session)
+    focused_artifact = None
+    if focused_id is not None:
+        from app.models.project import Project
+        from app.models.test_artifact.test_artifact import TestArtifact
+        artifact_row = db.get(TestArtifact, focused_id)
+        if artifact_row is not None:
+            project_name = (db.execute(select(Project.name).where(
+                Project.id == artifact_row.project_id)).scalar_one_or_none()
+                if artifact_row.project_id is not None else None)
+            focused_artifact = {
+                "id": artifact_row.id, "title": artifact_row.title,
+                "artifact_type": artifact_row.artifact_type,
+                "project_id": artifact_row.project_id, "project_name": project_name,
+            }
     head = db.execute(
         select(AgentRun).where(
             AgentRun.session_id == session.id,
@@ -419,7 +502,8 @@ def conversation_snapshot(db: Session, *, session_id: int,
         "queued_follow_ups": queue["queued_follow_ups"],
         "latest_event_sequence": int(latest_event),
         "latest_message_sequence": int(latest_message),
-        "focused_artifact_id": focused_artifact_id(session),
+        "focused_artifact_id": focused_id,
+        "focused_artifact": focused_artifact,
     }
 
 

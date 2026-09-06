@@ -17,7 +17,7 @@
 | V2-P06 | Conversation API + SSE + 基础工作台 | 已完成声明范围 | 见 2.22～2.26 与 P06-R01/R02 |
 | V2-P07 | Test Artifact Core | 已完成 | P07/P07.1，见 2.27～2.28 |
 | V2-P08 | Artifact Tools + Test Design Skill | 已完成 | 23 项 Tool/Agent 场景 + 24 条 Scripted Eval，见 2.29 |
-| V2-P09 | Chat + MindMap + Diff 协作工作台 | 下一阶段，未开始 | 按 [01](01_DEVELOPMENT_PLAN.md) |
+| V2-P09 | Chat + MindMap + Diff 协作工作台 | 进行中：P09.1/P09.1.1/P09.2 已实现；P09.3A 代码与针对性测试完成（见 2.38）；浏览器人工验收待做，P09.3B 未开始 | 按 [01](01_DEVELOPMENT_PLAN.md) |
 | V2-P10 | Context / Approval / Recovery / E2E | 待实施 | 同上 |
 
 ## 2. 2026-09-03 — 重新划分 V2/V3 并阅读 Pi
@@ -1167,3 +1167,27 @@ P09 停止「独立 Chat + Artifact 右栏」扩展；新形态：V1「功能用
 - 后端全量（排除同名 isolation 冲突）：**711 passed**（此前 710 + 新增 stale undo/restore 等；含 1 次 timing 抖动用例，非本次改动路径）。
 - P08 Eval：24/24。
 - 前端：npm test 48 passed（含 renumber 3 条，共 48 passed）；lint 0 errors（7-8 既有 warnings）；build 通过。
+
+## 2.38 2026-09-06 — P09.3A Conversation × Functional Artifact Context（实现与针对性测试完成，浏览器人工待验收）
+
+范围：不新增 AI 界面；让现有 Conversation Agent 安全知道「功能用例管理」的 Project/Functional Artifact/选中 Module/TestCase，随 Turn snapshot，并在聊天中据此工作；不做实时刷新/Change Summary/View Changes/Conflict UX（P09.3B）。
+
+实现（工作区既有 + 本轮核对）：
+- 后端：`AgentRun.workspace_context_json`（alembic 0008 `agent_run_workspace_context`）；`WorkspaceContext` schema（selected_module_id/selected_case_id:int|null、current_view: list|mindmap|null，拒绝任意 dict/Optional[Any]）；`conversation_service.validate_workspace_context`（focused artifact 存在、节点属于该 Artifact、node_type module/test_case、未删除、case 必须是所选 module 的直接子节点、strict parent 规则）；`submit_conversation_turn` 原子保存 UserMessage + queued Run + workspace snapshot，`request_hash` 含 workspace（同 key 不同 workspace → conflict）；`focus_conversation_artifact`（同 artifact 幂等、active queued/running head 时切不同 artifact → 409 conversation_conflict、终态后允许切换、Artifact/Conversation 项目一致）；Runner 从 `AgentRun.workspace_context_json` 恢复，只注入 short system/runtime hint（module/case/view ID，绝不塞节点正文），RuntimeContext 增 selected_module_id/selected_case_id/current_view 且 artifact/project/run 仍来自 immutable Run snapshot；Artifact Tool runtime 透传该 hint，Tool 仍必须显式 read（read-before-write）。
+- 前端：`FunctionalWorkspaceProvider`（App 级，无 Redux/Zustand）+ `useFunctionalWorkspace/setWorkspace/leaveWorkspace` 共享 page/FunctionCasePage 选中 Module/Case/View 与 artifact/project，FunctionCasePage 与 V2ChatPanel 仅经共享 context 交互；`chatContextModel.planWorkspaceSubmission/buildContextIndicator`（focus authority + workspace selection；页面与 AI context 区分、mismatch 不误导、invalid_workspace_context 清除 stale selection）；V2ChatPanel 渲染轻量 ContextIndicator。
+- 技能与约束：SKILL.md 增加 workspace hint 语义（“这里/这个模块/这个用例”优先解析为 selected id 后仍 read；scope 明确不重复问、不明确才读 outline 后询问；不把节点正文注入 prompt；Tool 不隐式读 selection，显式参数可审计）。
+- 本阶段明确不做：FunctionCasePage 实时刷新、Chat Change Summary、View Changes、Conflict UX、approval 持久化（P09.3B）。
+
+本轮验证命令/结果（backend，禁用插件+字节码，未连真实库；frontend node）：
+```text
+pytest tests/api/test_conversation_api.py tests/api/test_conversation_focus_api.py \
+      tests/api/test_workspace_context_api.py tests/services/test_workspace_context.py \
+      tests/artifact_tools/test_agent_scenarios.py \
+      tests/migrations/test_agent_platform_migration.py tests/migrations/test_test_artifact_migration.py -q
+56 passed
+node --test tests/*.test.mjs（frontend）→ 74 passed（含 functionalWorkspace 9）
+npx eslint（P09.3A 前端改动文件）→ exit 0
+```
+覆盖：workspace snapshot 持久且输入对象不可再变异（Run 不可变快照）；module 属于 focus artifact 成功 / 属其它 artifact 400 / 用 test_case 当 module 400 / case 与直接父 module 校验 / deleted selection 400 / 任意 dict 与非法 view 拒绝 / 同 key 不同 workspace 409；focus 幂等、busy 切换 409、owner 隔离、requirement 绑定项目一致；Runner 注入 hint；Agent 场景“这里补边界→先 read module 再写”“scope 不明确→读 outline 后询问不写”“明确唯一模块→直接 read 不强迫询问”。
+
+状态：P09.3A 代码与针对性测试完成；浏览器人工/真实 MySQL（alembic upgrade head 至 0008）验收与 P09.2 浏览器项仍待执行；P09.3B 未开始。不把 P09 整体标记 complete。

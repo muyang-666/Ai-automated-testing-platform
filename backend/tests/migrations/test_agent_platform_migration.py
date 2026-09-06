@@ -24,7 +24,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 SCRIPT_LOCATION = str(BACKEND_DIR / "alembic")
 
 BASELINE_REVISION = "0001_v1_schema_baseline"
-HEAD_REVISION = "0007_artifact_module_convergence"
+HEAD_REVISION = "0008_agent_run_workspace_context"
 
 ARTIFACT_TABLE_NAMES = {
     "test_artifact",
@@ -139,7 +139,7 @@ def test_stamp_then_upgrade_creates_agent_tables(tmp_path):
         "id", "session_id", "project_id", "requester_user_id", "workflow_code",
         "status", "idempotency_key", "heartbeat_at", "error_code",
         "user_message_id", "active_slot", "execution_token",
-        "artifact_context_json",
+        "artifact_context_json", "workspace_context_json",
     } <= run_cols
     session_cols = {c["name"]: c for c in inspector.get_columns("agent_sessions")}
     assert {"mode", "next_message_sequence", "next_event_sequence"} <= set(session_cols)

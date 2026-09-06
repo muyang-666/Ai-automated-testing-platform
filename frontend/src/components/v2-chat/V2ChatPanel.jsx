@@ -3,6 +3,9 @@ import useConversationChat from "./useConversationChat";
 import ChatTimeline from "./ChatTimeline.jsx";
 import ChatComposer from "./ChatComposer.jsx";
 import { AddIcon, HistoryIcon, MaximizeIcon, MinimizeIcon, RestoreIcon } from "./ChatIcons.jsx";
+import ContextIndicator from "./ContextIndicator.jsx";
+import { buildContextIndicator } from "./chatContextModel.js";
+import useFunctionalWorkspace from "../v2-workspace/useFunctionalWorkspace.js";
 import "./v2Chat.css";
 
 const PHASE_TEXT = { running: "回答中…", queued: "排队中…", paused: "已暂停", failed: "失败",
@@ -63,7 +66,8 @@ function readLayout(userId) {
 }
 
 export default function V2ChatPanel({ currentUser }) {
-  const chat = useConversationChat(currentUser?.id);
+  const functionalWorkspace = useFunctionalWorkspace();
+  const chat = useConversationChat(currentUser?.id, functionalWorkspace);
   const [draft, setDraft] = useState("");
   const [sendNonce, setSendNonce] = useState(0);
   const [layout, setLayout] = useState(() => readLayout(currentUser?.id));
@@ -78,6 +82,13 @@ export default function V2ChatPanel({ currentUser }) {
   const canSend = Boolean(chat.active) && chat.phase !== "paused"
     && chat.capabilities?.model_ready !== false;
   const shown = fit(layout, layout);
+  const contextIndicator = buildContextIndicator({
+    snapshot: chat.snapshot, workspace: functionalWorkspace.state,
+    isUnsaved: Boolean(chat.active?.isUnsaved),
+  });
+  if (contextIndicator && functionalWorkspace.state.selectionError) {
+    contextIndicator.warning = functionalWorkspace.state.selectionError;
+  }
 
   useEffect(() => {
     localStorage.setItem(storageKey(currentUser?.id), JSON.stringify({
@@ -284,6 +295,7 @@ export default function V2ChatPanel({ currentUser }) {
       </header>
       <div className="v2chat">
       <main className="v2chat-main">
+        <ContextIndicator context={contextIndicator} />
         {chat.error && <div className="v2chat-error">{chat.error}</div>}
         {chat.capabilities?.model_ready === false && (
           <div className="v2chat-config-warning">尚未配置 Agent 对话模型，请先前往“模型管理”完成绑定。</div>

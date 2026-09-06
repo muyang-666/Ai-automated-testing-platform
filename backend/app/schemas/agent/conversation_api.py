@@ -4,7 +4,7 @@
 """
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ConversationCreateRequest(BaseModel):
@@ -32,6 +32,14 @@ class ConversationSnapshot(BaseModel):
     latest_event_sequence: int = 0
     latest_message_sequence: int = 0
     focused_artifact_id: int | None = None
+    focused_artifact: dict | None = None
+
+
+class WorkspaceContext(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    selected_module_id: int | None = Field(default=None, gt=0)
+    selected_case_id: int | None = Field(default=None, gt=0)
+    current_view: Literal["list", "mindmap"] | None = None
 
 
 class ConversationArtifactFocusResponse(BaseModel):
@@ -51,6 +59,7 @@ class TurnSubmitRequest(BaseModel):
     content: str = Field(min_length=1, max_length=8000)
     client_request_id: str = Field(min_length=1, max_length=128)
     queue_mode: Literal["reject", "follow_up"] = "follow_up"
+    workspace_context: WorkspaceContext | None = None
 
 
 class TurnSubmitResponse(BaseModel):

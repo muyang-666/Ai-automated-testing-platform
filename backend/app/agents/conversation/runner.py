@@ -111,6 +111,7 @@ class ConversationRunner:
             # P08.2/P08.3：Runner 只使用 Run 上的可信快照（submit 时固化），
             # 不读取可变的 Session focus/context —— 会话焦点只影响未来新 Turn。
             run_context = conversation_service.artifact_context_from_run(run)
+            workspace_context = conversation_service.workspace_context_from_run(run)
             artifact_id = run_context.get("artifact_id")
             # project 亦以快照为准（快照缺失时回退 run.project_id，兼容迁移前的旧行）
             project_id = run_context.get("project_id") or run.project_id
@@ -123,17 +124,34 @@ class ConversationRunner:
                 artifact_id=artifact_id,
                 project_id=project_id,
                 requirement_id=requirement_id,
+                selected_module_id=workspace_context.get("selected_module_id"),
+                selected_case_id=workspace_context.get("selected_case_id"),
+                current_view=workspace_context.get("current_view"),
                 worker_id=worker_id, execution_token=execution_token,
             ) if self.application_context_factory is not None else None)
 
+            workspace_hint = ""
+            if any(value is not None for value in workspace_context.values()):
+                workspace_hint = (
+                    "\n\nCurrent test workspace (UI selection hint, not permission):\n"
+                    f"- selected module node id: {workspace_context.get('selected_module_id') or 'none'}\n"
+                    f"- selected test case node id: {workspace_context.get('selected_case_id') or 'none'}\n"
+                    f"- current view: {workspace_context.get('current_view') or 'none'}\n"
+                    "Use these IDs only to resolve references such as 这里/这个模块/这个用例. "
+                    "Always read current Artifact nodes with tools before changing them."
+                )
+
             context = AgentLoopContext(
-                system_prompt=self.system_prompt,
+                system_prompt=self.system_prompt + workspace_hint,
                 messages=restored,
                 tool_registry=self.tool_registry,
                 metadata={"user_id": actor_user_id, "conversation_id": session_id,
                           "project_id": project_id,
                           "artifact_id": artifact_id,
                           "requirement_id": requirement_id,
+                          "selected_module_id": workspace_context.get("selected_module_id"),
+                          "selected_case_id": workspace_context.get("selected_case_id"),
+                          "current_view": workspace_context.get("current_view"),
                           "run_id": run_id,
                           "permissions": sorted(getattr(application_context, "permissions", ()))},
                 application_context=application_context,

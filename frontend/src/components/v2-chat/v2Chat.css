@@ -231,6 +231,10 @@ button.v2chat-launcher:not(.ant-btn):active { cursor: grabbing; transform: trans
 
 .v2chat { display: flex; min-height: 0; flex: 1; }
 .v2chat-main { display: flex; min-width: 0; min-height: 0; flex: 1; flex-direction: column; background: var(--chat-bg); }
+.v2chat-context { display: flex; min-height: 30px; padding: 5px 18px; align-items: center; gap: 10px; box-sizing: border-box; border-bottom: 1px solid var(--chat-line); background: #fafafa; color: var(--chat-muted); font-size: 12px; line-height: 1.45; }
+.v2chat-context b { margin-right: 6px; color: var(--chat-ink); font-weight: 600; }
+.v2chat-context-warning { margin-left: auto; color: var(--chat-warning); text-align: right; }
+.v2chat-context.is-mismatch { background: #fffaf0; }
 .v2chat-error,
 .v2chat-config-warning,
 .v2chat-paused { padding: 8px 20px; border-bottom: 1px solid var(--chat-line); font-size: 12.5px; line-height: 1.5; text-align: center; }

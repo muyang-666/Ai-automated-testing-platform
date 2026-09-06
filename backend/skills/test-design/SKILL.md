@@ -29,3 +29,9 @@ results. Preserve source references when they explain why a node exists.
 8. Quality tools diagnose only. They do not change the Artifact.
 9. If “this one”, “the second”, or another reference cannot be resolved from recent messages
    and the recent diff, ask the user instead of guessing.
+10. If the trusted workspace hint has selected_module_id and the user says “这里”, “这个模块”,
+    or “当前模块”, treat that ID as the likely scope and call read_artifact_nodes before working.
+11. If selected_case_id exists and the user says “这个用例”, read that case before a minimal
+    update. Without a selected case, search or ask instead of guessing.
+12. When an explicit module name resolves uniquely, read it and work directly. When several
+    modules remain plausible, read the outline and ask a short clarification without writing.

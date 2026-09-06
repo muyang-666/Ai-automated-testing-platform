@@ -20,6 +20,8 @@ import { formatCaseNumber } from "../components/v2-workspace/caseNumber";
 import { buildNodeIndex } from "../components/v2-workspace/mindMapModel";
 import { getStoredProjectId, resolveProjectId, storeProjectId } from "../utils/projectSelection";
 import { isViewerOnly } from "../utils/authPermissions";
+import useFunctionalWorkspace from "../components/v2-workspace/useFunctionalWorkspace.js";
+import { deriveFunctionalWorkspace } from "../components/v2-workspace/functionalWorkspaceModel.js";
 
 const PRIORITY_COLOR = { P0: "red", P1: "orange", P2: "gold", P3: "default" };
 
@@ -114,6 +116,7 @@ function DiffLine({ line, treeIndex }) {
 }
 
 export default function FunctionCasePage() {
+  const { setWorkspace, leaveWorkspace } = useFunctionalWorkspace();
   const [projects, setProjects] = useState([]);
   const [projectId, setProjectId] = useState(null);
   const [artifact, setArtifact] = useState(null);
@@ -218,6 +221,18 @@ export default function FunctionCasePage() {
   const selectedNode = useMemo(
     () => (selectedNodeId != null ? index.get(selectedNodeId) ?? null : null),
     [selectedNodeId, index]);
+  const selectedProject = useMemo(
+    () => projects.find((project) => project.id === projectId) || null,
+    [projects, projectId]);
+  const workspaceValue = useMemo(() => deriveFunctionalWorkspace({
+    project: selectedProject, artifact, index, scopeId, selectedNodeId, viewMode,
+  }), [selectedProject, artifact, index, scopeId, selectedNodeId, viewMode]);
+
+  useEffect(() => {
+    setWorkspace(workspaceValue);
+  }, [setWorkspace, workspaceValue]);
+
+  useEffect(() => () => leaveWorkspace(), [leaveWorkspace]);
   const moduleTree = useMemo(() => (tree ? buildModuleTree(tree.root) : null), [tree]);
   const rows = useMemo(() => (tree ? collectScopeCases(tree.root, scopeId) : []), [tree, scopeId]);
   const scopedRoot = useMemo(() => {
@@ -498,7 +513,12 @@ export default function FunctionCasePage() {
         <Space wrap>
           <span>项目：</span>
           <Select style={{ width: 220 }} value={projectId}
-            onChange={(v) => { setProjectId(v); storeProjectId(v); }}
+            onChange={(v) => {
+              // Clear Artifact/selection in the same interaction. Until B loads,
+              // Chat must never mistake the previous Project A Artifact for B.
+              setArtifact(null); setTree(null); setScopeId(null); setSelectedNodeId(null);
+              setProjectId(v); storeProjectId(v);
+            }}
             options={projects.map((p) => ({ value: p.id, label: p.name }))} />
           <Input.Search allowClear placeholder="搜索…" style={{ width: 260 }}
             value={keyword} onChange={(e) => setKeyword(e.target.value)} />
@@ -583,9 +603,10 @@ export default function FunctionCasePage() {
                   pagination={false} scroll={{ x: 1160 }}
                   onRow={(row) => ({
                     style: { cursor: "pointer" },
-                    onClick: () => writeVisible
-                      ? openCaseEditor("edit", row)
-                      : setSelectedNodeId(row.nodeId),
+                    onClick: () => {
+                      setSelectedNodeId(row.nodeId);
+                      if (writeVisible) openCaseEditor("edit", row);
+                    },
                   })} />
               )}
               {!loading && !artifact && (

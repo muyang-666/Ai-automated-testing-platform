@@ -18,7 +18,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 SCRIPT_LOCATION = str(BACKEND_DIR / "alembic")
 
 BASELINE_REVISION = "0001_v1_schema_baseline"
-HEAD_REVISION = "0007_artifact_module_convergence"
+HEAD_REVISION = "0008_agent_run_workspace_context"
 ARTIFACT_TABLE_NAMES = {"test_artifact", "artifact_node", "artifact_revision", "artifact_operation"}
 
 
@@ -166,7 +166,6 @@ def test_module_convergence_converts_legacy_node_types(tmp_path):
     engine = create_engine(db_url)
     _insert_artifact_and_nodes(engine)
     engine.dispose()
-
     command.upgrade(cfg, "head")
     engine = create_engine(db_url)
     with engine.connect() as conn:
@@ -177,7 +176,6 @@ def test_module_convergence_converts_legacy_node_types(tmp_path):
                for uc in inspect(engine).get_unique_constraints("test_artifact")}
     assert ("uq_test_artifact_project_type", ("project_id", "artifact_type")) in uniques
     engine.dispose()
-
     command.downgrade(cfg, "0006_agent_run_artifact_context")
     engine = create_engine(db_url)
     uniques = {(uc["name"], tuple(uc["column_names"]))
@@ -187,4 +185,27 @@ def test_module_convergence_converts_legacy_node_types(tmp_path):
         rows = conn.execute(text(
             "SELECT id, node_type FROM artifact_node WHERE id IN (2,3) ORDER BY id")).fetchall()
         assert dict(rows) == {2: "group", 3: "group"}  # 损失性回退（module→group）
+    engine.dispose()
+
+def test_workspace_context_column_upgrade_and_downgrade(tmp_path):
+    db_url = _prepare_db(tmp_path, "workspace_context.db")
+    cfg = _make_config(db_url)
+    command.upgrade(cfg, "0007_artifact_module_convergence")
+    engine = create_engine(db_url)
+    assert "workspace_context_json" not in {
+        column["name"] for column in inspect(engine).get_columns("agent_runs")}
+    engine.dispose()
+
+    command.upgrade(cfg, "head")
+    engine = create_engine(db_url)
+    columns = {column["name"]: column for column in inspect(engine).get_columns("agent_runs")}
+    assert columns["workspace_context_json"]["nullable"] is True
+    engine.dispose()
+
+    command.downgrade(cfg, "0007_artifact_module_convergence")
+    engine = create_engine(db_url)
+    assert "workspace_context_json" not in {
+        column["name"] for column in inspect(engine).get_columns("agent_runs")}
+    assert "artifact_context_json" in {
+        column["name"] for column in inspect(engine).get_columns("agent_runs")}
     engine.dispose()
