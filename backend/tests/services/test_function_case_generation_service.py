@@ -14,12 +14,17 @@ from app.models.function_case import FunctionCase
 from app.models.llm.llm_model import LLMModel
 from app.models.llm.llm_provider import LLMProvider
 from app.models.llm.llm_scene_config import LLMSceneConfig
+from app.models.project import Project
 from app.models.requirement_doc import RequirementDoc
+from app.models.role import Role
+from app.models.user import User
+from app.models.user_role import UserRole
 from app.schemas.function_case_generation import (
     GenerateFunctionCasesRequest,
     SaveGeneratedFunctionCasesRequest,
 )
 from app.services import function_case_generation_service as fcg
+from app.services.test_artifacts import artifact_service
 
 FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures"
 
@@ -28,6 +33,28 @@ SCENE_CODE = "requirement_to_function_case"
 
 def _load_fixture(name: str) -> str:
     return (FIXTURES_DIR / name).read_text(encoding="utf-8")
+
+
+
+def _seed_project_user(db, project_id=101, uid=9201):
+    for code in ("system_admin",):
+        if not db.query(Role).filter(Role.code == code).first():
+            db.add(Role(code=code, name=code, status="active"))
+    db.flush()
+    role = db.query(Role).filter(Role.code == "system_admin").one()
+    if not db.query(Project).filter(Project.id == project_id).first():
+        db.add(Project(id=project_id, name=f"P{project_id}", status="active", is_deleted=False))
+        db.flush()
+    user = db.query(User).filter(User.id == uid).first()
+    if user is None:
+        user = User(id=uid, username=f"gen-{uid}", password_hash="x", salt="y",
+                    status="active", is_deleted=False)
+        db.add(user)
+        db.flush()
+    if not db.query(UserRole).filter(UserRole.user_id == uid).first():
+        db.add(UserRole(user_id=uid, role_id=role.id))
+    db.commit()
+    return user
 
 
 class FakeFunctionLLM:
@@ -233,7 +260,13 @@ def test_scene_not_configured_returns_config_error(db_session, monkeypatch):
 
 
 def test_save_generated_cases_creates_llm_source_rows(db_session):
+    """P09.1：Requirement 生成保存 → Primary Functional TestArtifact（一批一个 Revision）。"""
+    user = _seed_project_user(db_session)
     requirement = _seed_requirement(db_session)
+
+    artifact_before = artifact_service.ensure_project_functional_artifact(
+        db_session, project_id=requirement.project_id, requester=user)
+    rev_before = artifact_before.current_revision
 
     response = fcg.save_generated_function_cases(
         db_session,
@@ -251,33 +284,67 @@ def test_save_generated_cases_creates_llm_source_rows(db_session):
                     "test_data_json": {"username": "testuser01"},
                     "expected_result": "登录成功",
                     "remark": None,
-                }
+                },
+                {
+                    "case_name": "锁定验证",
+                    "case_type": "异常场景",
+                    "priority": "P1",
+                    "steps_json": ["连续错误 5 次"],
+                    "expected_result": "账号锁定",
+                },
             ],
         ),
+        requester=user,
     )
 
-    assert response.saved_count == 1
-    assert len(response.case_ids) == 1
-    saved = db_session.query(FunctionCase).one()
-    assert saved.id == response.case_ids[0]
-    assert saved.source == "llm"
-    assert saved.status == "active"
-    assert saved.requirement_id == requirement.id
-    assert saved.case_name == "登录成功"
-
-
-# ── A.8 保存时 project_id 以后端 RequirementDoc 为准 ──
+    assert response.saved_count == 2
+    assert len(response.case_ids) == 2
+    assert db_session.query(FunctionCase).count() == 0  # 旧 V1 表不写入（deprecated）
+    artifact = artifact_service.get_project_functional_artifact(
+        db_session, project_id=requirement.project_id, requester=user)
+    assert artifact.id == artifact_before.id
+    revisions = artifact_service.list_revisions(db_session, artifact_id=artifact.id,
+                                                requester=user)
+    # ensure(default module 创建 1 rev) + cases batch 1 rev：case 批次恰好一个 Revision
+    assert len(revisions) == rev_before + 2
+    from app.models.test_artifact.artifact_operation import ArtifactOperation
+    from app.models.test_artifact.artifact_revision import ArtifactRevision
+    last_ops = db_session.query(ArtifactOperation).join(
+        ArtifactRevision, ArtifactRevision.id == ArtifactOperation.revision_id).filter(
+        ArtifactRevision.artifact_id == artifact.id,
+        ArtifactRevision.revision_no == revisions[-1].revision_no).count()
+    assert last_ops == 2
+    tree = artifact_service.get_tree(db_session, artifact_id=artifact.id, requester=user)
+    default_module = next(c for c in tree["root"]["children"] if c["title"] == "默认模块")
+    cases = {c["title"]: c for c in default_module["children"]}
+    assert set(cases) == {"登录成功", "锁定验证"}
+    login = cases["登录成功"]
+    assert login["content"]["priority"] == "P0"
+    assert login["content"]["preconditions"] == ["用户已注册"]
+    assert login["content"]["steps"] == [
+        {"step_no": 1, "action": "打开登录页", "data": None},
+        {"step_no": 2, "action": "点击登录", "data": None},
+    ]
+    assert login["content"]["expected_results"] == [
+        {"step_no": None, "expected": "登录成功"}]
+    assert login["content"]["tags"] == ["正常场景"]
+    assert login["source_refs"] == [{"source_type": "requirement",
+                                     "source_id": str(requirement.id),
+                                     "fragment_id": None, "snapshot_hash": None}]
+    assert "case_code" not in login["content"]
+    assert "test_data_json" not in login["content"]
 
 
 def test_save_ignores_frontend_project_id(db_session):
+    user = _seed_project_user(db_session)
     requirement = _seed_requirement(db_session, project_id=101)
 
     fcg.save_generated_function_cases(
         db_session,
         SaveGeneratedFunctionCasesRequest(
             requirement_id=requirement.id,
-            project_id=9999,  # 前端伪造的归属项目，应被忽略
-            module_id=8888,  # 前端 module_id 会优先于需求 module_id（冻结当前行为）
+            project_id=9999,  # 前端伪造归属项目：以 RequirementDoc.project_id 为准
+            module_id=8888,   # 旧 V1 module 不存在 → 语义模块（默认模块）
             cases=[
                 {
                     "case_name": "任意用例",
@@ -288,12 +355,16 @@ def test_save_ignores_frontend_project_id(db_session):
                 }
             ],
         ),
+        requester=user,
     )
-
-    saved = db_session.query(FunctionCase).one()
-    assert saved.project_id == requirement.project_id
-    assert saved.project_id != 9999
-    assert saved.module_id == 8888
+    assert db_session.query(FunctionCase).count() == 0
+    artifact = artifact_service.get_project_functional_artifact(
+        db_session, project_id=101, requester=user)
+    assert artifact is not None and artifact.project_id == 101
+    assert artifact_service.get_project_functional_artifact(
+        db_session, project_id=9999, requester=user) is None
+    tree = artifact_service.get_tree(db_session, artifact_id=artifact.id, requester=user)
+    assert [c["title"] for c in tree["root"]["children"]] == ["默认模块"]
 
 
 # ── A.9 需求不存在 → 不调用模型并返回当前错误合同 ──

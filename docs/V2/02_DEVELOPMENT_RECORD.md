@@ -1019,3 +1019,77 @@ v2-chat 已含浮动窗口（min/max/launcher）、SSE 订阅（eventStream.js �
 - `pytest tests`（排除同名 test_isolation 收集冲突）→ **691 passed**；isolation 3 passed；
   P08 Scripted Eval 24 cases 全过（各指标 1.0，unintended_modification_rate 0）。
 - 结论：P08（含 P08.1/2/3 hardening）完成 → **P09 ready**。
+
+## 2.33 2026-09-06 — P09.1 Artifact Workspace + 只读 MindMap（前端；后端 Domain 未改）
+
+### 范围
+在既有 V2 Chat 浮窗上首次把 Conversation + Focused TestArtifact + Artifact Tree 放进同一工作台：
+Workspace Layout、Artifact API Client、Artifact Store、Create/List/Focus、只读 MindMap、Node Selection、
+只读 Inspector、Basic View State。不做：人工编辑/Diff/History/Undo/Conflict UI/Agent 实时联动（P09.2/P09.3）。
+
+### 结构（frontend/src/components/v2-workspace/）
+- `mindMapModel.js`：纯函数 Tree→MindMap（buildMindMap/buildMindMapView/确定性垂直布局；node key=`n<id>`、edge=`e<p>-<c>` 稳定；collapse 只影响视图）。
+- `artifactWorkspaceModel.js`：竞态裁决/409 消息/树加载 stale 判定（纯逻辑，测试覆盖）。
+- `hooks/useArtifactWorkspace.js`：store（artifacts/active/tree/currentRevision/loading/error/unavailable/focusError；
+  会话与 Artifact 两级序号+会话代次丢弃 late response；focus 走 POST focus，成功才更新，409 保留旧视图；
+  create→auto focus→tree）。
+- `hooks/useArtifactViewState.js`：collapsed/selected 按 Artifact id 各自维护（session 内，不写 DB）。
+- `ArtifactWorkspace.jsx`/`ArtifactPanel.jsx` + `artifact/{ArtifactMindMap,NodeInspector,EmptyArtifactState}.jsx`。
+- API client：`src/api/testArtifact.js`（list/create/get/tree）；conversationApi 增 `focusConversationArtifact`；
+  全部复用 axios request wrapper（无组件内裸 fetch）。
+- 挂载：V2ChatPanel `.v2chat` 内追加第三列 `<ArtifactWorkspace>`（仅真实会话，local draft 不渲染）；
+  默认窗 1180×720、min 800×480。P06 Chat 组件与能力未重构、未破坏。
+- MindMap：`@xyflow/react`（新增依赖）+ 纯递归垂直布局；pan/zoom/fit（首次打开/切换/创建/手动刷新触发，不随 streaming fit）；
+  无坐标写回、无 MindMap→DB。
+
+### 关键行为
+- Focus Guard：409（conversation_conflict/运行中切换）→ 显示后端消息、保留旧 Artifact 与旧 MindMap（无 optimistic 切换）。
+- F5/Conversation 切换：focused Artifact 一律来自后端 snapshot（顶层 focused_artifact_id），不依赖 localStorage 猜测。
+- 404 focused → 清展示 + unavailable（不无限 retry）；普通加载失败 → Retry。
+- Inspector 数据来自整树一次 GET /tree（内含 content/source_refs，无 200 个单节点请求）。
+
+### 测试/构建（真实结果）
+- `npm test`：36 passed（新增 mindMapModel.test.mjs：nodes/edges、nested 排序稳定、collapse、200+ 节点确定性布局、
+  race/409 纯逻辑）。
+- `npm run lint`：0 errors（8 warnings 均既有 pages）。
+- `npm run build`：通过（chunk>500KB 提示为 antd+xyflow 既有性信息）。
+- headless 整页加载：无 JS 异常（运行中后端未应用 0005/0006 迁移时 /test-artifacts 不可用属预期，错误态有 UI 兜底）。
+
+### 人工验收前置
+浏览器验收前需在真实 MySQL 授权执行 alembic upgrade head（0005 TestArtifact 表 + 0006 agent_runs 列），
+并在模型管理中确认 agent_chat 场景后按 §43 流程走查。
+
+### Deferred（P09.2/P09.3）
+Manual add/update/delete/move UI、Revision Diff UI、History/Undo/Restore UI、revision conflict UI、
+Agent artifact_revision 实时联动、ChatTurn Change Summary、200+ 浏览器级硬化、完整 E2E。
+
+## 2.34 2026-09-06 — P09.1 Functional Case Domain Convergence（产品方向调整后实施）
+
+### 方向
+P09 停止「独立 Chat + Artifact 右栏」扩展；新形态：V1「功能用例管理」页为主工作区，V2 Agent/TestArtifact 能力内嵌。
+**NO DUAL-WRITE**：TestArtifact/ArtifactNode/Revision/Operation 是 Module+TestCase 唯一 Source of Truth。
+
+### node_type 收敛（root/module/test_case）
+- models/schemas/service/restore/move/工具 schema/quality/评估 fixtures 全量同步；group/test_point 不再是合法值。
+- Domain invariant：root 唯一不可删/移；module 可挂 root/module（任意深度嵌套）；test_case 只能属于 module（不能父 root、不能作父）。
+- 无模块 Case：apply 内同批自动创建唯一一级「默认模块」并把 Case 放入（只产生一个 Revision；条件写裁决并发）。
+- `default module` 唯一由 revision 条件写保证；测试覆盖多次隐式添加后仍单实例。
+
+### 数据/API
+- Alembic `0007_artifact_module_convergence`：node_type group/test_point→module；新增 UNIQUE(project_id, artifact_type)（每项目一份主 Functional Artifact，NULL project 私有不受限）；迁移测试含存量行转换与 downgrade（module→group 损失性回退）。
+- Application Service：`get/ensure_project_functional_artifact`、`get_or_create_default_module`；`POST /test-artifacts/ensure-project-functional`。
+- 编号：统一 `TC-{ArtifactNode.id:06d}`（后端 app/services/test_artifacts/case_number.py 与前端 caseNumber.js 同格式）；移动/排序不变、无抢号。
+- TestCase content 强 schema：preconditions[]、steps[{step_no?,action,data?}]、expected_results[{step_no?,expected}](兼容字符串迁移归一)、priority P0–P3 默认 P1、tags；禁止 Optional[Any] 进入写路径。
+- Requirement 生成保存（save_generated_function_cases）：ensure Project Artifact → 解析/创建 Module → 批量 add test_case（**一个 Revision**）→ requirement 写入 source_refs；不再写 function_cases（V1 表 deprecated 标记，物理清理留 P10）。
+- Legacy：/modules*、/function-cases* 保留 Router（旧引用不炸）但新页面不再调用；save-candidates 保持兼容不动（P10 cleanup）。
+
+### 前端
+- V2ChatPanel 移除 ArtifactWorkspace 第三列（恢复纯 Agent Conversation UI）；保留可复用纯函数与组件供 P09.2。
+- FunctionCasePage 重写：Project Select → ensure/加载 Functional Artifact → 左侧 Module Tree（来自 Artifact tree，只含 module）+ 右侧 Case List（编号/模块/名称/前置摘要/步骤摘要/预期摘要/优先级，点击行只读结构化 Detail）；无模块入口删除；空项目自动建主 Artifact；切换项目含序号防旧树覆盖；F5 由后端 focused/snapshot 恢复。
+- 纯函数：caseView.js（buildModuleTree/collectScopeCases/摘要）、caseNumber.js（与后端同格式）。
+- 保留：mindMapModel/artifactWorkspaceModel/testArtifact API client（P09.2 复用）。
+
+### 测试（真实结果）
+- 后端全量（排除同名 isolation 收集冲突）：**701 passed**；isolation 3 passed；迁移 15 passed（含 0007 转换/降级）；P08 Eval 24 cases 全过（指标 1.0）。
+- 新增：module 嵌套/默认模块唯一/项目主 Artifact 唯一(唯一约束+并发)/编号移动稳定/需求生成→单 Revision/legacy 表未写 等专项测试。
+- 前端：npm test **40 passed**（新增 caseView/caseNumber 等）、lint **0 errors**、build 通过。

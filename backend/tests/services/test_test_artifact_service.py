@@ -108,6 +108,8 @@ def _visible_titles(db, artifact_id):
                           ArtifactNode.deleted_revision.is_(None)).all())
 
 
+
+
 def _revision_nos(db, artifact_id):
     return [r.revision_no for r in artifact_service.list_revisions(
         db, artifact_id=artifact_id, requester=_user(db, USER_A))]
@@ -158,30 +160,30 @@ def test_03_list_and_owner_isolation(db_session):
 def test_04_add_group_under_root(db_session):
     a = _seed(db_session)
     artifact = _create(db_session, a)
-    result = _apply(db_session, artifact.id, 1, [_add_op(artifact.root_node_id, "group", "功能")], a)
+    result = _apply(db_session, artifact.id, 1, [_add_op(artifact.root_node_id, "module", "功能")], a)
     assert result["new_revision"] == 2
     tree = artifact_service.get_tree(db_session, artifact_id=artifact.id, requester=a)
     assert tree["current_revision"] == 2
     assert [c["title"] for c in tree["root"]["children"]] == ["功能"]
-    assert tree["root"]["children"][0]["node_type"] == "group"
+    assert tree["root"]["children"][0]["node_type"] == "module"
 
 
 def test_05_add_test_point_under_group(db_session):
     a = _seed(db_session)
     artifact = _create(db_session, a)
-    r2 = _apply(db_session, artifact.id, 1, [_add_op(artifact.root_node_id, "group", "功能")], a)
+    r2 = _apply(db_session, artifact.id, 1, [_add_op(artifact.root_node_id, "module", "功能")], a)
     group = _node(db_session, artifact.id, "功能")
     _apply(db_session, artifact.id, r2["new_revision"],
-           [_add_op(group.id, "test_point", "正常登录")], a)
+           [_add_op(group.id, "module", "正常登录")], a)
     tree = artifact_service.get_tree(db_session, artifact_id=artifact.id, requester=a)
-    assert tree["root"]["children"][0]["children"][0]["node_type"] == "test_point"
+    assert tree["root"]["children"][0]["children"][0]["node_type"] == "module"
 
 
 def test_06_add_test_case_with_content_validation(db_session):
     a = _seed(db_session)
     artifact = _create(db_session, a)
     r2 = _apply(db_session, artifact.id, 1,
-                [_add_op(artifact.root_node_id, "test_point", "正常登录")], a)
+                [_add_op(artifact.root_node_id, "module", "正常登录")], a)
     point = _node(db_session, artifact.id, "正常登录")
     content = {
         "preconditions": ["账号存在且未锁定"],
@@ -225,8 +227,8 @@ def test_08_move_node_reparent_and_order(db_session):
     a = _seed(db_session)
     artifact = _create(db_session, a)
     r2 = _apply(db_session, artifact.id, 1, [
-        _add_op(artifact.root_node_id, "group", "G1"),
-        _add_op(artifact.root_node_id, "group", "G2")], a)
+        _add_op(artifact.root_node_id, "module", "G1"),
+        _add_op(artifact.root_node_id, "module", "G2")], a)
     g1 = _node(db_session, artifact.id, "G1")
     g2 = _node(db_session, artifact.id, "G2")
     r3 = _apply(db_session, artifact.id, r2["new_revision"],
@@ -248,11 +250,11 @@ def test_08_move_node_reparent_and_order(db_session):
 def test_09_delete_subtree_is_logical(db_session):
     a = _seed(db_session)
     artifact = _create(db_session, a)
-    r2 = _apply(db_session, artifact.id, 1, [_add_op(artifact.root_node_id, "group", "锁定")], a)
+    r2 = _apply(db_session, artifact.id, 1, [_add_op(artifact.root_node_id, "module", "锁定")], a)
     gid = _node(db_session, artifact.id, "锁定").id
     r3 = _apply(db_session, artifact.id, r2["new_revision"], [
-        _add_op(gid, "test_point", "TP_LOCK"),
-        _add_op(gid, "test_point", "TP2"),
+        _add_op(gid, "module", "TP_LOCK"),
+        _add_op(gid, "module", "TP2"),
     ], a)
     tp = _node(db_session, artifact.id, "TP_LOCK").id
     r4 = _apply(db_session, artifact.id, r3["new_revision"], [
@@ -288,17 +290,17 @@ def test_11_cross_artifact_parent_rejected(db_session):
     art2 = _create(db_session, a, title="A2")
     with pytest.raises(ArtifactValidationError):
         _apply(db_session, art2.id, 1,
-               [_add_op(art1.root_node_id, "group", "跨库组")], a)
+               [_add_op(art1.root_node_id, "module", "跨库组")], a)
     db_session.rollback()
 
 
 def test_12_cycle_rejected(db_session):
     a = _seed(db_session)
     artifact = _create(db_session, a)
-    r2 = _apply(db_session, artifact.id, 1, [_add_op(artifact.root_node_id, "group", "G1")], a)
+    r2 = _apply(db_session, artifact.id, 1, [_add_op(artifact.root_node_id, "module", "G1")], a)
     g1 = _node(db_session, artifact.id, "G1")
     r3 = _apply(db_session, artifact.id, r2["new_revision"],
-                [_add_op(g1.id, "test_point", "P1")], a)
+                [_add_op(g1.id, "module", "P1")], a)
     p1 = _node(db_session, artifact.id, "P1")
     with pytest.raises(ArtifactValidationError):
         _apply(db_session, artifact.id, r3["new_revision"], [{
@@ -312,7 +314,7 @@ def test_13_deleted_parent_rejected(db_session):
     a = _seed(db_session)
     artifact = _create(db_session, a)
     r2 = _apply(db_session, artifact.id, 1,
-                [_add_op(artifact.root_node_id, "test_point", "P1")], a)
+                [_add_op(artifact.root_node_id, "module", "P1")], a)
     p1 = _node(db_session, artifact.id, "P1").id
     r3 = _apply(db_session, artifact.id, r2["new_revision"],
                 [{"operation_type": "delete_node", "target_node_id": p1}], a)
@@ -330,7 +332,7 @@ def test_14_root_delete_and_move_rejected(db_session):
         _apply(db_session, artifact.id, 1,
                [{"operation_type": "delete_node", "target_node_id": root_id}], a)
     db_session.rollback()
-    r2 = _apply(db_session, artifact.id, 1, [_add_op(root_id, "group", "G1")], a)
+    r2 = _apply(db_session, artifact.id, 1, [_add_op(root_id, "module", "G1")], a)
     g1 = _node(db_session, artifact.id, "G1").id
     with pytest.raises(ArtifactValidationError):
         _apply(db_session, artifact.id, r2["new_revision"], [{
@@ -359,8 +361,8 @@ def test_15_every_batch_exactly_one_revision(db_session):
     a = _seed(db_session)
     artifact = _create(db_session, a)
     result = _apply(db_session, artifact.id, 1, [
-        _add_op(artifact.root_node_id, "group", "G1"),
-        _add_op(artifact.root_node_id, "group", "G2"),
+        _add_op(artifact.root_node_id, "module", "G1"),
+        _add_op(artifact.root_node_id, "module", "G2"),
     ], a)
     assert result["changed"] == 2
     assert db_session.query(ArtifactRevision).filter(
@@ -391,8 +393,8 @@ def test_17_operation_order_stable(db_session):
     ], a)
     _, ops = artifact_service.get_revision(
         db_session, artifact_id=artifact.id, revision_no=r["new_revision"], requester=a)
-    assert [op.op_index for op in ops] == [0, 1]
-    assert [op.after_json["title"] for op in ops] == ["TC-2", "TC-1"]
+    assert [op.op_index for op in ops] == [0, 1, 2]  # 隐式默认模块 + 两个 test_case
+    assert [op.after_json["title"] for op in ops if op.after_json["node_type"] == "test_case"]         == ["TC-2", "TC-1"]
 
 
 # ── Atomicity（18） ──
@@ -422,14 +424,14 @@ def test_18_batch_rollback_when_third_operation_fails(db_session):
 def test_19_diff_add(db_session):
     a = _seed(db_session)
     artifact = _create(db_session, a)
-    r = _apply(db_session, artifact.id, 1, [_add_op(artifact.root_node_id, "group", "功能")], a)
+    r = _apply(db_session, artifact.id, 1, [_add_op(artifact.root_node_id, "module", "功能")], a)
     diff = artifact_service.get_diff(db_session, artifact_id=artifact.id,
                                      from_revision=1, to_revision=r["new_revision"], requester=a)
     assert diff["from_revision"] == 1 and diff["to_revision"] == 2
     change = diff["changes"][0]
     assert change["change"] == "added"
     assert change["parent_id"] == artifact.root_node_id
-    assert change["node_type"] == "group" and change["title"] == "功能"
+    assert change["node_type"] == "module" and change["title"] == "功能"
 
 
 def test_20_diff_update_field(db_session):
@@ -437,12 +439,12 @@ def test_20_diff_update_field(db_session):
     artifact = _create(db_session, a)
     r2 = _apply(db_session, artifact.id, 1, [_add_op(
         artifact.root_node_id, "test_case", "TC001",
-        content={"priority": "P1", "expected_results": ["锁定后无法登录"]})], a)
+        content={"priority": "P1", "expected_results": [{"step_no": None, "expected": "锁定后无法登录"}]})], a)
     tc = _node(db_session, artifact.id, "TC001").id
     r3 = _apply(db_session, artifact.id, r2["new_revision"], [{
         "operation_type": "update_node", "target_node_id": tc,
         "patch": {"content": {"priority": "P1",
-                              "expected_results": ["锁定期间正确密码仍无法登录"]}},
+                              "expected_results": [{"step_no": None, "expected": "锁定期间正确密码仍无法登录"}]}},
     }], a)
     diff = artifact_service.get_diff(db_session, artifact_id=artifact.id,
                                      from_revision=r2["new_revision"], to_revision=r3["new_revision"],
@@ -450,16 +452,16 @@ def test_20_diff_update_field(db_session):
     change = diff["changes"][0]
     assert change["change"] == "updated"
     assert change["fields"]["content"]["after"]["expected_results"] == \
-        ["锁定期间正确密码仍无法登录"]
-    assert change["fields"]["content"]["before"]["expected_results"] == ["锁定后无法登录"]
+        [{"step_no": None, "expected": "锁定期间正确密码仍无法登录"}]
+    assert change["fields"]["content"]["before"]["expected_results"] == [{"step_no": None, "expected": "锁定后无法登录"}]
 
 
 def test_21_diff_move(db_session):
     a = _seed(db_session)
     artifact = _create(db_session, a)
     r2 = _apply(db_session, artifact.id, 1, [
-        _add_op(artifact.root_node_id, "group", "G1"),
-        _add_op(artifact.root_node_id, "group", "G2")], a)
+        _add_op(artifact.root_node_id, "module", "G1"),
+        _add_op(artifact.root_node_id, "module", "G2")], a)
     g1_id = _node(db_session, artifact.id, "G1").id
     g2_id = _node(db_session, artifact.id, "G2").id
     r3 = _apply(db_session, artifact.id, r2["new_revision"],
@@ -482,7 +484,7 @@ def test_22_diff_delete_subtree(db_session):
     a = _seed(db_session)
     artifact = _create(db_session, a)
     r2 = _apply(db_session, artifact.id, 1,
-                [_add_op(artifact.root_node_id, "test_point", "TP_LOCK")], a)
+                [_add_op(artifact.root_node_id, "module", "TP_LOCK")], a)
     tp = _node(db_session, artifact.id, "TP_LOCK").id
     r3 = _apply(db_session, artifact.id, r2["new_revision"],
                 [_add_op(tp, "test_case", "TC001"), _add_op(tp, "test_case", "TC002")], a)
@@ -501,7 +503,7 @@ def test_23_undo_latest_delete_restores_tree(db_session):
     a = _seed(db_session)
     artifact = _create(db_session, a)
     r2 = _apply(db_session, artifact.id, 1,
-                [_add_op(artifact.root_node_id, "test_point", "TP_LOCK")], a)
+                [_add_op(artifact.root_node_id, "module", "TP_LOCK")], a)
     tp = _node(db_session, artifact.id, "TP_LOCK").id
     r3 = _apply(db_session, artifact.id, r2["new_revision"], [_add_op(tp, "test_case", "TC001")], a)
     r4 = _apply(db_session, artifact.id, r3["new_revision"],
@@ -543,7 +545,9 @@ def test_25_restore_older_revision_creates_new_revision(db_session):
     db_session.commit()
     assert result["new_revision"] == 5
     tree = artifact_service.get_tree(db_session, artifact_id=artifact.id, requester=a)
-    assert [c["title"] for c in tree["root"]["children"]] == ["TC1"]
+    module = tree["root"]["children"][0]
+    assert module["title"] == "默认模块"
+    assert [c["title"] for c in module["children"]] == ["TC1"]
 
 
 def test_26_history_preserved_across_undo_restore(db_session):
@@ -577,7 +581,7 @@ def test_27_stale_expected_revision_conflict(db_session):
     assert exc.value.detail == {"expected_revision": 1, "current_revision": 2}
     assert db_session.query(ArtifactRevision).filter(
         ArtifactRevision.artifact_id == artifact.id).count() == 2
-    assert set(_visible_titles(db_session, artifact.id)) == {"登录测试", "TC-A"}
+    assert set(_visible_titles(db_session, artifact.id)) == {"登录测试", "默认模块", "TC-A"}
 
 
 def test_28_two_sessions_same_expected_only_one_wins(db_session):
@@ -605,7 +609,7 @@ def test_28_two_sessions_same_expected_only_one_wins(db_session):
     db_session.expire_all()  # 让外层 session 重新从库读，避免 stale identity map
     assert artifact_service.get_artifact(db_session, artifact_id=artifact.id,
                                          requester=a).current_revision == 2
-    assert set(_visible_titles(db_session, artifact.id)) == {"登录测试", "胜者"}
+    assert set(_visible_titles(db_session, artifact.id)) == {"登录测试", "默认模块", "胜者"}
     assert db_session.query(ArtifactRevision).filter(
         ArtifactRevision.artifact_id == artifact.id).count() == 2
 
@@ -667,7 +671,7 @@ def test_31_cross_user_write_and_project_permission(db_session):
         artifact_service.apply_operations(
             db_session, artifact_id=artifact.id,
             expected_revision=artifact.current_revision,
-            operations=[_add_op(artifact.root_node_id, "group", "越权")], requester=b)
+            operations=[_add_op(artifact.root_node_id, "module", "越权")], requester=b)
     db_session.rollback()
     # 项目 Artifact：viewer 可读（项目级只读）但不可操作 → 403
     artifact_p = _create(db_session, a, title="项目资产", project_id=PROJECT_P)
@@ -678,7 +682,7 @@ def test_31_cross_user_write_and_project_permission(db_session):
         artifact_service.apply_operations(
             db_session, artifact_id=artifact_p.id,
             expected_revision=artifact_p.current_revision,
-            operations=[_add_op(artifact_p.root_node_id, "group", "越权")], requester=viewer)
+            operations=[_add_op(artifact_p.root_node_id, "module", "越权")], requester=viewer)
     db_session.rollback()
 
 
@@ -824,11 +828,11 @@ def test_p07_e2e_login_artifact_full_journey(db_session):
     # Revision 2：一个 batch = 功能 group + 正常登录/密码错误 point + TC001/TC002
     # 用批内 ref（@g/@pt）引用同批先建节点 → 仍是“恰好一个 Revision”
     r2 = _apply(db_session, artifact.id, 1, [
-        _add_op(artifact.root_node_id, "group", "功能", ref="g"),
-        _add_op("@g", "test_point", "正常登录", ref="pt"),
+        _add_op(artifact.root_node_id, "module", "功能", ref="g"),
+        _add_op("@g", "module", "正常登录", ref="pt"),
         _add_op("@pt", "test_case", "TC001"),
         _add_op("@pt", "test_case", "TC002"),
-        _add_op("@g", "test_point", "密码错误"),
+        _add_op("@g", "module", "密码错误"),
     ], a)
     assert r2["new_revision"] == 2 and r2["changed"] == 5
 
@@ -903,15 +907,15 @@ def test_tree_nested_children_sorted_by_order_key(db_session):
     root_id = artifact.root_node_id
     # 第 1 层：故意乱序插入（晚到的高 order 在前，早到的低 order 在后）
     r2 = _apply(db_session, artifact.id, 1, [
-        _add_op(root_id, "group", "G-晚", order_key=30),
-        _add_op(root_id, "group", "G-早", order_key=10),
+        _add_op(root_id, "module", "G-晚", order_key=30),
+        _add_op(root_id, "module", "G-早", order_key=10),
     ], a)
     g_early = _node(db_session, artifact.id, "G-早").id
     # 第 2 层：point 乱序插入（B,A,C）
     r3 = _apply(db_session, artifact.id, r2["new_revision"], [
-        _add_op(g_early, "test_point", "pt-B", order_key=30),
-        _add_op(g_early, "test_point", "pt-A", order_key=10),
-        _add_op(g_early, "test_point", "pt-C", order_key=20),
+        _add_op(g_early, "module", "pt-B", order_key=30),
+        _add_op(g_early, "module", "pt-A", order_key=10),
+        _add_op(g_early, "module", "pt-C", order_key=20),
     ], a)
     pt_a = _node(db_session, artifact.id, "pt-A").id
     # 第 3 层：test_case 乱序插入（TC-2 先于 TC-1）
@@ -933,14 +937,14 @@ def test_restore_rejects_group_under_visible_test_case(db_session):
     root_id = artifact.root_node_id
     r2 = _apply(db_session, artifact.id, 1, [_add_op(root_id, "test_case", "TC")], a)
     tc = _node(db_session, artifact.id, "TC").id
-    r3 = _apply(db_session, artifact.id, r2["new_revision"], [_add_op(root_id, "group", "G")], a)
+    r3 = _apply(db_session, artifact.id, r2["new_revision"], [_add_op(root_id, "module", "G")], a)
     g = _node(db_session, artifact.id, "G").id
     r4 = _apply(db_session, artifact.id, r3["new_revision"],
                 [{"operation_type": "delete_node", "target_node_id": g}], a)
     with pytest.raises(ArtifactValidationError):
         _apply(db_session, artifact.id, r4["new_revision"], [{
             "operation_type": "restore", "target_node_id": g,
-            "nodes": [_restore_snapshot(g, tc, "group", "G")],
+            "nodes": [_restore_snapshot(g, tc, "module", "G")],
         }], a)
     db_session.rollback()
 
@@ -951,7 +955,7 @@ def test_restore_rejects_parent_test_case_being_restored(db_session):
     root_id = artifact.root_node_id
     r2 = _apply(db_session, artifact.id, 1, [_add_op(root_id, "test_case", "TC")], a)
     tc = _node(db_session, artifact.id, "TC").id
-    r3 = _apply(db_session, artifact.id, r2["new_revision"], [_add_op(root_id, "group", "G")], a)
+    r3 = _apply(db_session, artifact.id, r2["new_revision"], [_add_op(root_id, "module", "G")], a)
     g = _node(db_session, artifact.id, "G").id
     r4 = _apply(db_session, artifact.id, r3["new_revision"],
                 [{"operation_type": "delete_node", "target_node_id": tc}], a)
@@ -963,7 +967,7 @@ def test_restore_rejects_parent_test_case_being_restored(db_session):
             "operation_type": "restore", "target_node_id": tc,
             "nodes": [
                 _restore_snapshot(tc, root_id, "test_case", "TC"),
-                _restore_snapshot(g, tc, "group", "G"),
+                _restore_snapshot(g, tc, "module", "G"),
             ],
         }], a)
     db_session.rollback()
@@ -974,7 +978,7 @@ def test_restore_rejects_cycle_a_to_b(db_session):
     artifact = _create(db_session, a)
     root_id = artifact.root_node_id
     r2 = _apply(db_session, artifact.id, 1, [
-        _add_op(root_id, "group", "GA"), _add_op(root_id, "group", "GB")], a)
+        _add_op(root_id, "module", "GA"), _add_op(root_id, "module", "GB")], a)
     ga = _node(db_session, artifact.id, "GA").id
     gb = _node(db_session, artifact.id, "GB").id
     r3 = _apply(db_session, artifact.id, r2["new_revision"],
@@ -985,8 +989,8 @@ def test_restore_rejects_cycle_a_to_b(db_session):
         _apply(db_session, artifact.id, r4["new_revision"], [{
             "operation_type": "restore", "target_node_id": ga,
             "nodes": [
-                _restore_snapshot(ga, gb, "group", "GA"),
-                _restore_snapshot(gb, ga, "group", "GB"),
+                _restore_snapshot(ga, gb, "module", "GA"),
+                _restore_snapshot(gb, ga, "module", "GB"),
             ],
         }], a)
     db_session.rollback()

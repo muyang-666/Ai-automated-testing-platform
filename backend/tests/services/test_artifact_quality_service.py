@@ -49,7 +49,10 @@ def test_duplicate_analysis_truncates_large_scope(db_session):
         requester=user)
     db_session.commit()
     tree = artifact_service.get_tree(db_session, artifact_id=artifact.id, requester=user)
-    child_ids = [child["id"] for child in tree["root"]["children"]]
+    # root 下自动落入「默认模块」：重复对位于默认模块子树内
+    module = tree["root"]["children"][0]
+    assert module["title"] == "默认模块"
+    child_ids = [child["id"] for child in module["children"]]
     in_cap_pair = tuple(sorted(child_ids[0:2]))     # TC-001/TC-002（cap 内重复）
     out_cap_pair = tuple(sorted(child_ids[60:62]))  # TC-061/TC-062（cap 外重复）
 

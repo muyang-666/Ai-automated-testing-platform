@@ -2,8 +2,7 @@
 
 from app.models.test_artifact.artifact_node import (  # noqa: F401
     NODE_TYPE_ROOT,
-    NODE_TYPE_GROUP,
-    NODE_TYPE_TEST_POINT,
+    NODE_TYPE_MODULE,
     NODE_TYPE_TEST_CASE,
 )
 from app.models.test_artifact.artifact_operation import (  # noqa: F401

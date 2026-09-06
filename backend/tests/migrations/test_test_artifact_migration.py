@@ -18,7 +18,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 SCRIPT_LOCATION = str(BACKEND_DIR / "alembic")
 
 BASELINE_REVISION = "0001_v1_schema_baseline"
-HEAD_REVISION = "0006_agent_run_artifact_context"
+HEAD_REVISION = "0007_artifact_module_convergence"
 ARTIFACT_TABLE_NAMES = {"test_artifact", "artifact_node", "artifact_revision", "artifact_operation"}
 
 
@@ -139,3 +139,52 @@ def test_mismatch_fails_explicitly(tmp_path):
         command.upgrade(cfg, "head")
     assert "artifact_node" in str(exc.value)
     assert "结构不一致" in str(exc.value)
+
+
+# ── 0007：node_type 收敛 + 项目主 Artifact 唯一约束 ──
+
+
+def _insert_artifact_and_nodes(engine):
+    with engine.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO test_artifact (id, owner_user_id, project_id, title, artifact_type, "
+            "status, current_revision, schema_version) "
+            "VALUES (1, 1, NULL, '资产', 'test_design', 'active', 1, 1)"))
+        for node_id, node_type, title in [(1, "root", "root"), (2, "group", "G1"),
+                                          (3, "test_point", "P1"), (4, "test_case", "TC1")]:
+            conn.execute(text(
+                "INSERT INTO artifact_node (id, artifact_id, parent_id, node_type, order_key, "
+                "title, created_revision) VALUES (:id, 1, :parent, :nt, 1, :t, 1)"),
+                {"id": node_id, "parent": None if node_type == "root" else (1 if node_type != "test_case" else 2),
+                 "nt": node_type, "t": title})
+
+
+def test_module_convergence_converts_legacy_node_types(tmp_path):
+    db_url = _prepare_db(tmp_path, "ta_conv.db")
+    cfg = _make_config(db_url)
+    command.upgrade(cfg, "0006_agent_run_artifact_context")
+    engine = create_engine(db_url)
+    _insert_artifact_and_nodes(engine)
+    engine.dispose()
+
+    command.upgrade(cfg, "head")
+    engine = create_engine(db_url)
+    with engine.connect() as conn:
+        rows = conn.execute(text(
+            "SELECT id, node_type FROM artifact_node ORDER BY id")).fetchall()
+        assert dict(rows) == {1: "root", 2: "module", 3: "module", 4: "test_case"}
+    uniques = {(uc["name"], tuple(uc["column_names"]))
+               for uc in inspect(engine).get_unique_constraints("test_artifact")}
+    assert ("uq_test_artifact_project_type", ("project_id", "artifact_type")) in uniques
+    engine.dispose()
+
+    command.downgrade(cfg, "0006_agent_run_artifact_context")
+    engine = create_engine(db_url)
+    uniques = {(uc["name"], tuple(uc["column_names"]))
+               for uc in inspect(engine).get_unique_constraints("test_artifact")}
+    assert "uq_test_artifact_project_type" not in {name for name, _ in uniques}
+    with engine.connect() as conn:
+        rows = conn.execute(text(
+            "SELECT id, node_type FROM artifact_node WHERE id IN (2,3) ORDER BY id")).fetchall()
+        assert dict(rows) == {2: "group", 3: "group"}  # 损失性回退（module→group）
+    engine.dispose()

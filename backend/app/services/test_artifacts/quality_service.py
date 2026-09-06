@@ -56,10 +56,16 @@ def validate_artifact(db: Session, *, artifact_id: int, requester,
             "checked_nodes": len(nodes), "issues": issues}
 
 
+def _expected_text(item) -> str:
+    if isinstance(item, dict):
+        return str(item.get("expected") or "")
+    return str(item or "")
+
+
 def _normalized(node: dict) -> str:
     content = node.get("content") if isinstance(node.get("content"), dict) else {}
     parts = [str(node.get("title") or ""), *(content.get("preconditions") or []),
-             *(content.get("expected_results") or [])]
+             *(_expected_text(item) for item in (content.get("expected_results") or []))]
     for step in content.get("steps") or []:
         if isinstance(step, dict):
             parts.extend([str(step.get("action") or ""), str(step.get("data") or "")])

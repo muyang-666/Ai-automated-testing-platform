@@ -17,6 +17,7 @@
 import json
 
 from sqlalchemy import func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.requirement_doc import RequirementDoc
@@ -31,6 +32,7 @@ from app.services.test_artifacts import repository as repo
 from app.services.test_artifacts.domain import (
     ACTOR_TYPE_USER,
     NODE_TYPE_ROOT,
+    NODE_TYPE_MODULE,
     NODE_TYPE_TEST_CASE,
     OP_ADD_NODE,
     OP_DELETE_NODE,
@@ -48,7 +50,11 @@ from app.services.test_artifacts.errors import (
     TestArtifactValidationError,
 )
 
-NODE_TYPES = ("root", "group", "test_point", "test_case")
+NODE_TYPES = ("root", "module", "test_case")
+
+# Primary Functional Artifact 语义：每项目一份 test_design（P09.1）
+FUNCTIONAL_ARTIFACT_TYPE = "test_design"
+DEFAULT_MODULE_TITLE = "默认模块"
 
 _ALLOWED_KEYS = {
     OP_ADD_NODE: {"operation_type", "parent_id", "node_type", "title", "content", "source_refs", "order_key", "ref"},
@@ -256,6 +262,12 @@ def _apply_add(db: Session, artifact: TestArtifact, new_no: int, request: dict,
         if parent_id is None:
             raise TestArtifactValidationError("非 root 节点必须提供 parent_id")
         parent_row = _require_parent(db, artifact, parent_id)
+        # P09.1 Domain invariant：module 只能挂在 root/module 下；test_case 只能挂在 module 下
+        if node_type == NODE_TYPE_TEST_CASE:
+            if parent_row is None or parent_row.node_type != NODE_TYPE_MODULE:
+                raise TestArtifactValidationError("test_case 必须属于 module")
+        elif parent_row is None or parent_row.node_type not in (NODE_TYPE_ROOT, NODE_TYPE_MODULE):
+            raise TestArtifactValidationError("module 只能挂在 root 或其他 module 下")
     if order_key is not None and order_key < 0:
         raise TestArtifactValidationError("order_key 不能为负数")
 
@@ -316,6 +328,10 @@ def _apply_move(db: Session, artifact: TestArtifact, request: dict) -> dict:
     new_parent = _require_parent(db, artifact, new_parent_id, what="目标父节点")
     if new_parent is None:  # move 不允许悬空（root 专属 None）
         raise TestArtifactValidationError("move_node 必须提供 new_parent_id")
+    if node.node_type == NODE_TYPE_TEST_CASE and new_parent.node_type != NODE_TYPE_MODULE:
+        raise TestArtifactValidationError("test_case 只能移动到 module 下")
+    if node.node_type == NODE_TYPE_MODULE and new_parent.node_type not in (NODE_TYPE_ROOT, NODE_TYPE_MODULE):
+        raise TestArtifactValidationError("module 只能移动到 root 或其他 module 下")
     if new_parent_id == node.id or new_parent_id in _descendant_ids(db, artifact, node.id):
         raise TestArtifactValidationError("不能移动到自身或其子孙节点下（会形成环）")
 
@@ -408,8 +424,11 @@ def _apply_restore(db: Session, artifact: TestArtifact, request: dict, *,
         parent_row = repo.get_node(db, parent)
         if parent_row is None or parent_row.artifact_id != artifact.id:
             raise TestArtifactValidationError("restore 父节点不存在或不属于该 Artifact")
-        if parent_row.node_type == NODE_TYPE_TEST_CASE:
-            raise TestArtifactValidationError("test_case 节点不能作为父节点")
+        if row.node_type == NODE_TYPE_TEST_CASE and parent_row.node_type != NODE_TYPE_MODULE:
+            raise TestArtifactValidationError("test_case 只能恢复到 module 下")
+        if row.node_type == NODE_TYPE_MODULE and parent_row.node_type not in (
+                NODE_TYPE_ROOT, NODE_TYPE_MODULE):
+            raise TestArtifactValidationError("module 只能恢复到 root 或其他 module 下")
         if not isinstance(snap.get("title"), str):
             raise TestArtifactValidationError("restore 快照缺少合法 title")
         _validated_content(row.node_type, snap.get("content"))  # 防御：快照内容必须匹配节点类型
@@ -481,9 +500,51 @@ def apply_operations(db: Session, *, artifact_id: int, expected_revision: int,
     db.add(revision)
     db.flush()
 
+    # P09.1：调用方未指定 module 时（test_case.parent == root），同批自动落入
+    # 一级「默认模块」——只产生一个 Revision，不创建 root 下裸 Case。
+    # 并发：唯一约束不可用于"按 title 唯一"（普通重名合法），因此靠 revision
+    # 条件写裁决：两方都看不见默认模块时各自创建，仅一方提交成功；失败方由
+    # 上层（如 save 产品线）重试后命中既有默认模块。
+    work_operations = list(operations)
+    implicit_default_ops: list[dict] = []
+    rewrite_root_case: list[tuple[int, str | int]] = []
+    for index, request in enumerate(work_operations):
+        if request.get("operation_type") != OP_ADD_NODE:
+            continue
+        if request.get("node_type") != NODE_TYPE_TEST_CASE:
+            continue
+        if request.get("parent_id") != artifact.root_node_id:
+            continue
+        existing_default = db.execute(
+            select(ArtifactNode.id).where(
+                ArtifactNode.artifact_id == artifact.id,
+                ArtifactNode.parent_id == artifact.root_node_id,
+                ArtifactNode.node_type == NODE_TYPE_MODULE,
+                ArtifactNode.title == DEFAULT_MODULE_TITLE,
+                ArtifactNode.deleted_revision.is_(None),
+            ).limit(1)
+        ).scalar_one_or_none()
+        if existing_default is not None:
+            rewrite_root_case.append((index, existing_default))
+        else:
+            rewrite_root_case.append((index, "@__auto_default__"))
+            if not implicit_default_ops:
+                implicit_default_ops.append({
+                    "operation_type": OP_ADD_NODE,
+                    "parent_id": artifact.root_node_id,
+                    "node_type": NODE_TYPE_MODULE,
+                    "title": DEFAULT_MODULE_TITLE,
+                    "ref": "__auto_default__",
+                })
+    if implicit_default_ops:
+        work_operations = implicit_default_ops + work_operations
+    for index, parent in rewrite_root_case:
+        work_operations[index + len(implicit_default_ops)] = dict(
+            work_operations[index + len(implicit_default_ops)], parent_id=parent)
+
     changed = 0
     ref_to_node: dict[str, int] = {}  # 批内引用：add_node 可携带 ref，后续 op 用 "@ref" 引用其 id
-    for index, request in enumerate(operations):
+    for index, request in enumerate(work_operations):
         if not isinstance(request, dict):
             raise TestArtifactValidationError("operation 必须是对象")
         op_type = request.get("operation_type")
@@ -643,7 +704,7 @@ def get_tree(db: Session, *, artifact_id: int, requester) -> dict:
         if row.parent_id is not None and row.parent_id in items:
             items[row.parent_id]["children"].append(items[row.id])
     # 构树完成后对所有层级的 children 统一按 (order_key, id) 排序，
-    # 不依赖 DB 返回顺序（nested group/test_point 同样稳定有序）。
+    # 不依赖 DB 返回顺序（nested module/test_case 同样稳定有序）。
     for item in items.values():
         item["children"].sort(key=lambda child: (child["order_key"], child["id"]))
     root = None
@@ -727,6 +788,96 @@ def get_recent_diff(db: Session, *, artifact_id: int, requester,
     from_revision = max(0, to_revision - revision_count)
     return get_diff(db, artifact_id=artifact.id, from_revision=from_revision,
                     to_revision=to_revision, requester=requester)
+
+
+# ── Project Functional Artifact & Default Module（P09.1） ──
+
+
+def get_project_functional_artifact(db: Session, *, project_id: int, requester) -> TestArtifact | None:
+    """项目的主 Functional TestArtifact；未创建返回 None。"""
+    row = db.execute(
+        select(TestArtifact).where(
+            TestArtifact.project_id == project_id,
+            TestArtifact.artifact_type == FUNCTIONAL_ARTIFACT_TYPE,
+        ).order_by(TestArtifact.id.asc()).limit(1)
+    ).scalar_one_or_none()
+    if row is None:
+        return None
+    return _load_readable(db, row.id, requester)
+
+
+def ensure_project_functional_artifact(db: Session, *, project_id: int, requester,
+                                       title: str | None = None) -> TestArtifact:
+    """确保项目存在唯一主 Functional TestArtifact（含 root）。
+
+    并发安全：同一 (project_id, artifact_type) 由 DB 唯一约束裁决，
+    冲突方回滚后读取既有 Artifact 返回（不使用 Python 全局锁）。
+    """
+    existing = get_project_functional_artifact(db, project_id=project_id, requester=requester)
+    if existing is not None:
+        return existing
+    try:
+        artifact = create_artifact(
+            db, requester=requester, title=(title or "功能测试").strip() or "功能测试",
+            artifact_type=FUNCTIONAL_ARTIFACT_TYPE, project_id=project_id,
+        )
+        db.commit()
+        return artifact
+    except IntegrityError:
+        db.rollback()
+        existing = get_project_functional_artifact(db, project_id=project_id, requester=requester)
+        if existing is not None:
+            return existing
+        raise TestArtifactDataError("并发创建主 Functional Artifact 失败，请重试") from None
+
+
+def get_or_create_default_module(db: Session, *, artifact_id: int, requester) -> ArtifactNode:
+    """每个 Artifact 至多一个一级「默认模块」；缺少时用一次 Revision 创建。
+
+    并发安全：复用 revision 条件写裁决——两个并发创建者只有一方成功；
+    冲突方回滚后读取既有默认模块返回（循环上限 2 次）。
+    """
+    for attempt in range(2):
+        artifact = _load_writable(db, artifact_id, requester)
+        existing = db.execute(
+            select(ArtifactNode).where(
+                ArtifactNode.artifact_id == artifact.id,
+                ArtifactNode.node_type == NODE_TYPE_MODULE,
+                ArtifactNode.parent_id == artifact.root_node_id,
+                ArtifactNode.title == DEFAULT_MODULE_TITLE,
+                ArtifactNode.deleted_revision.is_(None),
+            ).limit(1)
+        ).scalar_one_or_none()
+        if existing is not None:
+            return existing
+        try:
+            apply_operations(
+                db,
+                artifact_id=artifact.id,
+                expected_revision=artifact.current_revision,
+                operations=[{
+                    "operation_type": OP_ADD_NODE,
+                    "parent_id": artifact.root_node_id,
+                    "node_type": NODE_TYPE_MODULE,
+                    "title": DEFAULT_MODULE_TITLE,
+                }],
+                requester=requester,
+                summary="确保默认模块",
+            )
+            db.commit()
+            return db.execute(
+                select(ArtifactNode).where(
+                    ArtifactNode.artifact_id == artifact.id,
+                    ArtifactNode.node_type == NODE_TYPE_MODULE,
+                    ArtifactNode.parent_id == artifact.root_node_id,
+                    ArtifactNode.title == DEFAULT_MODULE_TITLE,
+                    ArtifactNode.deleted_revision.is_(None),
+                ).limit(1)
+            ).scalar_one()
+        except RevisionConflictError:
+            db.rollback()
+            continue
+    raise TestArtifactDataError("并发创建默认模块失败，请重试") from None
 
 
 # ── Revision / Diff ──

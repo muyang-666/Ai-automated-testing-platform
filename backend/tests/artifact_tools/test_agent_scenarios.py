@@ -135,12 +135,12 @@ def test_1_empty_artifact_adds_test_points_only(world, db_session):
         _call("m2", "c2", "batch_apply_artifact_operations", {"expected_revision": 1,
             "summary": "列出登录测试点", "operations": [
                 {"operation_type": "add_node", "parent_id": artifact.root_node_id,
-                 "node": {"node_type": "test_point", "title": "正常登录"}},
+                 "node": {"node_type": "module", "title": "正常登录"}},
                 {"operation_type": "add_node", "parent_id": artifact.root_node_id,
-                 "node": {"node_type": "test_point", "title": "账号锁定"}},
+                 "node": {"node_type": "module", "title": "账号锁定"}},
             ]}), _final()], text="先列登录测试点，不展开用例", key="s1")
     nodes = _nodes(db_session, artifact.id)
-    assert [node.node_type for node in nodes].count("test_point") == 2
+    assert [node.node_type for node in nodes].count("module") == 2
     assert not any(node.node_type == "test_case" for node in nodes)
     assert _revision(db_session, artifact, user) == 2
 
@@ -153,9 +153,9 @@ def test_2_expands_only_selected_branch_in_one_revision(world, db_session):
     user, artifact, session = world
     _apply(db_session, artifact, user, [
         {"operation_type": "add_node", "parent_id": artifact.root_node_id,
-         "node_type": "test_point", "title": "账号锁定", "ref": "lock"},
+         "node_type": "module", "title": "账号锁定", "ref": "lock"},
         {"operation_type": "add_node", "parent_id": artifact.root_node_id,
-         "node_type": "test_point", "title": "其他分支"},
+         "node_type": "module", "title": "其他分支"},
     ])
     lock = db_session.query(ArtifactNode).filter(ArtifactNode.title == "账号锁定").one()
     operations = []
@@ -189,7 +189,7 @@ def test_3_minimal_edit_changes_only_requested_node(world, db_session):
                 "expected_results": ["锁定30分钟后允许重新登录"], "priority": "P1", "tags": ["边界"]}}}),
         _final(),
     ], text="把 TC003 预期改一下", key="s3")
-    assert db_session.get(ArtifactNode, tc3.id).content_json["expected_results"] == ["锁定30分钟后允许重新登录"]
+    assert db_session.get(ArtifactNode, tc3.id).content_json["expected_results"] == [{"step_no": None, "expected": "锁定30分钟后允许重新登录"}]
     assert artifact_service.node_snapshot(db_session.get(ArtifactNode, tc4.id)) == before4
     diff = artifact_service.get_diff(db_session, artifact_id=artifact.id, from_revision=2,
                                      to_revision=3, requester=user)
@@ -217,9 +217,9 @@ def test_5_moves_node_after_reading_relevant_nodes(world, db_session):
     user, artifact, session = world
     _apply(db_session, artifact, user, [
         {"operation_type": "add_node", "parent_id": artifact.root_node_id,
-         "node_type": "test_point", "title": "原分支", "ref": "old"},
+         "node_type": "module", "title": "原分支", "ref": "old"},
         {"operation_type": "add_node", "parent_id": artifact.root_node_id,
-         "node_type": "test_point", "title": "账号锁定", "ref": "lock"},
+         "node_type": "module", "title": "账号锁定", "ref": "lock"},
         {"operation_type": "add_node", "parent_id": "@old", "node_type": "test_case",
          "title": "TC003", "content": _case("x")["content"]},
     ])
@@ -283,7 +283,8 @@ def test_8_direct_cases_do_not_force_test_points(world, db_session):
     ], text="直接补三条异常用例，不用先建测试点", key="s8")
     nodes = _nodes(db_session, artifact.id)
     assert len([node for node in nodes if node.node_type == "test_case"]) == 3
-    assert not any(node.node_type == "test_point" for node in nodes)
+    modules = [node for node in nodes if node.node_type == "module"]
+    assert len(modules) == 1 and modules[0].title == "默认模块"
 
 
 def test_final_acceptance_story_revisions_1_through_5(world, db_session):
@@ -293,9 +294,9 @@ def test_final_acceptance_story_revisions_1_through_5(world, db_session):
         _call("a2", "a2", "batch_apply_artifact_operations", {"expected_revision": 1,
             "operations": [
                 {"operation_type": "add_node", "parent_id": artifact.root_node_id,
-                 "node": {"node_type": "test_point", "title": "正常登录"}},
+                 "node": {"node_type": "module", "title": "正常登录"}},
                 {"operation_type": "add_node", "parent_id": artifact.root_node_id,
-                 "node": {"node_type": "test_point", "title": "账号锁定"}},
+                 "node": {"node_type": "module", "title": "账号锁定"}},
             ]}), _final("af")], text="先列登录测试点", key="story1")
     assert _revision(db_session, artifact, user) == 2
     lock = db_session.query(ArtifactNode).filter(ArtifactNode.title == "账号锁定").one()

@@ -24,7 +24,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 SCRIPT_LOCATION = str(BACKEND_DIR / "alembic")
 
 BASELINE_REVISION = "0001_v1_schema_baseline"
-HEAD_REVISION = "0006_agent_run_artifact_context"
+HEAD_REVISION = "0007_artifact_module_convergence"
 
 ARTIFACT_TABLE_NAMES = {
     "test_artifact",

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.sql import func
 
 from app.core.database import Base
@@ -19,6 +19,10 @@ class TestArtifact(Base):
     """
 
     __tablename__ = "test_artifact"
+    __table_args__ = (
+        # P09.1：每项目一份主 Functional TestArtifact（project_id NULL 的私有 Artifact 不受限）
+        UniqueConstraint("project_id", "artifact_type", name="uq_test_artifact_project_type"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     owner_user_id = Column(Integer, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True,

@@ -88,8 +88,8 @@ def test_operations_batch_one_revision(client):
     response = test_client.post(f"/test-artifacts/{artifact['id']}/operations", json={
         "expected_revision": 1,
         "operations": [
-            {"operation_type": "add_node", "parent_id": root, "node_type": "group", "title": "功能"},
-            {"operation_type": "add_node", "parent_id": root, "node_type": "group", "title": "状态"},
+            {"operation_type": "add_node", "parent_id": root, "node_type": "module", "title": "功能"},
+            {"operation_type": "add_node", "parent_id": root, "node_type": "module", "title": "状态"},
         ],
     })
     assert response.status_code == 200
@@ -171,7 +171,9 @@ def test_undo_and_restore_endpoints(client):
                         "node_type": "test_case", "title": "TC1"}],
     })
     tree = test_client.get(f"/test-artifacts/{artifact['id']}/tree").json()
-    tc_id = tree["root"]["children"][0]["id"]
+    default = tree["root"]["children"][0]
+    assert default["title"] == "默认模块"
+    tc_id = default["children"][0]["id"]
     test_client.post(f"/test-artifacts/{artifact['id']}/operations", json={
         "expected_revision": 2,
         "operations": [{"operation_type": "delete_node", "target_node_id": tc_id}],
@@ -179,10 +181,11 @@ def test_undo_and_restore_endpoints(client):
     undo = test_client.post(f"/test-artifacts/{artifact['id']}/undo").json()
     assert undo["new_revision"] == 4
     tree_after = test_client.get(f"/test-artifacts/{artifact['id']}/tree").json()
-    assert [c["title"] for c in tree_after["root"]["children"]] == ["TC1"]
+    assert [c["title"] for c in tree_after["root"]["children"]] == ["默认模块"]
     # 再删除 TC1（rev5），随后 restore 到 Revision 2（rev6）恢复它
     tree_tmp = test_client.get(f"/test-artifacts/{artifact['id']}/tree").json()
-    tc = tree_tmp["root"]["children"][0]["id"]
+    default_tmp = tree_tmp["root"]["children"][0]
+    tc = default_tmp["children"][0]["id"]
     test_client.post(f"/test-artifacts/{artifact['id']}/operations", json={
         "expected_revision": 4,
         "operations": [{"operation_type": "delete_node", "target_node_id": tc}],
@@ -191,7 +194,8 @@ def test_undo_and_restore_endpoints(client):
                                json={"target_revision": 2}).json()
     assert restore["new_revision"] == 6
     tree_final = test_client.get(f"/test-artifacts/{artifact['id']}/tree").json()
-    assert [c["title"] for c in tree_final["root"]["children"]] == ["TC1"]
+    assert [c["title"] for c in tree_final["root"]["children"]] == ["默认模块"]
+    assert [c["title"] for c in tree_final["root"]["children"][0]["children"]] == ["TC1"]
     revisions = test_client.get(f"/test-artifacts/{artifact['id']}/revisions").json()
     assert [r["revision_no"] for r in revisions] == [1, 2, 3, 4, 5, 6]
 
@@ -207,7 +211,8 @@ def test_public_operations_cannot_submit_internal_restore(client):
                         "node_type": "test_case", "title": "TC1"}],
     }).json()
     tree = test_client.get(f"/test-artifacts/{artifact['id']}/tree").json()
-    tc_id = tree["root"]["children"][0]["id"]
+    default = tree["root"]["children"][0]
+    tc_id = default["children"][0]["id"]
     test_client.post(f"/test-artifacts/{artifact['id']}/operations", json={
         "expected_revision": 2,
         "operations": [{"operation_type": "delete_node", "target_node_id": tc_id}],
@@ -216,7 +221,7 @@ def test_public_operations_cannot_submit_internal_restore(client):
         "expected_revision": 3,
         "operations": [{
             "operation_type": "restore", "target_node_id": tc_id,
-            "nodes": [{"id": tc_id, "parent_id": root, "order_key": 1,
+            "nodes": [{"id": tc_id, "parent_id": default["id"], "order_key": 1,
                        "node_type": "test_case", "title": "TC1"}],
         }],
     })
@@ -226,4 +231,5 @@ def test_public_operations_cannot_submit_internal_restore(client):
     undo = test_client.post(f"/test-artifacts/{artifact['id']}/undo").json()
     assert undo["new_revision"] == 4
     tree_after = test_client.get(f"/test-artifacts/{artifact['id']}/tree").json()
-    assert [c["title"] for c in tree_after["root"]["children"]] == ["TC1"]
+    assert [c["title"] for c in tree_after["root"]["children"]] == ["默认模块"]
+    assert [c["title"] for c in tree_after["root"]["children"][0]["children"]] == ["TC1"]

@@ -5,6 +5,9 @@ from sqlalchemy.orm import Session
 
 from app.models.function_case import FunctionCase
 from app.models.requirement_doc import RequirementDoc
+from app.models.test_artifact.artifact_node import ArtifactNode
+from app.models.test_module import TestModule
+from app.services.test_artifacts import artifact_service
 from app.schemas.function_case_generation import (
     GeneratedFunctionCaseItem,
     GenerateFunctionCasesRequest,
@@ -260,8 +263,16 @@ def generate_function_cases_from_requirement(
 
 
 def save_generated_function_cases(
-    db: Session, request: SaveGeneratedFunctionCasesRequest
+    db: Session, request: SaveGeneratedFunctionCasesRequest, requester=None
 ) -> SaveGeneratedFunctionCasesResponse:
+    """P09.1：Requirement 生成保存 → Primary Functional TestArtifact（不再写 function_cases）。
+
+    - ensure Project Functional Artifact（每项目唯一主资产，并发安全）；
+    - module 解析：legacy test_modules 若有同名模块则按名称复用，否则按默认模块语义
+      （无法从上下文判断时不建 root 下裸 Case）；
+    - 批量 add test_case → **一个 Artifact Revision**（不是逐条 Revision）；
+    - requirement 来源写入 node.source_refs（同项目绑定校验在 Artifact Service 内完成）。
+    """
     requirement = (
         db.query(RequirementDoc)
         .filter(
@@ -272,44 +283,99 @@ def save_generated_function_cases(
     )
     if not requirement:
         raise ValueError("需求文本不存在")
-
     project_id = requirement.project_id
-    module_id = request.module_id if request.module_id is not None else requirement.module_id
 
-    db_cases = []
+    artifact = artifact_service.ensure_project_functional_artifact(
+        db, project_id=project_id, requester=requester)
+    module_title = _resolve_requirement_module_title(db, project_id, request)
+    module_node = _ensure_artifact_module(db, artifact, module_title, requester)
+
+    ops = []
     for item in request.cases:
-        case_type = item.case_type if item.case_type in ALLOWED_CASE_TYPES else "其他"
-        priority = item.priority if item.priority in ALLOWED_PRIORITIES else "P1"
         steps = item.steps_json if isinstance(item.steps_json, list) else []
-        test_data = item.test_data_json if isinstance(item.test_data_json, dict) else {}
-        precondition = item.precondition if item.precondition else None
-        remark = item.remark if item.remark else None
+        content = {
+            "preconditions": ([item.precondition] if item.precondition else []),
+            "steps": steps,
+            "expected_results": ([item.expected_result] if item.expected_result else []),
+            "priority": item.priority if item.priority in ALLOWED_PRIORITIES else "P1",
+            "tags": [item.case_type] if item.case_type in ALLOWED_CASE_TYPES else [],
+        }
+        op = {
+            "operation_type": "add_node",
+            "parent_id": module_node.id,
+            "node_type": "test_case",
+            "title": item.case_name or "未命名用例",
+            "content": content,
+            "source_refs": [{"source_type": "requirement",
+                             "source_id": str(requirement.id)}],
+        }
+        ops.append(op)
 
-        db_case = FunctionCase(
-            project_id=project_id,
-            module_id=module_id,
-            requirement_id=request.requirement_id,
-            case_code=item.case_code or None,
-            case_name=item.case_name or "未命名用例",
-            case_type=case_type,
-            source="llm",
-            priority=priority,
-            precondition=precondition,
-            steps_json=steps if steps else None,
-            test_data_json=test_data if test_data else None,
-            expected_result=item.expected_result or None,
-            status="active",
-            remark=remark,
+    added_ids: list[int] = []
+    if ops:
+        from_before = artifact.current_revision
+        result = artifact_service.apply_operations(
+            db, artifact_id=artifact.id, expected_revision=from_before,
+            operations=ops, requester=requester, actor_type="agent",
+            actor_user_id=requester.id if requester is not None else None,
+            summary=f"需求 #{requirement.id} 生成保存 {len(ops)} 条用例",
         )
-        db_cases.append(db_case)
-
-    if db_cases:
-        db.add_all(db_cases)
         db.commit()
-        for db_case in db_cases:
-            db.refresh(db_case)
+        # 以 created_revision 精确取回本批新增的 test_case id（一次 Revision）
+        added_rows = db.query(ArtifactNode).filter(
+            ArtifactNode.artifact_id == artifact.id,
+            ArtifactNode.node_type == "test_case",
+            ArtifactNode.created_revision == result["new_revision"],
+        ).order_by(ArtifactNode.id.asc()).all()
+        added_ids = [row.id for row in added_rows]
 
     return SaveGeneratedFunctionCasesResponse(
-        saved_count=len(db_cases),
-        case_ids=[c.id for c in db_cases],
+        saved_count=len(ops),
+        case_ids=added_ids,
     )
+
+
+def _resolve_requirement_module_title(db: Session, project_id: int,
+                                      request: SaveGeneratedFunctionCasesRequest) -> str:
+    """模块解析：legacy test_modules 存在则取名称；否则默认模块语义。"""
+    module_id = request.module_id if request.module_id is not None else None
+    if module_id is not None:
+        row = db.query(TestModule).filter(
+            TestModule.id == module_id,
+            TestModule.project_id == project_id,
+            TestModule.is_deleted == False,
+        ).first()
+        if row is not None and row.name:
+            return row.name
+    return artifact_service.DEFAULT_MODULE_TITLE
+
+
+def _ensure_artifact_module(db: Session, artifact, title: str, requester):
+    """Artifact 内按 title 定位一级 module；缺失则创建（一次 Revision）。"""
+    module = db.query(ArtifactNode).filter(
+        ArtifactNode.artifact_id == artifact.id,
+        ArtifactNode.node_type == "module",
+        ArtifactNode.parent_id == artifact.root_node_id,
+        ArtifactNode.title == title,
+        ArtifactNode.deleted_revision.is_(None),
+    ).first()
+    if module is not None:
+        return module
+    result = artifact_service.apply_operations(
+        db, artifact_id=artifact.id, expected_revision=artifact.current_revision,
+        operations=[{
+            "operation_type": "add_node", "parent_id": artifact.root_node_id,
+            "node_type": "module", "title": title,
+        }],
+        requester=requester, summary="确保需求模块",
+    )
+    _ = result
+    db.commit()
+    return db.query(ArtifactNode).filter(
+        ArtifactNode.artifact_id == artifact.id,
+        ArtifactNode.node_type == "module",
+        ArtifactNode.parent_id == artifact.root_node_id,
+        ArtifactNode.title == title,
+        ArtifactNode.deleted_revision.is_(None),
+    ).one()
+

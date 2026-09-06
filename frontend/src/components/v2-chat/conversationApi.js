@@ -34,6 +34,11 @@ export function getConversationCapabilities() {
   return request.get("/agent/conversation-capabilities");
 }
 
+// P09.1：把 TestArtifact 设为该 Conversation 的 focused（后端持久化，非前端 local state）
+export function focusConversationArtifact(conversationId, artifactId) {
+  return request.post(`/agent/conversations/${conversationId}/artifacts/${artifactId}/focus`);
+}
+
 // One managed SSE subscription owns renewal, reconnects and cancellation.
 export function streamConversationEvents({ conversationId, afterSequence = 0, onEvent, onError, onOpen }) {
   const configuredBase = String(request.defaults.baseURL || window.location.origin).replace(/\/+$/, "");

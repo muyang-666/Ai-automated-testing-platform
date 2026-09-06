@@ -3,15 +3,14 @@ from sqlalchemy.sql import func
 
 from app.core.database import Base
 
-# node_type 值域（首期）
+# node_type 值域（P09.1 收敛：root / module / test_case）
 NODE_TYPE_ROOT = "root"
-NODE_TYPE_GROUP = "group"
-NODE_TYPE_TEST_POINT = "test_point"
+NODE_TYPE_MODULE = "module"
 NODE_TYPE_TEST_CASE = "test_case"
 
 
 class ArtifactNode(Base):
-    """ArtifactNode：Artifact 的用例树节点（root/group/test_point/test_case）。
+    """ArtifactNode：Artifact 的用例树节点（root/module/test_case）。
 
     删除采用逻辑删除：deleted_revision 置为删除发生的 revision_no，历史不物理抹除；
     默认 tree/API 不返回已删除节点，也不能作为后续 parent/target。
@@ -29,7 +28,7 @@ class ArtifactNode(Base):
                          comment="所属 Artifact")
     parent_id = Column(Integer, ForeignKey("artifact_node.id", ondelete="RESTRICT"), nullable=True, index=True,
                        comment="父节点；仅 root 为 NULL")
-    node_type = Column(String(20), nullable=False, index=True, comment="root/group/test_point/test_case")
+    node_type = Column(String(20), nullable=False, index=True, comment="root/module/test_case")
     order_key = Column(Integer, nullable=False, default=0, comment="同 parent 下兄弟序号")
     title = Column(String(500), nullable=False, default="", comment="标题")
     content_json = Column(JSON, nullable=True, comment="按 node_type 校验的结构化内容（test_case 强 schema）")

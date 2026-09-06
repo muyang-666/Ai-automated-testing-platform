@@ -108,7 +108,7 @@ def test_registry_and_current_metadata(runtime_fixture):
 def test_add_read_search_outline_and_recent_diff(runtime_fixture, db_session):
     runtime, artifact_id, root_id = runtime_fixture
     added, _ = _execute("add_artifact_node", {"expected_revision": 1,
-        "parent_id": root_id, "node": {"node_type": "test_point", "title": "账号锁定"}}, runtime)
+        "parent_id": root_id, "node": {"node_type": "module", "title": "账号锁定"}}, runtime)
     assert added.message.details["data"]["revision"] == 2
     node_id = added.message.details["data"]["affected_node_ids"][0]
     read, _ = _execute("read_artifact_nodes", {"node_ids": [node_id]}, runtime)
@@ -135,9 +135,9 @@ def test_read_requirement_node_source_refs_do_not_authorize(project_runtime_fixt
     # 会话未绑定任何 requirement 的项目 Artifact：即使 node 引用存在也不可读
     user = db_session.get(User, USER_A)
     artifact_free = artifact_service.create_artifact(db_session, requester=user,
-                                                     title="P1无绑定Artifact", project_id=9301)
+                                                     title="P2无绑定Artifact", project_id=9302)
     session_free = conversation_service.create_conversation_session(
-        db_session, requester_user_id=USER_A, title="无绑定会话", project_id=9301)
+        db_session, requester_user_id=USER_A, title="无绑定会话", project_id=9302)
     db_session.commit()
     conversation_service.focus_conversation_artifact(
         db_session, session_id=session_free.id, artifact_id=artifact_free.id, requester=user)
@@ -150,10 +150,10 @@ def test_read_requirement_node_source_refs_do_not_authorize(project_runtime_fixt
     ref_added, _ = _execute("add_artifact_node", {
         "expected_revision": 1, "parent_id": artifact_free.root_node_id,
         "node": {"node_type": "test_case", "title": "TC-REF2",
-                 "source_refs": [{"source_type": "requirement", "source_id": str(req_a)}]},
+                 "source_refs": [{"source_type": "requirement", "source_id": str(req_b)}]},
     }, runtime_free)
     assert ref_added.message.is_error is False
-    unbound, _ = _execute("read_requirement", {"requirement_id": req_a}, runtime_free)
+    unbound, _ = _execute("read_requirement", {"requirement_id": req_b}, runtime_free)
     assert unbound.message.is_error is True
     assert unbound.error_code == "requirement_not_bound"
 
@@ -163,14 +163,14 @@ def test_batch_add_update_move_and_single_revision(runtime_fixture, db_session):
     batch, _ = _execute("batch_apply_artifact_operations", {"expected_revision": 1,
         "summary": "新增两个分支", "operations": [
             {"operation_type": "add_node", "parent_id": root_id,
-             "node": {"node_type": "test_point", "title": "锁定"}, "ref": "lock"},
+             "node": {"node_type": "module", "title": "锁定"}, "ref": "lock"},
             {"operation_type": "add_node", "parent_id": root_id,
-             "node": {"node_type": "test_point", "title": "解锁"}},
+             "node": {"node_type": "module", "title": "解锁"}},
         ]}, runtime)
     assert batch.message.details["data"]["revision"] == 2
     assert len(batch.message.details["data"]["affected_node_ids"]) == 2
     lock, unlock = db_session.query(ArtifactNode).filter(
-        ArtifactNode.artifact_id == artifact_id, ArtifactNode.node_type == "test_point",
+        ArtifactNode.artifact_id == artifact_id, ArtifactNode.node_type == "module",
     ).order_by(ArtifactNode.id).all()
     updated, _ = _execute("update_artifact_node", {"expected_revision": 2,
         "target_node_id": lock.id, "patch": {"title": "账号锁定"}}, runtime)
@@ -189,9 +189,9 @@ def test_batch_add_update_move_and_single_revision(runtime_fixture, db_session):
 def test_stale_revision_is_machine_readable_and_retryable(runtime_fixture):
     runtime, _artifact_id, root_id = runtime_fixture
     _execute("add_artifact_node", {"expected_revision": 1, "parent_id": root_id,
-        "node": {"node_type": "test_point", "title": "A"}}, runtime)
+        "node": {"node_type": "module", "title": "A"}}, runtime)
     stale, _ = _execute("add_artifact_node", {"expected_revision": 1, "parent_id": root_id,
-        "node": {"node_type": "test_point", "title": "B"}}, runtime)
+        "node": {"node_type": "module", "title": "B"}}, runtime)
     assert stale.message.is_error is True
     assert stale.message.details["error_code"] == "revision_conflict"
     assert stale.message.details["retryable"] is True
@@ -203,7 +203,7 @@ def test_forged_identity_and_server_fields_are_rejected_before_handler(runtime_f
     before = _revision(db_session, artifact_id)
     for extra in ({"user_id": USER_B}, {"project_id": 999}, {"owner_user_id": USER_B}):
         args = {"expected_revision": before, "parent_id": root_id,
-                "node": {"node_type": "test_point", "title": "forged"}} | extra
+                "node": {"node_type": "module", "title": "forged"}} | extra
         outcome, _ = _execute("add_artifact_node", args, runtime)
         assert outcome.message.is_error is True
         assert outcome.error_code == "invalid_arguments"
@@ -234,7 +234,7 @@ def test_batch_failure_rolls_back_every_operation(runtime_fixture, db_session):
     outcome, _ = _execute("batch_apply_artifact_operations", {"expected_revision": 1,
         "operations": [
             {"operation_type": "add_node", "parent_id": root_id,
-             "node": {"node_type": "test_point", "title": "should rollback"}},
+             "node": {"node_type": "module", "title": "should rollback"}},
             {"operation_type": "move_node", "target_node_id": 999999, "new_parent_id": root_id},
         ]}, runtime)
     assert outcome.message.is_error
@@ -245,7 +245,7 @@ def test_batch_failure_rolls_back_every_operation(runtime_fixture, db_session):
 def test_large_delete_requires_approval_and_does_not_mutate(runtime_fixture, db_session):
     runtime, artifact_id, root_id = runtime_fixture
     operations = [{"operation_type": "add_node", "parent_id": root_id,
-                   "node_type": "test_point", "title": "large", "ref": "large"}]
+                   "node_type": "module", "title": "large", "ref": "large"}]
     operations += [{"operation_type": "add_node", "parent_id": "@large",
                     "node_type": "test_case", "title": f"case-{index}", "content": _case()}
                    for index in range(9)]
@@ -265,7 +265,7 @@ def test_quality_tools_are_deterministic_and_read_only(runtime_fixture, db_sessi
     runtime, artifact_id, root_id = runtime_fixture
     result = artifact_service.apply_operations(db_session, artifact_id=artifact_id,
         expected_revision=1, requester=db_session.get(User, USER_A), operations=[
-            {"operation_type": "add_node", "parent_id": root_id, "node_type": "test_point",
+            {"operation_type": "add_node", "parent_id": root_id, "node_type": "module",
              "title": "边界与状态转换", "ref": "point"},
             {"operation_type": "add_node", "parent_id": "@point", "node_type": "test_case",
              "title": "锁定边界", "content": _case(["边界", "状态转换"])},
@@ -291,7 +291,7 @@ def test_quality_tools_are_deterministic_and_read_only(runtime_fixture, db_sessi
 def test_cancel_prevents_write(runtime_fixture, db_session):
     runtime, artifact_id, root_id = runtime_fixture
     outcome, _ = _execute("add_artifact_node", {"expected_revision": 1,
-        "parent_id": root_id, "node": {"node_type": "test_point", "title": "cancelled"}},
+        "parent_id": root_id, "node": {"node_type": "module", "title": "cancelled"}},
         runtime, cancel=True)
     assert outcome.error_code == "canceled"
     assert _revision(db_session, artifact_id) == 1
@@ -300,7 +300,7 @@ def test_cancel_prevents_write(runtime_fixture, db_session):
 def test_write_audit_and_events_link_conversation_and_run(runtime_fixture, db_session):
     runtime, artifact_id, root_id = runtime_fixture
     _execute("add_artifact_node", {"expected_revision": 1, "parent_id": root_id,
-        "node": {"node_type": "test_point", "title": "audit"}}, runtime)
+        "node": {"node_type": "module", "title": "audit"}}, runtime)
     revisions = artifact_service.list_revisions(db_session, artifact_id=artifact_id,
                                                  requester=db_session.get(User, USER_A))
     latest = revisions[-1]
@@ -493,7 +493,7 @@ def test_artifact_write_fence_rejects_stale_owner_and_cancel(runtime_fixture, db
 
     owned = replace(runtime, worker_id="w-1", execution_token=1)
     added, _ = _execute("add_artifact_node", {"expected_revision": 1,
-        "parent_id": root_id, "node": {"node_type": "test_point", "title": "锁定"}}, owned)
+        "parent_id": root_id, "node": {"node_type": "module", "title": "锁定"}}, owned)
     assert added.message.is_error is False
     assert added.message.details["data"]["revision"] == 2
     node_id = added.message.details["data"]["affected_node_ids"][0]
@@ -530,31 +530,33 @@ def test_restore_historical_provenance_allowed_after_requirement_soft_delete(
 
     runtime, artifact_id, root_id, req_a, req_b = project_runtime_fixture
     user = db_session.get(User, USER_A)
-    added, _ = _execute("add_artifact_node", {"expected_revision": 1,
-        "parent_id": root_id,
+    # 显式模块（避免隐式默认模块参与批内 affected 推导）
+    module = artifact_service.get_or_create_default_module(
+        db_session, artifact_id=artifact_id, requester=user)
+    rev_base = artifact_service.get_artifact(
+        db_session, artifact_id=artifact_id, requester=user).current_revision
+    added, _ = _execute("add_artifact_node", {"expected_revision": rev_base,
+        "parent_id": module.id,
         "node": {"node_type": "test_case", "title": "TC-REQ",
                  "source_refs": [{"source_type": "requirement", "source_id": str(req_a)}]}},
         runtime)
     assert added.message.is_error is False
     node_id = added.message.details["data"]["affected_node_ids"][0]
     revision = added.message.details["data"]["revision"]
-    # rev+1：清空 refs（历史仍记录"曾引用 req_a"）
     cleared, _ = _execute("update_artifact_node", {"expected_revision": revision,
         "target_node_id": node_id, "patch": {"source_refs": []}}, runtime)
     assert cleared.message.is_error is False
     cleared_rev = cleared.message.details["data"]["revision"]
-    # Requirement 后来软删除
     requirement = db_session.get(RequirementDoc, req_a)
     requirement.is_deleted = True
     db_session.commit()
-    # internal undo（service 层）→ 恢复历史 provenance（Requirement 已删除仍可恢复）
+    db_session.expire_all()
     result = artifact_service.undo_latest(db_session, artifact_id=artifact_id, requester=user)
     db_session.commit()
     assert result["new_revision"] == cleared_rev + 1
     db_session.expire_all()
     row = db_session.get(ArtifactNode, node_id)
     assert row.source_refs_json[0]["source_id"] == str(req_a)
-
 
 def test_read_requirement_rejects_soft_deleted_requirement(project_runtime_fixture, db_session):
     from app.models.requirement_doc import RequirementDoc

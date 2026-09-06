@@ -8,8 +8,6 @@
 
 from typing import Any
 
-from typing import Any
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
@@ -19,6 +17,7 @@ from app.routers.dependencies import get_current_user
 from app.schemas.test_artifact.api import (
     AppliedOperationsResponse,
     ArtifactCreateRequest,
+    ArtifactEnsureRequest,
     DiffResponse,
     OperationInput,
     OperationSubmitRequest,
@@ -134,6 +133,22 @@ def create_artifact(payload: ArtifactCreateRequest, db: Session = Depends(get_db
             db, requester=current_user, title=payload.title,
             artifact_type=payload.artifact_type, project_id=payload.project_id,
         )
+        db.commit()
+    except TestArtifactError as err:
+        db.rollback()
+        raise _http_error(err) from err
+    return _artifact_dict(row)
+
+
+@router.post("/ensure-project-functional", response_model=ArtifactSummary)
+def ensure_project_functional(payload: ArtifactEnsureRequest,
+                             db: Session = Depends(get_db),
+                             current_user: User = Depends(get_current_user)):
+    """P09.1：确保项目主 Functional TestArtifact（每项目唯一，并发由 DB 约束裁决）。"""
+    try:
+        row = artifact_service.ensure_project_functional_artifact(
+            db, project_id=payload.project_id, requester=current_user,
+            title=payload.title or None)
         db.commit()
     except TestArtifactError as err:
         db.rollback()

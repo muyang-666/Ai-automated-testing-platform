@@ -25,7 +25,7 @@ class ReadNodesInput(StrictModel):
 
 class SearchInput(StrictModel):
     keyword: str | None = Field(default=None, max_length=200)
-    node_type: Literal["root", "group", "test_point", "test_case"] | None = None
+    node_type: Literal["root", "module", "test_case"] | None = None
     tag: str | None = Field(default=None, max_length=100)
     limit: int = Field(default=20, ge=1, le=50)
 
@@ -48,20 +48,26 @@ class SourceRefInput(StrictModel):
 
 
 class TestCaseStepInput(StrictModel):
+    step_no: int | None = Field(default=None, gt=0)
     action: str = Field(min_length=1, max_length=1000)
     data: str | None = Field(default=None, max_length=1000)
+
+
+class ExpectedResultInput(StrictModel):
+    step_no: int | None = Field(default=None, gt=0)
+    expected: str = Field(min_length=1, max_length=2000)
 
 
 class TestCaseContentInput(StrictModel):
     preconditions: list[str] = Field(default_factory=list, max_length=50)
     steps: list[TestCaseStepInput] = Field(default_factory=list, max_length=100)
-    expected_results: list[str] = Field(default_factory=list, max_length=50)
-    priority: Literal["P0", "P1", "P2", "P3", "P4"] = "P2"
+    expected_results: list[Union[ExpectedResultInput, str]] = Field(default_factory=list, max_length=50)
+    priority: Literal["P0", "P1", "P2", "P3"] = "P1"
     tags: list[str] = Field(default_factory=list, max_length=50)
 
 
 class NodeInput(StrictModel):
-    node_type: Literal["group", "test_point", "test_case"]
+    node_type: Literal["module", "test_case"]
     title: str = Field(min_length=1, max_length=500)
     content: TestCaseContentInput | None = None
     source_refs: list[SourceRefInput] | None = Field(default=None, max_length=20)

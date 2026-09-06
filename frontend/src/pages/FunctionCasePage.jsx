@@ -1,690 +1,282 @@
-import { useEffect, useState } from "react";
-import {
-  Button,
-  Card,
-  Checkbox,
-  Col,
-  Drawer,
-  Form,
-  Input,
-  InputNumber,
-  message,
-  Popconfirm,
-  Row,
-  Select,
-  Space,
-  Table,
-  Tag,
-} from "antd";
-import {
-  createFunctionCase,
-  deleteFunctionCase,
-  getFunctionCaseList,
-  updateFunctionCase,
-} from "../api/functionCase";
+// P09.1 FunctionCasePage（Converged）：数据源 = Project Functional TestArtifact。
+// 左侧 Module Tree（来自 Artifact tree），右侧 Case List（同一 tree 派生），
+// 只读 Detail Drawer；不做 CRUD UI（P09.2）。
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Button, Card, Drawer, Empty, Input, Select, Space, Table, Tag, Tree, Typography } from "antd";
 import { getProjectList } from "../api/project";
-import { getRequirementList } from "../api/requirement";
-import ModuleTree from "../components/ModuleTree";
-import {
-  getStoredProjectId,
-  resolveProjectId,
-  storeProjectId,
-} from "../utils/projectSelection";
-import { canOperateProject } from "../utils/authPermissions";
+import { ensureProjectArtifact, getArtifact, getArtifactTree } from "../api/testArtifact";
+import { collectScopeCases, buildModuleTree } from "../components/v2-workspace/caseView";
+import { formatCaseNumber } from "../components/v2-workspace/caseNumber";
+import { getStoredProjectId, resolveProjectId, storeProjectId } from "../utils/projectSelection";
+import { isViewerOnly } from "../utils/authPermissions";
 
-function getErrorMessage(error) {
-  return (
-    error?.response?.data?.detail ||
-    error?.response?.data?.message ||
-    error?.message ||
-    "操作失败"
-  );
+const PRIORITY_COLOR = { P0: "red", P1: "orange", P2: "gold", P3: "default" };
+
+function textLines(items = []) {
+  return items.map((item, i) => {
+    if (typeof item === "string") return item;
+    if (Array.isArray(item) && typeof item[0] === "string") return `${i + 1}. ${item[0]}`;
+    if (item && typeof item === "object") return `${i + 1}. ${item.expected ?? ""}`;
+    return String(item);
+  }).filter(Boolean).join("\n");
 }
 
-function parseJsonField(value, fieldName) {
-  if (!value || value.trim() === "") return null;
-  try {
-    return JSON.parse(value);
-  } catch (e) {
-    message.error(`${fieldName}不是合法 JSON`);
-    throw e;
-  }
+function summarize(value, max = 120) {
+  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  return text.length > max ? `${text.slice(0, max)}…` : text;
 }
-
-function formatJson(value) {
-  if (value == null) return "";
-  return JSON.stringify(value, null, 2);
-}
-
-const CASE_TYPE_OPTIONS = [
-  { label: "正常场景", value: "正常场景" },
-  { label: "异常场景", value: "异常场景" },
-  { label: "边界场景", value: "边界场景" },
-  { label: "业务规则场景", value: "业务规则场景" },
-  { label: "其他", value: "其他" },
-];
-
-const SOURCE_OPTIONS = [
-  { label: "manual", value: "manual" },
-  { label: "llm", value: "llm" },
-];
-
-const PRIORITY_OPTIONS = [
-  { label: "P0", value: "P0" },
-  { label: "P1", value: "P1" },
-  { label: "P2", value: "P2" },
-];
-
-const STATUS_OPTIONS = [
-  { label: "未开始", value: "未开始" },
-  { label: "通过", value: "通过" },
-  { label: "失败", value: "失败" },
-  { label: "跳过", value: "跳过" },
-  { label: "堵塞", value: "堵塞" },
-];
-
-const SOURCE_TAG_MAP = {
-  manual: { color: "blue", label: "manual" },
-  llm: { color: "green", label: "llm" },
-};
-
-const PRIORITY_TAG_MAP = {
-  P0: { color: "red", label: "P0" },
-  P1: { color: "orange", label: "P1" },
-  P2: { color: "blue", label: "P2" },
-};
-
-const STATUS_TAG_MAP = {
-  未开始: { color: "default", label: "未开始" },
-  通过: { color: "success", label: "通过" },
-  失败: { color: "error", label: "失败" },
-  跳过: { color: "default", label: "跳过" },
-  堵塞: { color: "warning", label: "堵塞" },
-  active: { color: "default", label: "未开始" },
-  disabled: { color: "warning", label: "堵塞" },
-  draft: { color: "default", label: "未开始" },
-};
-
-const FILTER_ALL = "";
-
-const getStatusLabel = (value) => STATUS_TAG_MAP[value]?.label || value || "-";
 
 export default function FunctionCasePage() {
-  const [cases, setCases] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [modalMode, setModalMode] = useState("create");
-  const [editingCase, setEditingCase] = useState(null);
-  const [detailModalOpen, setDetailModalOpen] = useState(false);
-  const [detailCase, setDetailCase] = useState(null);
-  const [form] = Form.useForm();
-
   const [projects, setProjects] = useState([]);
-  const [selectedProjectId, setSelectedProjectId] = useState(getStoredProjectId);
-  const [selectedModuleId, setSelectedModuleId] = useState(null);
-  const [includeChildren, setIncludeChildren] = useState(false);
-  const [requirements, setRequirements] = useState([]);
-  const [selectedRequirementId, setSelectedRequirementId] = useState(FILTER_ALL);
+  const [projectId, setProjectId] = useState(null);
+  const [artifact, setArtifact] = useState(null);
+  const [tree, setTree] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [scopeId, setScopeId] = useState(null); // null = 全部模块（root 范围）
   const [keyword, setKeyword] = useState("");
-  const [caseTypeFilter, setCaseTypeFilter] = useState(FILTER_ALL);
-  const [sourceFilter, setSourceFilter] = useState(FILTER_ALL);
-  const [priorityFilter, setPriorityFilter] = useState(FILTER_ALL);
-  const [statusFilter, setStatusFilter] = useState(FILTER_ALL);
-  const canOperateSelectedProject = canOperateProject(selectedProjectId);
+  const [priority, setPriority] = useState(undefined);
+  const [selected, setSelected] = useState(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const seq = useRef(0);
 
-  const fetchProjects = async () => {
+  const load = useCallback(async (pid) => {
+    if (pid == null) return;
+    const token = ++seq.current;
+    setLoading(true);
+    setError("");
     try {
-      const res = await getProjectList();
-      setProjects(res.data || []);
-    } catch (error) {
-      message.error(getErrorMessage(error));
+      const ensured = await ensureProjectArtifact({ project_id: pid });
+      if (token !== seq.current) return;
+      const artifactRow = await getArtifact(ensured.data.id);
+      const treeRes = await getArtifactTree(ensured.data.id);
+      if (token !== seq.current) return;
+      setArtifact(artifactRow.data);
+      setTree(treeRes.data);
+      setScopeId(null);
+      setSelected(null);
+    } catch (err) {
+      if (token !== seq.current) return;
+      setArtifact(null);
+      setTree(null);
+      setError(err?.response?.data?.detail || err?.message || "加载失败");
+    } finally {
+      if (token === seq.current) setLoading(false);
     }
-  };
-
-  const fetchRequirements = async (projectId) => {
-    if (!projectId) {
-      setRequirements([]);
-      return;
-    }
-    try {
-      const res = await getRequirementList({ project_id: projectId });
-      setRequirements(res.data || []);
-    } catch (error) {
-      message.error(getErrorMessage(error));
-    }
-  };
-
-  useEffect(() => {
-    fetchProjects();
   }, []);
 
   useEffect(() => {
-    if (projects.length > 0) {
-      const nextProjectId = resolveProjectId(projects, selectedProjectId);
-      if (nextProjectId !== selectedProjectId) {
-        setSelectedProjectId(nextProjectId);
-        storeProjectId(nextProjectId);
+    let disposed = false;
+    void (async () => {
+      try {
+        const response = await getProjectList();
+        if (disposed) return;
+        const list = response.data || [];
+        setProjects(list);
+        const initial = resolveProjectId(list, getStoredProjectId());
+        if (initial) {
+          setProjectId(initial.id);
+          storeProjectId(initial.id);
+        }
+      } catch {
+        if (!disposed) setError("加载项目列表失败");
       }
-    }
-  }, [projects, selectedProjectId]);
+    })();
+    return () => { disposed = true; seq.current += 1; };
+  }, []);
 
   useEffect(() => {
-    if (selectedProjectId) {
-      fetchCases();
-    }
-  }, [
-    selectedProjectId,
-    selectedModuleId,
-    includeChildren,
-    selectedRequirementId,
-    keyword,
-    caseTypeFilter,
-    sourceFilter,
-    priorityFilter,
-    statusFilter,
-  ]);
+    if (projectId == null) return;
+    void load(projectId);
+  }, [projectId, load]);
 
-  const fetchCases = async () => {
-    if (!selectedProjectId) return;
-    setLoading(true);
-    try {
-      const params = { project_id: selectedProjectId };
-      if (selectedModuleId != null) {
-        params.module_id = selectedModuleId;
-        if (includeChildren) params.include_children = true;
-      }
-      if (selectedRequirementId) params.requirement_id = selectedRequirementId;
-      if (keyword) params.keyword = keyword;
-      if (caseTypeFilter) params.case_type = caseTypeFilter;
-      if (sourceFilter) params.source = sourceFilter;
-      if (priorityFilter) params.priority = priorityFilter;
-      if (statusFilter) params.status = statusFilter;
-      const res = await getFunctionCaseList(params);
-      setCases(res.data || []);
-    } catch (error) {
-      message.error(getErrorMessage(error));
-    } finally {
-      setLoading(false);
-    }
-  };
+  const moduleTree = useMemo(() => (tree ? buildModuleTree(tree.root) : null), [tree]);
 
-  const handleProjectChange = (value) => {
-    setSelectedProjectId(value);
-    storeProjectId(value);
-    setSelectedModuleId(null);
-    setSelectedRequirementId(FILTER_ALL);
-    fetchRequirements(value);
-  };
-
-  const handleModuleSelect = (moduleId) => {
-    setSelectedModuleId(moduleId);
-  };
-
-  const handleModuleChange = () => {
-    fetchCases();
-  };
-
-  const openCreateModal = () => {
-    if (!selectedProjectId) {
-      message.warning("请先选择项目");
-      return;
-    }
-    setModalMode("create");
-    setEditingCase(null);
-    form.resetFields();
-    form.setFieldsValue({
-      project_id: selectedProjectId,
-      module_id: selectedModuleId || undefined,
-      source: "manual",
-      priority: "P1",
-      status: "未开始",
+  const treeData = useMemo(() => {
+    if (!moduleTree) return [];
+    const mapToAntd = (node) => ({
+      key: String(node.id),
+      title: node.title,
+      children: node.children.map(mapToAntd),
     });
-    setModalOpen(true);
-  };
+    return (moduleTree.children || []).map(mapToAntd);
+  }, [moduleTree]);
 
-  const openEditModal = (record) => {
-    setModalMode("edit");
-    setEditingCase(record);
-    form.setFieldsValue({
-      project_id: record.project_id,
-      module_id: record.module_id,
-      requirement_id: record.requirement_id,
-      case_code: record.case_code,
-      case_name: record.case_name,
-      case_type: record.case_type,
-      source: record.source,
-      priority: record.priority,
-      precondition: record.precondition,
-      steps_json: formatJson(record.steps_json),
-      test_data_json: formatJson(record.test_data_json),
-      expected_result: record.expected_result,
-      status: record.status,
-      remark: record.remark,
-    });
-    setModalOpen(true);
-  };
+  const rows = useMemo(() => {
+    if (!tree) return [];
+    return collectScopeCases(tree.root, scopeId);
+  }, [tree, scopeId]);
 
-  const openDetailModal = (record) => {
-    setDetailCase(record);
-    setDetailModalOpen(true);
-  };
-
-  const closeModal = () => {
-    setModalOpen(false);
-    setEditingCase(null);
-    form.resetFields();
-  };
-
-  const handleSubmit = async () => {
-    try {
-      const values = await form.validateFields();
-      setSubmitting(true);
-
-      const data = { ...values };
-      data.steps_json = parseJsonField(values.steps_json, "测试步骤");
-      data.test_data_json = parseJsonField(values.test_data_json, "测试数据");
-
-      if (modalMode === "create") {
-        await createFunctionCase(data);
-        message.success("功能测试用例创建成功");
-      } else {
-        await updateFunctionCase(editingCase.id, data);
-        message.success("功能测试用例更新成功");
-      }
-
-      closeModal();
-      fetchCases();
-    } catch (error) {
-      if (error?.response) {
-        message.error(getErrorMessage(error));
-      }
-    } finally {
-      setSubmitting(false);
+  const filtered = useMemo(() => rows.filter((row) => {
+    if (priority && row.priority !== priority) return false;
+    if (keyword) {
+      const haystack = [
+        row.caseNumber, row.title, row.modulePath.join("/"),
+        ...row.preconditions, ...row.steps.map((s) => `${s.step_no ?? ""} ${s.action}`),
+        ...row.expectedResults.map((e) => (typeof e === "string" ? e : e?.expected ?? "")),
+      ].join(" ").toLowerCase();
+      if (!haystack.includes(keyword.toLowerCase())) return false;
     }
-  };
+    return true;
+  }), [rows, keyword, priority]);
 
-  const handleDelete = async (caseId) => {
-    try {
-      await deleteFunctionCase(caseId);
-      message.success("功能测试用例删除成功");
-      fetchCases();
-    } catch (error) {
-      message.error(getErrorMessage(error));
-    }
-  };
+  const viewerOnly = isViewerOnly();
 
   const columns = [
-    { title: "ID", dataIndex: "id", width: 28 },
-    { title: "编号", dataIndex: "case_code", width: 120, ellipsis: true, render: (v) => v || "-" },
-    { title: "名称", dataIndex: "case_name", width: 285, ellipsis: true },
-    {
-      title: "优先级",
-      dataIndex: "priority",
-      width: 75,
-      render: (value) => {
-        if (!value) return "-";
-        const tag = PRIORITY_TAG_MAP[value] || { color: "default", label: value };
-        return <Tag color={tag.color}>{tag.label}</Tag>;
-      },
-    },
-    {
-      title: "类型",
-      dataIndex: "case_type",
-      width: 100,
-      ellipsis: true,
-      render: (value) => value || "-",
-    },
-    {
-      title: "来源",
-      dataIndex: "source",
-      width: 75,
-      render: (value) => {
-        if (!value) return "-";
-        const tag = SOURCE_TAG_MAP[value] || { color: "default", label: value };
-        return <Tag color={tag.color}>{tag.label}</Tag>;
-      },
-    },
-    {
-      title: "状态",
-      dataIndex: "status",
-      width: 75,
-      render: (value) => {
-        if (!value) return "-";
-        const tag = STATUS_TAG_MAP[value] || { color: "default", label: value };
-        return <Tag color={tag.color}>{tag.label}</Tag>;
-      },
-    },
-    {
-      title: "更新时间",
-      dataIndex: "updated_at",
-      width: 150,
-      render: (value) => (value ? new Date(value).toLocaleString("zh-CN") : "-"),
-    },
-    {
-      title: "操作",
-      width: 260,
-      render: (_, record) => (
-        <Space size="small">
-          <Button size="small" className="standard-action-btn" onClick={() => openDetailModal(record)}>
-            查看详情
-          </Button>
-          {canOperateProject(record.project_id) ? (
-            <>
-              <Button size="small" className="standard-action-btn" onClick={() => openEditModal(record)}>
-                编辑
-              </Button>
-              <Popconfirm
-                title="确认删除该功能测试用例吗？"
-                description="删除后不可恢复，请确认。"
-                okText="确认"
-                cancelText="取消"
-                overlayClassName="standard-popconfirm"
-                okButtonProps={{ className: "standard-popconfirm-ok" }}
-                cancelButtonProps={{ className: "standard-popconfirm-cancel" }}
-                onConfirm={() => handleDelete(record.id)}
-              >
-                <Button size="small" className="standard-delete-btn">
-                  删除
-                </Button>
-              </Popconfirm>
-            </>
-          ) : (
-            <Tag>只读</Tag>
-          )}
-        </Space>
-      ),
-    },
+    { title: "编号", dataIndex: "caseNumber", width: 110, fixed: "left",
+      render: (value) => <Typography.Text type="secondary">{value}</Typography.Text> },
+    { title: "模块", key: "module", width: 150,
+      render: (_, row) => row.modulePath.join(" / ") || "—" },
+    { title: "名称", dataIndex: "title", ellipsis: true, width: 200 },
+    { title: "前置条件", key: "pre", width: 180,
+      render: (_, row) => <span className="cell-preview">{summarize(textLines(row.preconditions)) || "—"}</span> },
+    { title: "步骤", key: "steps", width: 220,
+      render: (_, row) => <span className="cell-preview">{summarize(textLines(row.steps)) || "—"}</span> },
+    { title: "预期结果", key: "expected", width: 220,
+      render: (_, row) => <span className="cell-preview">{summarize(textLines(row.expectedResults)) || "—"}</span> },
+    { title: "优先级", dataIndex: "priority", width: 90,
+      render: (value) => <Tag color={PRIORITY_COLOR[value] || "default"}>{value}</Tag> },
   ];
 
   return (
-    <div className="standard-page">
-    <Space direction="vertical" size="large" style={{ width: "100%" }}>
-      <Card className="standard-toolbar-card">
-        <Row justify="space-between" align="middle" gutter={[16, 8]}>
-          <Col flex="auto">
-            <Space wrap>
-              <span className="standard-project-label">项目：</span>
-              <Select
-                placeholder="请选择项目"
-                value={selectedProjectId}
-                onChange={handleProjectChange}
-                options={projects.map((p) => ({ label: p.name, value: p.id }))}
-                style={{ width: 180 }}
-                popupClassName="standard-select-dropdown"
-              />
-              <Input.Search
-                placeholder="搜索编号/名称/前置条件/预期"
-                allowClear
-                onSearch={(v) => setKeyword(v)}
-                style={{ width: 220 }}
-              />
-              <Select
-                placeholder="需求筛选"
-                allowClear
-                value={selectedRequirementId || undefined}
-                onChange={(v) => setSelectedRequirementId(v || FILTER_ALL)}
-                options={requirements.map((r) => ({ label: r.title, value: r.id }))}
-                style={{ width: 160 }}
-                popupClassName="standard-select-dropdown"
-              />
-              <Select
-                placeholder="类型"
-                allowClear
-                value={caseTypeFilter || undefined}
-                onChange={(v) => setCaseTypeFilter(v || FILTER_ALL)}
-                options={CASE_TYPE_OPTIONS}
-                style={{ width: 120 }}
-                popupClassName="standard-select-dropdown"
-              />
-              <Select
-                placeholder="来源"
-                allowClear
-                value={sourceFilter || undefined}
-                onChange={(v) => setSourceFilter(v || FILTER_ALL)}
-                options={SOURCE_OPTIONS}
-                style={{ width: 100 }}
-                popupClassName="standard-select-dropdown"
-              />
-              <Select
-                placeholder="优先级"
-                allowClear
-                value={priorityFilter || undefined}
-                onChange={(v) => setPriorityFilter(v || FILTER_ALL)}
-                options={PRIORITY_OPTIONS}
-                style={{ width: 90 }}
-                popupClassName="standard-select-dropdown"
-              />
-              <Select
-                placeholder="状态"
-                allowClear
-                value={statusFilter || undefined}
-                onChange={(v) => setStatusFilter(v || FILTER_ALL)}
-                options={STATUS_OPTIONS}
-                style={{ width: 100 }}
-                popupClassName="standard-select-dropdown"
-              />
-            </Space>
-          </Col>
-          <Col>
-            {canOperateSelectedProject && (
-              <Button type="primary" className="standard-primary-btn" onClick={openCreateModal}>
-                新增功能用例
-              </Button>
-            )}
-          </Col>
-        </Row>
-      </Card>
-
-      <div className="standard-layout">
-        <div className="standard-module-shell">
-          <ModuleTree
-            projectId={selectedProjectId}
-            selectedModuleId={selectedModuleId}
-            onSelect={handleModuleSelect}
-            onChange={handleModuleChange}
-            createButtonLabel="新增模块"
-            createButtonClassName="requirement-module-header-btn"
-            createButtonIcon={null}
-            headerExtra={
-              <Button className="requirement-module-header-btn" block>
-                无模块用例
-              </Button>
-            }
+    <Card size="small" title={null} className="case-page">
+      <div className="case-page-toolbar">
+        <Space wrap>
+          <span>项目：</span>
+          <Select
+            value={projectId}
+            style={{ width: 240 }}
+            onChange={(value) => { setProjectId(value); storeProjectId(value); }}
+            options={(projects || []).map((p) => ({ value: p.id, label: p.name }))}
           />
-          <Checkbox
-            checked={includeChildren}
-            onChange={(e) => setIncludeChildren(e.target.checked)}
-            style={{ marginTop: 8 }}
-          >
-            包含子模块
-          </Checkbox>
-        </div>
+          <Input.Search
+            allowClear placeholder="搜索编号/名称/步骤/预期…" style={{ width: 300 }}
+            value={keyword} onChange={(e) => setKeyword(e.target.value)}
+          />
+          <Select
+            allowClear placeholder="优先级" style={{ width: 120 }}
+            value={priority}
+            onChange={setPriority}
+            options={["P0", "P1", "P2", "P3"].map((p) => ({ value: p, label: p }))}
+          />
+          {artifact && (
+            <Typography.Text type="secondary">
+              {artifact.title} · Revision {tree?.current_revision}
+            </Typography.Text>
+          )}
+        </Space>
+      </div>
 
-        <div className="standard-list-panel">
-          <Card title="功能测试用例列表" className="standard-list-card">
-            <Table
-              rowKey="id"
-              columns={columns}
-              dataSource={cases}
-              loading={loading}
-              pagination={false}
-              scroll={{ x: 1500 }}
-              size="small"
+      {error && <div className="case-page-error">{error}</div>}
+
+      <div className="case-page-body">
+        <aside className="case-module-panel">
+          <div className="case-module-head">
+            <strong>Modules</strong>
+          </div>
+          <button type="button"
+            className={scopeId == null ? "case-module-all active" : "case-module-all"}
+            onClick={() => { setScopeId(null); setSelected(null); }}>
+            全部模块
+          </button>
+          {loading && <div className="case-loading">加载中…</div>}
+          {!loading && moduleTree && (
+            <Tree
+              defaultExpandAll
+              selectedKeys={scopeId != null ? [String(scopeId)] : []}
+              treeData={treeData}
+              onSelect={(keys) => {
+                if (!keys.length) { setScopeId(null); return; }
+                setScopeId(Number(keys[0]));
+              }}
             />
-          </Card>
-        </div>
+          )}
+          {!loading && !moduleTree && (
+            <Empty image={Empty.PRESENTED_IMAGE_SIMPLE}
+              description={viewerOnly ? "当前项目暂无 Artifact（只读用户不可创建）" : "暂无模块"} />
+          )}
+        </aside>
+        <section className="case-list-panel">
+          {!loading && !artifact && !error && (
+            <Empty description="暂无用例（在新项目首次打开时自动创建 Functional Artifact）" />
+          )}
+          {!loading && artifact && (
+            <Table
+              size="small"
+              rowKey="nodeId"
+              columns={columns}
+              dataSource={filtered}
+              pagination={false}
+              scroll={{ x: 1180 }}
+              onRow={(row) => ({
+                style: { cursor: "pointer" },
+                onClick: () => { setSelected(row); setDetailsOpen(true); },
+              })}
+            />
+          )}
+          {loading && <div className="case-loading">Loading tree…</div>}
+        </section>
       </div>
 
       <Drawer
-        title={modalMode === "create" ? "新增功能测试用例" : "编辑功能测试用例"}
-        placement="right"
-        width="50vw"
-        rootClassName="standard-drawer function-case-drawer"
-        open={modalOpen}
-        onClose={closeModal}
-        destroyOnClose
-        footer={
-          <div className="standard-drawer-footer">
-            <Button onClick={closeModal} disabled={submitting}>取消</Button>
-            <Button type="primary" className="standard-primary-btn" onClick={handleSubmit} loading={submitting}>
-              保存
-            </Button>
-          </div>
-        }
+        title={selected ? formatCaseNumber(selected.nodeId) : "Case"}
+        width={560}
+        open={detailsOpen}
+        onClose={() => setDetailsOpen(false)}
       >
-        <Form form={form} layout="vertical">
-          <Row gutter={16}>
-            <Col span={8}>
-              <Form.Item
-                name="project_id"
-                label="归属项目"
-                rules={[{ required: true, message: "请选择项目" }]}
-              >
-                <Select
-                  placeholder="请选择项目"
-                  options={projects.map((p) => ({ label: p.name, value: p.id }))}
-                  popupClassName="standard-select-dropdown"
-                />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="requirement_id" label="关联需求">
-                <Select
-                  placeholder="请选择需求（可选）"
-                  allowClear
-                  options={requirements.map((r) => ({ label: r.title, value: r.id }))}
-                  popupClassName="standard-select-dropdown"
-                />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="module_id" label="归属模块">
-                <InputNumber placeholder="模块ID（可选）" style={{ width: "100%" }} />
-              </Form.Item>
-            </Col>
-          </Row>
-
-          <Form.Item name="case_code" label="用例编号">
-            <Input placeholder="如 FC-LOGIN-001" maxLength={100} />
-          </Form.Item>
-
-          <Form.Item
-            name="case_name"
-            label="用例名称"
-            rules={[{ required: true, message: "请输入用例名称" }]}
-          >
-            <Input placeholder="请输入用例名称" maxLength={200} />
-          </Form.Item>
-
-          <Row gutter={16}>
-            <Col span={8}>
-              <Form.Item name="case_type" label="用例类型">
-                <Select placeholder="请选择用例类型" allowClear options={CASE_TYPE_OPTIONS} popupClassName="standard-select-dropdown" />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="source" label="来源">
-                <Select options={SOURCE_OPTIONS} popupClassName="standard-select-dropdown" />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="priority" label="优先级">
-                <Select options={PRIORITY_OPTIONS} popupClassName="standard-select-dropdown" />
-              </Form.Item>
-            </Col>
-          </Row>
-
-          <Form.Item name="status" label="状态">
-            <Select options={STATUS_OPTIONS} popupClassName="standard-select-dropdown" />
-          </Form.Item>
-
-          <Form.Item name="precondition" label="前置条件">
-            <Input.TextArea
-              className="function-case-compact-textarea"
-              rows={1}
-              placeholder="前置条件（可选）"
-            />
-          </Form.Item>
-
-          <Form.Item name="steps_json" label="测试步骤 (JSON)">
-            <Input.TextArea
-              className="function-case-steps-textarea"
-              rows={6}
-              placeholder='["步骤1", "步骤2", "步骤3"]'
-            />
-          </Form.Item>
-
-          <Form.Item name="test_data_json" label="测试数据 (JSON)">
-            <Input.TextArea
-              rows={3}
-              placeholder='{"key1": "value1", "key2": "value2"}'
-            />
-          </Form.Item>
-
-          <Form.Item name="expected_result" label="预期结果">
-            <Input.TextArea rows={3} placeholder="预期结果（可选）" />
-          </Form.Item>
-
-          <Form.Item name="remark" label="备注">
-            <Input.TextArea
-              className="function-case-compact-textarea"
-              rows={1}
-              placeholder="备注（可选）"
-            />
-          </Form.Item>
-        </Form>
-      </Drawer>
-
-      <Drawer
-        title="功能用例详情"
-        placement="right"
-        width="50vw"
-        rootClassName="standard-drawer standard-detail-drawer"
-        open={detailModalOpen}
-        onClose={() => setDetailModalOpen(false)}
-        footer={null}
-        destroyOnClose
-      >
-        {detailCase && (
-          <div>
-            <p><strong>用例编号：</strong>{detailCase.case_code || "-"}</p>
-            <p><strong>用例名称：</strong>{detailCase.case_name}</p>
-            <p><strong>用例类型：</strong>{detailCase.case_type || "-"}</p>
-            <p><strong>来源：</strong>{detailCase.source || "-"}</p>
-            <p><strong>优先级：</strong>{detailCase.priority || "-"}</p>
-            <p><strong>状态：</strong>{getStatusLabel(detailCase.status)}</p>
-            <p><strong>项目ID：</strong>{detailCase.project_id}</p>
-            <p><strong>模块ID：</strong>{detailCase.module_id ?? "-"}</p>
-            <p><strong>需求ID：</strong>{detailCase.requirement_id ?? "-"}</p>
-            <p><strong>前置条件：</strong></p>
-            <pre style={{ background: "#f5f5f5", padding: 8, borderRadius: 4 }}>
-              {detailCase.precondition || "-"}
-            </pre>
-            <p><strong>测试步骤：</strong></p>
-            <pre style={{ background: "#f5f5f5", padding: 8, borderRadius: 4, maxHeight: 200, overflow: "auto" }}>
-              {formatJson(detailCase.steps_json) || "-"}
-            </pre>
-            <p><strong>测试数据：</strong></p>
-            <pre style={{ background: "#f5f5f5", padding: 8, borderRadius: 4, maxHeight: 200, overflow: "auto" }}>
-              {formatJson(detailCase.test_data_json) || "-"}
-            </pre>
-            <p><strong>预期结果：</strong></p>
-            <pre style={{ background: "#f5f5f5", padding: 8, borderRadius: 4 }}>
-              {detailCase.expected_result || "-"}
-            </pre>
-            {detailCase.remark && (
-              <>
-                <p><strong>备注：</strong></p>
-                <pre style={{ background: "#f5f5f5", padding: 8, borderRadius: 4 }}>
-                  {detailCase.remark}
-                </pre>
-              </>
+        {selected && (
+          <div className="case-detail">
+            <h3>{selected.title}</h3>
+            <div className="detail-line">模块：{selected.modulePath.join(" / ") || "—"}</div>
+            <div className="detail-line">优先级：{selected.priority}</div>
+            {selected.tags?.length > 0 && (
+              <div className="detail-line">Tags：{selected.tags.map((t) => <Tag key={t}>{t}</Tag>)}</div>
             )}
+            <div className="detail-sec"><strong>前置条件</strong></div>
+            <ol>{selected.preconditions.map((p, i) => <li key={i}>{p}</li>)}</ol>
+            <div className="detail-sec"><strong>步骤</strong></div>
+            <ol>
+              {selected.steps.map((s, i) => (
+                <li key={i}>
+                  {s.action || ""}{s.data ? `（${s.data}）` : ""}
+                </li>
+              ))}
+            </ol>
+            <div className="detail-sec"><strong>预期结果</strong></div>
+            <ol>
+              {selected.expectedResults.map((item, i) => (
+                <li key={i}>{typeof item === "string" ? item : item?.expected ?? ""}</li>
+              ))}
+            </ol>
+            {selected.sourceRefs?.length > 0 && (
+              <div className="detail-sec"><strong>Source</strong></div>
+            )}
+            {selected.sourceRefs?.map((ref, i) => (
+              <div key={i} className="detail-line">
+                {ref.source_type === "requirement" || ref.source_type === "requirement_doc"
+                  ? `Requirement #${ref.source_id}` : `${ref.source_type} #${ref.source_id}`}
+                {ref.fragment_id ? ` · ${ref.fragment_id}` : ""}
+              </div>
+            ))}
           </div>
         )}
       </Drawer>
-    </Space>
-    </div>
+      <style>{`
+        .case-page-toolbar { margin-bottom: 10px; }
+        .case-page-body { display: flex; gap: 12px; align-items: flex-start; }
+        .case-module-panel { width: 240px; flex: none; border: 1px solid #e6e6e7; border-radius: 8px; padding: 8px; max-height: 70vh; overflow: auto; }
+        .case-module-head { margin-bottom: 6px; }
+        .case-module-all { display: block; width: 100%; text-align: left; border: 0; background: transparent; padding: 4px 6px; border-radius: 6px; cursor: pointer; margin-bottom: 4px; }
+        .case-module-all.active { background: #eeeeef; }
+        .case-module-all:hover { background: #f6f6f7; }
+        .case-list-panel { flex: 1; min-width: 0; }
+        .case-loading, .case-page-error { color: #70747a; padding: 12px 0; }
+        .case-page-error { color: #b42318; }
+        .cell-preview { white-space: pre-line; display: block; max-height: 64px; overflow: hidden; font-size: 12px; color: #444; }
+        .case-detail h3 { margin: 0 0 10px; }
+        .detail-line { margin: 4px 0; }
+        .detail-sec { margin-top: 12px; }
+      `}</style>
+    </Card>
   );
 }

@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 # 集中枚举（供 API 层白名单校验；取值与 models/services 常量一致）
 ARTIFACT_TYPES = ("test_design",)
 ARTIFACT_STATUSES = ("active", "archived")
-NODE_TYPES = ("root", "group", "test_point", "test_case")
+NODE_TYPES = ("root", "module", "test_case")
 OPERATION_TYPES = ("add_node", "update_node", "delete_node", "move_node", "restore")
 ACTOR_TYPES = ("user", "agent", "system")
 
@@ -24,6 +24,11 @@ class ArtifactCreateRequest(TestArtifactSchemaBase):
     title: str = Field(..., min_length=1, max_length=200)
     artifact_type: Literal["test_design"] = Field(default="test_design")
     project_id: Optional[int] = Field(default=None)
+
+
+class ArtifactEnsureRequest(TestArtifactSchemaBase):
+    project_id: int = Field(..., gt=0)
+    title: Optional[str] = Field(default=None, max_length=200, description="缺失时创建的标题")
 
 
 class ArtifactSummary(TestArtifactSchemaBase):
