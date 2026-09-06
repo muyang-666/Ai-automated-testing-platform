@@ -40,6 +40,12 @@ class ConversationArtifactFocusResponse(BaseModel):
     project_id: int | None = None
 
 
+class ConversationRequirementFocusResponse(BaseModel):
+    conversation_id: int
+    requirement_id: int
+    project_id: int | None = None
+
+
 class TurnSubmitRequest(BaseModel):
     model_config = {"extra": "forbid"}
     content: str = Field(min_length=1, max_length=8000)

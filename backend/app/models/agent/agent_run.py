@@ -42,6 +42,8 @@ class AgentRun(Base):
     worker_id = Column(String(64), nullable=True, comment="执行 Worker 标识")
     heartbeat_at = Column(DateTime(timezone=True), nullable=True, index=True, comment="心跳时间，用于中断恢复")
     execution_token = Column(Integer, nullable=True, comment="P05-D fencing 执行代次：每次 claim 单调 +1；旧代次写操作被拒")
+    artifact_context_json = Column(JSON, nullable=True,
+                                   comment="P08.2 Turn 可信快照：{artifact_id, project_id, requirement_id}；Runner 只使用 Run 快照而非可变的会话 focus")
     started_at = Column(DateTime(timezone=True), nullable=True, comment="开始时间")
     finished_at = Column(DateTime(timezone=True), nullable=True, comment="结束时间")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), comment="创建时间")

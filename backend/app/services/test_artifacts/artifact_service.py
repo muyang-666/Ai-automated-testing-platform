@@ -138,13 +138,18 @@ def _validated_refs(raw):
 _REQUIREMENT_SOURCE_TYPES = ("requirement", "requirement_doc")
 
 
-def _validated_node_refs(db: Session, artifact: TestArtifact, raw):
-    """解析并校验节点 source_refs（含 Requirement 项目绑定规则）。"""
+def _validated_node_refs(db: Session, artifact: TestArtifact, raw, *, enforce_requirement: bool = True):
+    """解析并校验节点 source_refs。
+
+    enforce_requirement=False 用于 internal undo/restore：允许恢复历史 provenance，
+    即使 Requirement 后来 soft-delete / unavailable（SourceRef=provenance，
+    SourceRef≠当前能力）；read_requirement 对已删除 Requirement 仍然拒绝。
+    """
     refs = _validated_refs(raw)
     if not refs:
         return refs
     requirement_refs = [ref for ref in refs if ref["source_type"] in _REQUIREMENT_SOURCE_TYPES]
-    if not requirement_refs:
+    if not requirement_refs or not enforce_requirement:
         return refs
     scope = artifact.project_id
     if scope is None:
@@ -273,7 +278,8 @@ def _apply_add(db: Session, artifact: TestArtifact, new_no: int, request: dict,
     return {"target_node_id": node.id, "payload": request, "before": None, "after": node_snapshot(node)}
 
 
-def _apply_update(db: Session, artifact: TestArtifact, request: dict) -> dict:
+def _apply_update(db: Session, artifact: TestArtifact, request: dict, *,
+                enforce_requirement: bool = True) -> dict:
     node = _require_visible_node(db, artifact, request.get("target_node_id"), what="节点")
     patch = request.get("patch")
     if not isinstance(patch, dict) or not patch:
@@ -295,7 +301,7 @@ def _apply_update(db: Session, artifact: TestArtifact, request: dict) -> dict:
     if "content" in patch:
         node.content_json = _validated_content(node.node_type, patch["content"])
     if "source_refs" in patch:
-        node.source_refs_json = _validated_node_refs(db, artifact, patch["source_refs"])
+        node.source_refs_json = _validated_node_refs(db, artifact, patch["source_refs"], enforce_requirement=enforce_requirement)
     db.flush()
     return {"target_node_id": node.id, "payload": {"patch": patch}, "before": before, "after": node_snapshot(node)}
 
@@ -350,7 +356,8 @@ def _apply_delete(db: Session, artifact: TestArtifact, new_no: int, request: dic
     }
 
 
-def _apply_restore(db: Session, artifact: TestArtifact, request: dict) -> dict:
+def _apply_restore(db: Session, artifact: TestArtifact, request: dict, *,
+                       enforce_requirement: bool = True) -> dict:
     """撤销一次删除：恢复先前逻辑删除的子树（target + 快照列表）。
 
     nodes 为服务端生成的恢复快照（含 id/parent/order/title/content/source_refs）。
@@ -429,7 +436,7 @@ def _apply_restore(db: Session, artifact: TestArtifact, request: dict) -> dict:
         row.order_key = snap.get("order_key", row.order_key)
         row.title = snap.get("title", row.title)
         row.content_json = _validated_content(row.node_type, snap.get("content"))
-        row.source_refs_json = _validated_node_refs(db, artifact, snap.get("source_refs"))
+        row.source_refs_json = _validated_node_refs(db, artifact, snap.get("source_refs"), enforce_requirement=enforce_requirement)
     db.flush()
     after = [node_snapshot(restored_by_id[sid]) for sid in ids]
     return {"target_node_id": target_id, "payload": {"affected_node_ids": ids}, "before": None, "after": after}
@@ -443,7 +450,8 @@ _ACTOR_TYPE_VALUES = ("user", "agent", "system")
 def apply_operations(db: Session, *, artifact_id: int, expected_revision: int,
                      operations: list[dict], requester, actor_type: str = ACTOR_TYPE_USER,
                      actor_user_id: int | None = None, conversation_id: int | None = None,
-                     run_id: int | None = None, summary: str | None = None) -> dict:
+                     run_id: int | None = None, summary: str | None = None,
+                     enforce_requirement_live: bool = True) -> dict:
     """在一个事务内应用一个 operation batch 并产生恰好一个 Revision。
 
     失败即抛错（由调用方 rollback）；成功返回 {artifact_id, expected_revision,
@@ -498,13 +506,13 @@ def apply_operations(db: Session, *, artifact_id: int, expected_revision: int,
                     raise TestArtifactValidationError(f"批内 ref 重复：{work['ref']}")
                 ref_to_node[work["ref"]] = result["target_node_id"]
         elif op_type == OP_UPDATE_NODE:
-            result = _apply_update(db, artifact, work)
+            result = _apply_update(db, artifact, work, enforce_requirement=enforce_requirement_live)
         elif op_type == OP_MOVE_NODE:
             result = _apply_move(db, artifact, work)
         elif op_type == OP_DELETE_NODE:
             result = _apply_delete(db, artifact, new_no, work)
         elif op_type == OP_RESTORE:
-            result = _apply_restore(db, artifact, work)
+            result = _apply_restore(db, artifact, work, enforce_requirement=enforce_requirement_live)
         else:  # pragma: no cover - guarded above
             raise TestArtifactValidationError(f"未知 operation_type: {op_type}")
         db.add(ArtifactOperation(
@@ -781,6 +789,7 @@ def _reconcile_to(db: Session, *, artifact: TestArtifact, target_revision: int, 
         actor_type=ACTOR_TYPE_USER,
         actor_user_id=requester.id,
         summary=action_summary,
+        enforce_requirement_live=False,  # P08.2：恢复历史 provenance，不要求 Requirement 当前存活
     )
     return {
         "artifact_id": artifact.id,

@@ -470,3 +470,97 @@ def test_batch_update_empty_array_clears(runtime_fixture, db_session):
     assert _revision(db_session, artifact_id) == revision + 1
     db_session.expire_all()
     assert db_session.get(ArtifactNode, node_id).source_refs_json is None
+
+
+# ── P08.2：Artifact 写 fencing / restore 历史 provenance / Requirement 绑定入口 ──
+
+
+def test_artifact_write_fence_rejects_stale_owner_and_cancel(runtime_fixture, db_session):
+    from dataclasses import replace
+
+    from app.models.agent.agent_run import AgentRun
+
+    runtime, artifact_id, root_id = runtime_fixture
+    assert runtime.run_id is not None
+    run = db_session.get(AgentRun, runtime.run_id)
+    run.status = "running"
+    run.worker_id = "w-1"
+    run.execution_token = 1
+    db_session.commit()
+
+    owned = replace(runtime, worker_id="w-1", execution_token=1)
+    added, _ = _execute("add_artifact_node", {"expected_revision": 1,
+        "parent_id": root_id, "node": {"node_type": "test_point", "title": "锁定"}}, owned)
+    assert added.message.is_error is False
+    assert added.message.details["data"]["revision"] == 2
+    node_id = added.message.details["data"]["affected_node_ids"][0]
+
+    # 场景 A：claim 被重新赋值（execution_token 1 → 2）后旧 token 提交 → fencing 拒绝
+    run = db_session.get(AgentRun, runtime.run_id)
+    run.execution_token = 2
+    db_session.commit()
+    stale, _ = _execute("update_artifact_node", {"expected_revision": 2,
+        "target_node_id": node_id, "patch": {"title": "改名"}}, owned)
+    assert stale.message.is_error is True
+    assert stale.error_code == "ownership_lost"
+    assert _revision(db_session, artifact_id) == 2  # 未提交任何 Artifact Revision
+
+    # 场景 B：cancel 竞态（run 已终态）→ fencing 拒绝
+    run = db_session.get(AgentRun, runtime.run_id)
+    run.status = "cancelled"
+    run.worker_id = "w-1"
+    run.execution_token = 2
+    db_session.commit()
+    cancelled, _ = _execute("update_artifact_node", {"expected_revision": 2,
+        "target_node_id": node_id, "patch": {"title": "改名"}}, replace(runtime, worker_id="w-1",
+                                                                        execution_token=2))
+    assert cancelled.message.is_error is True
+    assert cancelled.error_code == "ownership_lost"
+    assert _revision(db_session, artifact_id) == 2
+
+
+def test_restore_historical_provenance_allowed_after_requirement_soft_delete(
+        project_runtime_fixture, db_session):
+    """rev N 引用 requirement → requirement 后来软删 → internal undo/restore 成功；
+    read_requirement 对已删除 requirement 仍拒绝。"""
+    from app.models.requirement_doc import RequirementDoc
+
+    runtime, artifact_id, root_id, req_a, req_b = project_runtime_fixture
+    user = db_session.get(User, USER_A)
+    added, _ = _execute("add_artifact_node", {"expected_revision": 1,
+        "parent_id": root_id,
+        "node": {"node_type": "test_case", "title": "TC-REQ",
+                 "source_refs": [{"source_type": "requirement", "source_id": str(req_a)}]}},
+        runtime)
+    assert added.message.is_error is False
+    node_id = added.message.details["data"]["affected_node_ids"][0]
+    revision = added.message.details["data"]["revision"]
+    # rev+1：清空 refs（历史仍记录"曾引用 req_a"）
+    cleared, _ = _execute("update_artifact_node", {"expected_revision": revision,
+        "target_node_id": node_id, "patch": {"source_refs": []}}, runtime)
+    assert cleared.message.is_error is False
+    cleared_rev = cleared.message.details["data"]["revision"]
+    # Requirement 后来软删除
+    requirement = db_session.get(RequirementDoc, req_a)
+    requirement.is_deleted = True
+    db_session.commit()
+    # internal undo（service 层）→ 恢复历史 provenance（Requirement 已删除仍可恢复）
+    result = artifact_service.undo_latest(db_session, artifact_id=artifact_id, requester=user)
+    db_session.commit()
+    assert result["new_revision"] == cleared_rev + 1
+    db_session.expire_all()
+    row = db_session.get(ArtifactNode, node_id)
+    assert row.source_refs_json[0]["source_id"] == str(req_a)
+
+
+def test_read_requirement_rejects_soft_deleted_requirement(project_runtime_fixture, db_session):
+    from app.models.requirement_doc import RequirementDoc
+
+    runtime, artifact_id, root_id, req_a, req_b = project_runtime_fixture
+    ok, _ = _execute("read_requirement", {}, runtime)
+    assert ok.message.is_error is False
+    db_session.get(RequirementDoc, req_a).is_deleted = True
+    db_session.commit()
+    read, _ = _execute("read_requirement", {"requirement_id": req_a}, runtime)
+    assert read.message.is_error is True
+    assert read.error_code == "requirement_not_found"

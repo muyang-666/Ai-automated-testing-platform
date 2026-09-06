@@ -18,7 +18,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 SCRIPT_LOCATION = str(BACKEND_DIR / "alembic")
 
 BASELINE_REVISION = "0001_v1_schema_baseline"
-HEAD_REVISION = "0005_test_artifact_core"
+HEAD_REVISION = "0006_agent_run_artifact_context"
 ARTIFACT_TABLE_NAMES = {"test_artifact", "artifact_node", "artifact_revision", "artifact_operation"}
 
 
@@ -101,7 +101,7 @@ def test_reupgrade_after_downgrade(tmp_path):
     db_url = _prepare_db(tmp_path, "ta_reup.db")
     cfg = _make_config(db_url)
     command.upgrade(cfg, "head")
-    command.downgrade(cfg, "0004_agent_run_execution_token")
+    command.downgrade(cfg, "0005_test_artifact_core")
     command.upgrade(cfg, "head")
     engine = create_engine(db_url)
     assert ARTIFACT_TABLE_NAMES <= _table_names(engine)

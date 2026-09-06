@@ -25,6 +25,7 @@ from app.schemas.agent.conversation_api import (
     CancelConversationRunResponse,
     ConversationCapabilities,
     ConversationArtifactFocusResponse,
+    ConversationRequirementFocusResponse,
     ConversationUpdateRequest,
     ConversationCreateRequest,
     ConversationEventItem,
@@ -163,6 +164,31 @@ def focus_artifact(conversation_id: int, artifact_id: int,
         raise _http_error(err) from err
     return ConversationArtifactFocusResponse(
         conversation_id=session.id, artifact_id=artifact_id,
+        project_id=session.project_id,
+    )
+
+
+@router.post("/conversations/{conversation_id}/requirements/{requirement_id}/focus",
+             response_model=ConversationRequirementFocusResponse)
+def focus_requirement(conversation_id: int, requirement_id: int,
+                      db: Session = Depends(get_db),
+                      current_user: User = Depends(get_current_user)):
+    """P08.2 可信 Requirement 绑定入口（owner-only；禁止客户端直写 context_json）。
+
+    验证 Requirement 存在/存活/项目/用户权限；绑定只影响未来新 Turn 的 Run 快照。
+    """
+    _require_conversation(db, conversation_id, current_user)
+    try:
+        session = conversation_service.focus_conversation_requirement(
+            db, session_id=conversation_id, requirement_id=requirement_id,
+            requester=current_user,
+        )
+        db.commit()
+    except AgentError as err:
+        db.rollback()
+        raise _http_error(err) from err
+    return ConversationRequirementFocusResponse(
+        conversation_id=session.id, requirement_id=requirement_id,
         project_id=session.project_id,
     )
 

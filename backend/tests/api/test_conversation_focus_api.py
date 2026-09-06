@@ -71,3 +71,64 @@ def test_focus_owner_isolation_404(setup):
     db_session.commit()
     app.dependency_overrides[get_current_user] = lambda: other
     assert _focus(client, cid, art_b).status_code == 404
+
+
+# ── P08.2：可信 Requirement binding 入口（API） ──
+
+
+def _seed_requirement_scene(db_session):
+    from app.models.project import Project
+    from app.models.requirement_doc import RequirementDoc
+    from app.models.role import Role
+    from app.models.user_role import UserRole
+
+    for code in ("system_admin",):
+        if not db_session.query(Role).filter(Role.code == code).first():
+            db_session.add(Role(code=code, name=code, status="active"))
+    db_session.flush()
+    role = db_session.query(Role).filter(Role.code == "system_admin").one()
+    user = db_session.query(User).filter(User.id == USER_A).first()
+    if user is None:
+        user = User(id=USER_A, username="focus-req-a", password_hash="x", salt="y",
+                    status="active", is_deleted=False)
+        db_session.add(user)
+        db_session.flush()
+    if not db_session.query(UserRole).filter(UserRole.user_id == USER_A).first():
+        db_session.add(UserRole(user_id=USER_A, role_id=role.id))
+    req_project = Project(id=8702, name="需求项目", status="active", is_deleted=False)
+    requirement = RequirementDoc(project_id=8702, title="登录需求", content="需求",
+                                 requirement_type="功能需求", status="confirmed",
+                                 is_deleted=False)
+    db_session.add_all([req_project, requirement])
+    db_session.commit()
+    session = conversation_service.create_conversation_session(
+        db_session, requester_user_id=USER_A, title="绑定会话", project_id=8702)
+    db_session.commit()
+    return user, session.id, requirement.id
+
+
+def test_requirement_bind_endpoint_success_and_project_mismatch(db_session):
+    from app.main import app
+
+    user, cid, req_id = _seed_requirement_scene(db_session)
+    app.dependency_overrides[get_current_user] = lambda: user
+    with TestClient(app) as client:
+        ok = client.post(f"/agent/conversations/{cid}/requirements/{req_id}/focus")
+        assert ok.status_code == 200
+        body = ok.json()
+        assert body["requirement_id"] == req_id and body["project_id"] == 8702
+        # 幂等（同 requirement 重复绑定）仍 200
+        assert client.post(
+            f"/agent/conversations/{cid}/requirements/{req_id}/focus").status_code == 200
+        # 项目不一致 → 409
+        from app.models.project import Project
+        if not db_session.query(Project).filter(Project.id == 8703).first():
+            db_session.add(Project(id=8703, name="另一项目", status="active", is_deleted=False))
+            db_session.commit()
+        other_session = conversation_service.create_conversation_session(
+            db_session, requester_user_id=USER_A, title="其他项目会话", project_id=8703)
+        db_session.commit()
+        mismatch = client.post(
+            f"/agent/conversations/{other_session.id}/requirements/{req_id}/focus")
+        assert mismatch.status_code == 409
+    app.dependency_overrides.clear()

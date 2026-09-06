@@ -57,6 +57,7 @@ def test_duplicate_analysis_truncates_large_scope(db_session):
                                            requester=user, threshold=0.99,
                                            candidate_cap=40)
     assert data["total_cases"] == 65
+    assert data["eligible_cases"] == 65
     assert data["analyzed_cases"] == 40
     assert data["truncated"] is True
     pair_ids = {(p["node_a"], p["node_b"]) for p in data["pairs"]}
@@ -67,6 +68,7 @@ def test_duplicate_analysis_truncates_large_scope(db_session):
                                                requester=user, threshold=0.99,
                                                candidate_cap=400)
     assert data_all["total_cases"] == 65
+    assert data_all["eligible_cases"] == 65
     assert data_all["analyzed_cases"] == 65
     assert data_all["truncated"] is False
     pair_ids_all = {(p["node_a"], p["node_b"]) for p in data_all["pairs"]}

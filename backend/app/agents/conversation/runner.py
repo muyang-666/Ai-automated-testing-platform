@@ -108,16 +108,12 @@ class ConversationRunner:
             restored = self._restore(db, session_id, actor_user_id, run,
                                        until_sequence_no=self._current_user_sequence(db, run))
             self._assert_history_ends_with_current_user_message(db, run, restored)
-            session_context = db.execute(
-                select(AgentSession.project_id, AgentSession.context_json)
-                .where(AgentSession.id == session_id)
-            ).first()
-            stored_context = session_context.context_json if session_context and isinstance(
-                session_context.context_json, dict) else {}
-            project_id = session_context.project_id if session_context else None
-            artifact_id = stored_context.get("focused_artifact_id")
-            if type(artifact_id) is not int or artifact_id <= 0:
-                artifact_id = None
+            # P08.2：Runner 始终使用 Run 上的可信快照（submit 时固化），
+            # 不读取可变的 Session focus —— 会话焦点只影响未来新 Turn。
+            run_context = conversation_service.artifact_context_from_run(run)
+            artifact_id = run_context.get("artifact_id")
+            project_id = run.project_id  # submit 时已与会话 project 同事务固化
+            requirement_id = run_context.get("requirement_id")
             # Release the Runner's read transaction before the context factory
             # performs its own short permission lookup.
             db.rollback()
@@ -125,6 +121,7 @@ class ConversationRunner:
                 user_id=actor_user_id, conversation_id=session_id, run_id=run_id,
                 artifact_id=artifact_id,
                 project_id=project_id,
+                requirement_id=requirement_id,
                 worker_id=worker_id, execution_token=execution_token,
             ) if self.application_context_factory is not None else None)
 

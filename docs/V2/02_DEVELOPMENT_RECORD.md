@@ -956,3 +956,39 @@ v2-chat 已含浮动窗口（min/max/launcher）、SSE 订阅（eventStream.js �
   `tests/conversation/test_isolation.py` 单独 3 passed；并发 promotion 用例在满载后有 1 次时序抖动，连跑 3 次均通过（非本次改动路径）。
 - P08 Scripted Eval `python -m evals.p08.run_eval`：24 cases，task_success/tool_selection/tool_argument/artifact_edit/
   instruction_following/revision_conflict_recovery/quality_tool_non_mutation 全部 1.0，unintended_modification_rate 0。
+
+## 2.31 2026-09-06 — P08.2 Hardening（边界加固；无新 Agent 能力、未进入 P09）
+
+### 1) Run-scope Artifact Context Snapshot
+- `agent_runs` 新增 `artifact_context_json`（0006 迁移；create_all 兼容）；submit Turn（head 与 queued follow-up 同路径）
+  对当前可信 context 固化快照 `{artifact_id, project_id, requirement_id}`。
+- ConversationRunner 不再读可变的 `session.context_json.focused_artifact_id`，一律使用 Run 快照
+  （`conversation_service.artifact_context_from_run`）。Session focus 只决定未来新 Turn。
+- 测试：submit under A → 会话 focus 改 B → Run 仍 A；queued follow-up 快照 = 提交时 focus；requirement 绑定后新 Turn 快照含 requirement_id。
+
+### 2) Artifact Write Fencing（消除 check→commit TOCTOU）
+- `handlers._assert_write_fence`：Artifact 写事务提交前对 AgentRun 行 `SELECT ... FOR UPDATE`
+  并验证 status=running / worker_id / execution_token 仍匹配；与 cancel/claim 的 UPDATE 在同一行串行化。
+  锁只覆盖实际 Artifact DB 写事务（不跨越 LLM 等待）。AgentError(agent_ownership_lost) 在 tool 边界翻译为
+  `ownership_lost`（不再误报 artifact_service_error）。
+- 测试：旧 token（claim 重赋值后）→ 写被拒、Revision 不提交；cancel 竞态（run 已终态）→ 写被拒。
+
+### 3) 可信 Requirement Binding 生产入口
+- `focus_conversation_requirement`（Application Service）+ `POST /agent/conversations/{cid}/requirements/{req_id}/focus`
+  （owner-only）：验证 Requirement 存在且存活、用户可读、项目与 Conversation 一致（不一致 409，无项目按
+  Requirement 提升）；客户端不能直接写 arbitrary context_json。绑定只影响未来新 Turn 的 Run 快照。
+- 测试：绑定 200/幂等、项目不一致 409、绑定后新 Turn 快照 requirement_id。
+
+### 4) Historical restore 允许历史 provenance
+- 新 SourceRef 写入仍严格验证当前 Requirement 存活/项目；internal undo/restore 以
+  `enforce_requirement_live=False` 回放历史 provenance（Requirement 后 soft-delete 仍可恢复）。
+  `read_requirement` 对已删除 Requirement 仍 `requirement_not_found`。
+- 测试：rev N 引用 → 软删 Requirement → 清空 refs → undo 恢复 refs 成功 → read 拒绝。
+
+### 5) duplicate metadata 语义
+- `find_duplicates` 返回 `total_cases / eligible_cases（有内容候选总数）/ analyzed_cases（实际进入两两比较）/
+  truncated（仅当确有候选被 cap 截断）`。测试断言 eligible/analyzed/truncated 语义。
+
+### 回归（真实结果）
+- P07/P08/Conversation/Worker/Migration 相关套件 + 全后端：`pytest tests`（排除同名 test_isolation 收集冲突）→ **688 passed**；
+  isolation 单独 3 passed；P08 Scripted Eval 24 cases 全过（task_success 等 1.0、unintended_modification_rate 0）。

@@ -12,6 +12,7 @@ class ArtifactRuntimeContext:
     run_id: int
     artifact_id: int | None
     project_id: int | None
+    requirement_id: int | None = None
     permissions: frozenset[str] = frozenset()
     worker_id: str | None = None
     execution_token: int | None = None

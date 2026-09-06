@@ -131,7 +131,8 @@ def submit_conversation_turn(db: Session, *, session_id: int, requester_user_id:
             db.flush()
             run = agent_run_service.create_run(db, session, "conversation", requester_user_id,
                 session.project_id, input_json={"content": content}, idempotency_key=key,
-                user_message_id=row.id, active_slot=1)
+                user_message_id=row.id, active_slot=1,
+                artifact_context_json=snapshot_artifact_context(session))
             row.run_id = run.id
             db.flush()
             db.commit()
@@ -170,7 +171,8 @@ def _persist_follow_up(db: Session, session: AgentSession, requester_user_id: in
     db.flush()
     run = agent_run_service.create_run(db, session, "conversation", requester_user_id,
         session.project_id, input_json={"content": content}, idempotency_key=key,
-        user_message_id=row.id, active_slot=None)  # queued follow-up：不可执行
+        user_message_id=row.id, active_slot=None,  # queued follow-up：不可执行
+        artifact_context_json=snapshot_artifact_context(session))
     row.run_id = run.id
     db.flush()
     db.commit()
@@ -253,6 +255,63 @@ def focused_artifact_id(session: AgentSession) -> int | None:
     context = session.context_json if isinstance(session.context_json, dict) else {}
     value = context.get("focused_artifact_id")
     return value if type(value) is int and value > 0 else None
+
+
+def context_bound_requirement_id(session: AgentSession) -> int | None:
+    """Conversation 可信绑定的 Requirement（通过正式 bind/focus 入口写入）。"""
+    context = session.context_json if isinstance(session.context_json, dict) else {}
+    if context.get("source_type") in {"requirement", "requirement_doc"}:
+        value = context.get("source_id")
+        if type(value) is int and value > 0:
+            return value
+    return None
+
+
+def snapshot_artifact_context(session: AgentSession) -> dict:
+    """P08.2：submit Turn 时对当前可信 context 取快照（会话 focus 只影响未来新 Turn）。"""
+    return {
+        "artifact_id": focused_artifact_id(session),
+        "project_id": session.project_id,
+        "requirement_id": context_bound_requirement_id(session),
+    }
+
+
+def artifact_context_from_run(run) -> dict:
+    """解析 Run 上的 trusted snapshot；非法值一律按缺失处理。"""
+    raw = run.artifact_context_json if isinstance(run.artifact_context_json, dict) else {}
+    result: dict = {}
+    for key in ("artifact_id", "project_id", "requirement_id"):
+        value = raw.get(key)
+        if type(value) is int and value > 0:
+            result[key] = value
+    return result
+
+
+def focus_conversation_requirement(db: Session, *, session_id: int,
+                                      requirement_id: int, requester) -> AgentSession:
+    """P08.2：Conversation 可信 Requirement 绑定（唯一生产入口，禁止客户端直写 context_json）。
+
+    验证：Requirement 存在且存活、用户可读、项目与 Conversation 一致（不一致即 409）；
+    Conversation 无项目时按 Requirement 项目提升（与 Artifact focus 同一语义）。
+    绑定只决定"未来新 Turn"的 Run 快照；正在执行的 Run 已持有自身快照不受影响。
+    """
+    from app.models.requirement_doc import RequirementDoc
+    from app.services.permission_service import can_read_project
+
+    session = _owned_conversation(db, session_id, requester.id, require_active=False)
+    requirement = db.get(RequirementDoc, requirement_id)
+    if requirement is None or requirement.is_deleted             or not can_read_project(db, requester, requirement.project_id):
+        raise AgentPermissionError("Requirement 不存在或无权访问")
+    if session.project_id is not None and requirement.project_id != session.project_id:
+        raise ConversationConflict("Requirement 与 Conversation 项目不一致")
+    if session.project_id is None and requirement.project_id is not None:
+        session.project_id = requirement.project_id
+    context = dict(session.context_json) if isinstance(session.context_json, dict) else {}
+    context["source_type"] = "requirement"
+    context["source_id"] = requirement.id
+    session.context_json = context
+    db.flush()
+    return session
 
 
 def focused_artifact_active_run(db: Session, session_id: int) -> AgentRun | None:

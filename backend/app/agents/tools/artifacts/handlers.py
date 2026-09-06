@@ -4,9 +4,13 @@ from __future__ import annotations
 import json
 from contextlib import contextmanager
 
+from sqlalchemy import select
+
 from app.agents.conversation.messages import TextContent
 from app.agents.conversation.tool_executor import ToolExecutionResult, ToolReportedError
+from app.agents.runtime.errors import AgentError
 from app.agents.tools.artifacts.runtime import ArtifactRuntimeContext
+from app.models.agent.agent_run import AgentRun
 from app.models.agent.agent_session import AgentSession
 from app.models.user import User
 from app.services.agent import agent_run_service, conversation_service
@@ -77,6 +81,12 @@ def _context(runtime, *, write: bool = False):
     except TestArtifactError as exc:
         db.rollback()
         raise _translate(exc) from None
+    except AgentError as exc:
+        db.rollback()
+        if getattr(exc, "error_code", None) == "agent_ownership_lost":
+            raise _reported("ownership_lost",
+                            "Artifact write ownership was lost (run no longer owned/running).") from None
+        raise _reported("artifact_service_error", "Artifact service failed safely.") from None
     except Exception:
         db.rollback()
         raise _reported("artifact_service_error", "Artifact service failed safely.") from None
@@ -205,7 +215,11 @@ def read_requirement(arguments, runtime):
     runtime = _trusted(runtime)
     with _context(runtime) as (db, user, session):
         row = artifact_service.get_artifact(db, artifact_id=runtime.artifact_id, requester=user)
-        bound_id = _context_bound_requirement_id(session)
+        # P08.2：优先使用 Run 快照中的 requirement_id（submit 时固化）；无快照的
+        # 测试/兼容路径回退到会话绑定。
+        snapshot_bound = getattr(runtime, "requirement_id", None)
+        bound_id = snapshot_bound if type(snapshot_bound) is int and snapshot_bound > 0 \
+            else _context_bound_requirement_id(session)
         if bound_id is None:
             raise _reported("requirement_not_bound", "This Conversation has no bound requirement.")
         requested = arguments.get("requirement_id")
@@ -244,6 +258,24 @@ def _node_operation(node: dict, *, parent_id=None, order_key=None, ref=None) -> 
     return operation
 
 
+def _assert_write_fence(db, runtime) -> None:
+    """P08.2：Artifact 写事务提交前的 fencing。
+
+    对 AgentRun 行取 `SELECT ... FOR UPDATE` 并验证 status=running / worker_id /
+    execution_token 仍匹配。锁只覆盖实际 Artifact DB 写事务（不跨越 LLM 等待）；
+    与 cancel/claim 的 UPDATE 在同一行上串行化 → 消除 check→commit TOCTOU。
+    """
+    if runtime.worker_id is None or runtime.execution_token is None:
+        return  # 无 worker 属主（UI/测试路径）不适用 fencing
+    row = db.execute(
+        select(AgentRun).where(AgentRun.id == runtime.run_id).with_for_update()
+    ).scalar_one_or_none()
+    if row is None or row.status != "running" or row.worker_id != runtime.worker_id \
+            or row.execution_token != runtime.execution_token:
+        raise _reported("ownership_lost",
+                        "Artifact write ownership was lost before commit (run no longer owned/running).")
+
+
 def _apply_write(runtime, expected_revision: int, operations: list[dict], summary: str):
     runtime = _trusted(runtime)
     with _context(runtime, write=True) as (db, user, _session):
@@ -262,6 +294,7 @@ def _apply_write(runtime, expected_revision: int, operations: list[dict], summar
                                        "artifact_revision_created", event_payload)
         agent_run_service.append_event(db, runtime.conversation_id, runtime.run_id,
                                        "artifact_diff_created", event_payload | {"changes": diff["changes"]})
+        _assert_write_fence(db, runtime)  # 与 cancel/claim 串行化的最终守卫
         db.commit()
         return _ok(summary, {"revision": result["new_revision"],
             "affected_node_ids": affected, "changes": diff["changes"]},

@@ -34,6 +34,7 @@ def create_run(
     max_steps: int = 20,
     user_message_id: int | None = None,
     active_slot: int | None = None,
+    artifact_context_json: dict | None = None,
 ) -> AgentRun:
     """创建 queued Run；conversation 与旧 Workflow 的模式不可混用。"""
     if project_id != session.project_id:
@@ -68,6 +69,7 @@ def create_run(
         tool_calls_used=0,
         prompt_tokens=0,
         completion_tokens=0,
+        artifact_context_json=artifact_context_json,
     )
     db.add(run)
     db.flush()

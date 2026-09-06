@@ -79,19 +79,17 @@ def find_duplicates(db: Session, *, artifact_id: int, requester,
              if node.get("node_type") == "test_case"]
     total_cases = len(nodes)
     cap = MAX_DUPLICATE_CANDIDATES if candidate_cap is None else candidate_cap
-    candidates: list[tuple[dict, str]] = []
+    eligible: list[tuple[dict, str]] = []
     for node in nodes:
         normalized = _normalized(node)
-        if not normalized:
-            continue
-        if len(candidates) >= cap:
-            break
-        candidates.append((node, normalized))
-    analyzed_cases = len(candidates)
-    truncated = total_cases > cap
+        if normalized:
+            eligible.append((node, normalized))
+    # P08.2：eligible_cases=有内容的候选总数；analyzed_cases=真正进入两两比较的数量；
+    # truncated 只表示确有候选被 cap 截断（仅当 eligible > cap 时为 True）。
+    analyzed = eligible[:cap]
     pairs: list[dict] = []
-    for index, (left, a) in enumerate(candidates):
-        for right, b in candidates[index + 1:]:
+    for index, (left, a) in enumerate(analyzed):
+        for right, b in analyzed[index + 1:]:
             score = 1.0 if a == b else SequenceMatcher(None, a, b).ratio()
             if score >= threshold:
                 pairs.append({"node_a": left["id"], "node_b": right["id"],
@@ -99,8 +97,9 @@ def find_duplicates(db: Session, *, artifact_id: int, requester,
                               "score": round(score, 4)})
     pairs.sort(key=lambda pair: (-pair["score"], pair["node_a"], pair["node_b"]))
     return {"artifact_id": artifact_id, "revision": tree["current_revision"],
-            "total_cases": total_cases, "analyzed_cases": analyzed_cases,
-            "truncated": truncated, "pairs": pairs[:limit]}
+            "total_cases": total_cases, "eligible_cases": len(eligible),
+            "analyzed_cases": len(analyzed), "truncated": len(eligible) > cap,
+            "pairs": pairs[:limit]}
 
 
 _DIMENSIONS = {
