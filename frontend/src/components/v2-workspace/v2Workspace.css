@@ -238,3 +238,6 @@
 .v2w-insp-value { color: var(--chat-ink, #202123); word-break: break-word; }
 .v2w-insp-list { margin: 0; padding-left: 18px; }
 .v2w-insp-refs { margin: 0; padding-left: 18px; color: var(--chat-muted, #70747a); }
+
+.v2w-realtime-note { margin: 4px 8px; padding: 4px 10px; border-radius: 4px;
+  background: #fffbeb; color: #92400e; border: 1px solid #fde68a; font-size: 12px; }

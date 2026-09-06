@@ -130,3 +130,19 @@ API 测试执行、失败根因、造数与缺陷辅助等更高级测试领域�
 - [x] Agent 场景：selected module 时“这里”先 read 再写；scope 不明确读 outline 后询问；唯一模块直接 read 不强迫询问。
 - [x] 前端：App 级 FunctionalWorkspaceProvider/共享 context；FunctionCasePage 发布/离开清除 selection；V2ChatPanel 轻量 ContextIndicator（focus authority + workspace selection 区分，mismatch 不误导，invalid 后清除 stale）；npm tests/lint 通过。
 - [ ] P09.3A 浏览器人工流程（§54）与真实 MySQL alembic upgrade head 至 0008 走查（待授权环境）。P09.3B（实时刷新/Change Summary/View Changes/Conflict UX）不勾选。
+
+#### P09.3B Realtime Collaboration + Change Feedback（2026-09-06，进行中，未验收）
+- [ ] 后端 compact artifact 事件（无完整 changes）与薄 run artifact-changes 只读接口、ACL 不泄漏（实现 + 55 后端相关测试通过，见 02 §2.39）
+- [ ] 前端 realtime 语义核（artifact 过滤/revision guard/coalesce/markRefreshed、editor baseRevision、按 run summary、mismatch 保守阻断）（node 7 passed，见 02 §2.39）
+- [ ] 整页 wiring（AgentArtifactEventProvider/桥接、FunctionCasePage realtime refresh、MindMap/List/History/selection/scope、Change Summary 卡片、View Changes 导航、Editor/保存接入、Skill 冲突有限重试）
+- [ ] rapid revision / stale-overwrite / duplicate 前端行为（语义核已测，UI 集成待做）
+- [ ] Browser E2E（§47-62）与真实 MySQL alembic→0008 走查（未授权环境）
+P09.3B 未完成；P09 未标记 complete；P09.3B 不进入 P10。
+
+- [x] Chat Change Summary 按 run 聚合且来自真实 Revision 事件；「查看变更」→ FunctionCasePage 打开后端真实 Diff（Artifact 匹配才可用；跨 Artifact 显示“变更不可用”）（node 81 + build 验证，见 02 §2.39 第三轮）
+- [x] Skill：revision_conflict 后 read 最新 → 最多 2 次有限重试 → 目标消失/意图不明则询问（SKILL.md rule 7）
+- [x] MindMap 不被 Agent realtime revision 自动 fitView（fitNonce 显式触发，§14）
+- [x] P09 相关后端回归 185 passed（artifact tools/conversation API/focus/workspace/TestArtifact/migrations/persistence/workers，2026-09-06）
+- [x] 无 Artifact 时普通聊天放行、资产/引用型指令提示“尚无可用的功能测试资产”（§2.3/§60）
+- [x] Editor 打开期间 Agent realtime 前进时显示 Revision 基线提示（§18）
+- [ ] P09.3B 浏览器 E2E（§47-62，双浏览器并发/undo-restore/F5/Agent selected module/case 全流程）：NOT VERIFIED（无浏览器环境，跳过）

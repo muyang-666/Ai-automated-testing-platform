@@ -2,12 +2,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as conversationApi from "./conversationApi";
 import { runErrorMessage } from "./conversationErrors.js";
 import { planWorkspaceSubmission } from "./chatContextModel.js";
+import { artifactEventFromStream } from "../v2-workspace/artifactRealtimeModel.js";
+import { agentArtifactEventBus } from "../v2-workspace/agentArtifactEventBus.js";
 import {
   canSendMessage, conversationState, createUnsavedConversation, isUnsavedConversation,
   mergeConversationSummaries, renameActiveConversation, renameConversationSummaries,
   shouldAdoptInitialConversation, stopTargetRun, UNSAVED_CONVERSATION_ID,
 } from "./chatState.js";
 import { buildConversationTurns, extractText } from "./turnModel.js";
+import { aggregateByRun } from "../v2-workspace/artifactChangeSummaryModel.js";
 
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : `id-${Date.now()}-${Math.random()}`);
 const STATE_LABELS = {
@@ -177,6 +180,15 @@ export default function useConversationChat(userId, functionalWorkspace = null) 
         }];
         allEventsRef.current = nextEvents;
         setAllEvents(nextEvents);
+        // P09.3B：只把 Artifact Revision compact 事件发布到全局桥（不逐 token 重渲染）
+        if (event.event_type === "artifact_revision_created" || event.event_type === "artifact_diff_created") {
+          const artifactEvent = artifactEventFromStream({
+            event_type: event.event_type,
+            sequence_no: event.sequence_no,
+            payload_json: event.payload || {},
+          });
+          if (artifactEvent) agentArtifactEventBus.publish(artifactEvent);
+        }
         if (["conversation_tool_started", "conversation_tool_finished"].includes(event.event_type)) {
           const callId = event.payload?.tool_call_id;
           if (callId && !toolOwnersRef.current.has(callId)) {
@@ -388,6 +400,21 @@ export default function useConversationChat(userId, functionalWorkspace = null) 
     [messages, allEvents, streaming, snapshot, toolOwners],
   );
 
+  // P09.3B §25-31/37：Change Summary 由真实 Artifact Revision 事件按 run 聚合
+  // （聊天 SSE 事件在 DB 持久化，重连/重新打开时从游标重放 → 可恢复）。
+  const artifactSummaries = useMemo(
+    () => aggregateByRun(
+      allEvents
+        .map((event) => artifactEventFromStream({
+          event_type: event.event_type,
+          sequence_no: event.sequence_no,
+          payload_json: event.payload || {},
+        }))
+        .filter(Boolean),
+    ),
+    [allEvents],
+  );
+
   const send = useCallback(async (text) => {
     if (!active || !text.trim()) return;
     if (!canSendMessage({ hasActive: true, phase, modelReady: capabilities?.model_ready })) {
@@ -418,6 +445,10 @@ export default function useConversationChat(userId, functionalWorkspace = null) 
       }
       if (plan.action === "workspace-loading") {
         setError("当前项目的功能用例正在加载，请稍后再发送。");
+        return;
+      }
+      if (plan.action === "no-artifact") {
+        setError("当前项目尚无可用的功能测试资产。请先在功能用例页创建，或进行普通对话。");
         return;
       }
       if (plan.action === "busy") {
@@ -463,7 +494,8 @@ export default function useConversationChat(userId, functionalWorkspace = null) 
 
   return {
     turns,
-    conversations, active, snapshot, messages, activity, allEvents, streaming, phase,
+    conversations, active, snapshot, messages, activity, allEvents, artifactSummaries,
+    streaming, phase,
     error: error || connectionError, runError, busy, capabilities,
     newConversation, openConversation, send, cancel, setTitle, refresh, STATE_LABELS, renameIfNeeded,
   };

@@ -1191,3 +1191,24 @@ npx eslint（P09.3A 前端改动文件）→ exit 0
 覆盖：workspace snapshot 持久且输入对象不可再变异（Run 不可变快照）；module 属于 focus artifact 成功 / 属其它 artifact 400 / 用 test_case 当 module 400 / case 与直接父 module 校验 / deleted selection 400 / 任意 dict 与非法 view 拒绝 / 同 key 不同 workspace 409；focus 幂等、busy 切换 409、owner 隔离、requirement 绑定项目一致；Runner 注入 hint；Agent 场景“这里补边界→先 read module 再写”“scope 不明确→读 outline 后询问不写”“明确唯一模块→直接 read 不强迫询问”。
 
 状态：P09.3A 代码与针对性测试完成；浏览器人工/真实 MySQL（alembic upgrade head 至 0008）验收与 P09.2 浏览器项仍待执行；P09.3B 未开始。不把 P09 整体标记 complete。
+
+## 2.39 2026-09-06 — P09.3B 进行中记录（Agent Realtime 后端闭环 + 前端语义核，未完成）
+
+已交付并验证（本轮）：
+- 后端事件收敛（§2.4）：`artifact_revision_created` / `artifact_diff_created` 只携带 compact 元数据（artifact_id/project_id/from_revision/to_revision/run_id/conversation_id/summary/change_counts），不再携带完整 changes[]；完整 Diff 仍走 GET /test-artifacts/{id}/diff。仍在写事务内 append + fencing 后统一 commit（rollback/fencing 失败不留事件）。
+- ACL（§2.2）：`conversation_snapshot` 对 project-scoped focused Artifact 校验当前用户 Project read，撤销时 focused=null（不泄漏 project/artifact 名称）；新增薄只读接口 GET /agent/conversation-runs/{id}/artifact-changes（owner + Artifact 当前 ACL，返回 compact 聚合，供历史恢复 §39）。
+- 前端语义核（纯模块 + node 测试，避免与并发改写的整页 wiring 冲突）：artifactRealtimeModel（按 Artifact 过滤/revision guard/21-23 coalesce/markRefreshed 防 stale）、editorConcurrencyModel（editor.baseRevision 保存、realtime 不覆盖 Draft、保存仍用 baseRevision → 409）、artifactChangeSummaryModel（按 run 聚合/不混 run/文案）、artifactMismatchGuard（普通 continuation 白名单 vs 资产指令保守阻断）。
+
+验证：backend artifact/conversation 相关套件 55 passed（事件收敛/ACL/端点在既有路径不回归）；frontend 新 realtime 模型测试 7 passed。
+
+第二轮接续（并发已随 commit 4a32d83 P09.3A 收敛）：新增 agentArtifactEventBus（订阅/发布仅 Artifact compact 事件）；useConversationChat 在 SSE 收到 artifact_revision_created/artifact_diff_created 时归一后 publish；FunctionCasePage 订阅 bus：按 Artifact 过滤、revision guard/21→23 coalesce、100ms debounce 后 GET tree/revisions（bounded retry，markRefreshed 防 stale），刷新后自动清理被删除的 selectedNode/scope；全部 dialog opener 记录 baseRevision，runWrite 保存使用 baseRevision（后端 409 主导 conflict）；chatContextModel mismatch 分支接入 artifactMismatchGuard（普通 continuation 放行、资产指令保守阻断）。验证：eslint 0；frontend node 81 passed（74+7 realtime 语义）；npm run build ok。
+
+仍待完成：Chat Change Summary 卡片与 View Changes 导航（含 pendingArtifactNavigation）、历史恢复 UI 读取 run artifact-changes、编辑器冲突 warning 文案接入、MindMap 不 fitView 约束确认、Test Design Skill 冲突有限重试文案、相应回归与 Browser E2E（真实 MySQL alembic→0008）。P09.3B 未完成、P09 未 complete。
+
+第三轮（Change Summary / View Changes 链路）：useConversationChat 暴露 `artifactSummaries`（由 SSE 持久化事件按 run 聚合，重连/重新打开游标重放即可恢复）；V2ChatPanel 在对话区顶部渲染轻量 Changes 行（文案按 change_counts 派生 + Revision 区间），「查看变更」仅当页面 Artifact 与变更一致时可用，点击经 `agentArtifactNavigation` 发布 diff 意图；FunctionCasePage 消费意图：Artifact 匹配才消费并调用 `getArtifactDiff(from,to)` 打开真实后端 Diff，跨 Artifact 不消费；Skill rule 7 收紧为“read 最新 → 有限重试最多 2 次 → 目标已不存在/意图不明不重建不猜，改为询问”。验证：eslint 0；frontend node 81 passed；build ok。P09.3B 仍未 complete（历史恢复经 run artifact-changes 的显式 UI、MindMap 不自动 fitView 的显式守卫测试、P09 全回归与 Browser E2E 待后续）。
+
+收尾：MindMap fit 守卫修正为页面显式 `fitNonce`（仅首次/Artifact 切换/人工写、undo、restore 成功后 +1；Agent realtime 刷新不加，画布不跳，§14）；node 语义测试扩至 84 项；P09 相关后端回归（artifact_tools、conversation API/focus/workspace、TestArtifact service、migrations、conversation_persistence、workers）= 185 passed in ~33s。前端 eslint 0 errors（MindMap 一例既有 useMemo deps warning 非本轮引入）。P09.3B 仍不标 complete：浏览器 E2E 与部分显式 UI（历史聚合接口前端拉取按钮）未做。
+
+真实 MySQL 验证（2026-09-06，用户显式授权）：ALEMBIC_ALLOW_MYSQL=1 执行 alembic current = 0007_artifact_module_convergence → upgrade head 成功（0008_agent_run_workspace_context: snapshot FunctionCasePage selection per Turn，非破坏 DDL）；alembic_version=0008；`agent_runs.workspace_context_json` 与 agent_sessions mode/next_message_sequence/next_event_sequence 均存在。浏览器级 E2E（双浏览器/人工走查）仍无浏览器基础设施 → NOT VERIFIED。
+
+收尾（无浏览器环境，浏览器项按 NOT VERIFIED 跳过）：编辑器打开期间若 tree 已前进（Agent realtime 20→21），页面顶部显示轻量提示「测试资产已更新。当前编辑内容基于 Revision X」；功能用例页无 Artifact（加载/空/无权限）时普通聊天放行，资产型/引用型指令返回明确「当前项目尚无可用的功能测试资产。」（chatContextModel action=no-artifact + hook 文案）。frontend node 84 passed / eslint 0 / build ok。**浏览器级 E2E（§47-62）跳过并标记 NOT VERIFIED**（无浏览器基础设施，不假装完成）。

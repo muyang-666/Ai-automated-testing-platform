@@ -5,6 +5,8 @@ import ChatComposer from "./ChatComposer.jsx";
 import { AddIcon, HistoryIcon, MaximizeIcon, MinimizeIcon, RestoreIcon } from "./ChatIcons.jsx";
 import ContextIndicator from "./ContextIndicator.jsx";
 import { buildContextIndicator } from "./chatContextModel.js";
+import { summaryLabel } from "../v2-workspace/artifactChangeSummaryModel.js";
+import { agentArtifactNavigation } from "../v2-workspace/agentArtifactNavigation.js";
 import useFunctionalWorkspace from "../v2-workspace/useFunctionalWorkspace.js";
 import "./v2Chat.css";
 
@@ -302,6 +304,35 @@ export default function V2ChatPanel({ currentUser }) {
         )}
         {chat.runError && chat.capabilities?.model_ready !== false
           && <div className="v2chat-error">{chat.runError}</div>}
+        {(chat.artifactSummaries?.length || 0) > 0 && (
+          <div className="v2chat-changes">
+            {chat.artifactSummaries.map((summary) => (
+              summary.artifacts.map((artifact) => (
+                <div key={`${summary.runId}-${artifact.artifactId}`} className="v2chat-changes-row">
+                  <span className="v2chat-changes-text">
+                    Changes · {summaryLabel(artifact.changeCounts)}
+                    {" · "}Revision {artifact.fromRevision ?? "?"} → {artifact.toRevision}
+                  </span>
+                  {artifact.artifactId === functionalWorkspace.state?.artifactId ? (
+                    <button type="button" className="v2chat-changes-link" onClick={() => {
+                      agentArtifactNavigation.publish({
+                        page: "functionCases",
+                        projectId: artifact.projectId ?? null,
+                        artifactId: artifact.artifactId,
+                        fromRevision: artifact.fromRevision,
+                        toRevision: artifact.toRevision,
+                      });
+                    }}>
+                      查看变更
+                    </button>
+                  ) : (
+                    <span className="v2chat-changes-dim" title="当前页面 Artifact 与变更不一致">变更不可用</span>
+                  )}
+                </div>
+              ))
+            ))}
+          </div>
+        )}
         {chat.phase === "paused" && (
           <div className="v2chat-paused">上一轮失败/中断，本轮已暂停（可新建对话继续）。</div>
         )}

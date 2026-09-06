@@ -271,6 +271,16 @@ def _node_operation(node: dict, *, parent_id=None, order_key=None, ref=None) -> 
     return operation
 
 
+def _change_counts(changes: list[dict]) -> dict:
+    """由 diff changes 派生 compact 计数（P09.3B，不携带完整 changes）。"""
+    counts = {"added": 0, "updated": 0, "deleted": 0, "moved": 0}
+    for change in changes:
+        kind = change.get("change")
+        if kind in counts:
+            counts[kind] += 1
+    return counts
+
+
 def _assert_write_fence(db, runtime) -> None:
     """P08.2：Artifact 写事务提交前的 fencing。
 
@@ -300,13 +310,25 @@ def _apply_write(runtime, expected_revision: int, operations: list[dict], summar
         diff = artifact_service.get_diff(db, artifact_id=runtime.artifact_id,
             from_revision=expected_revision, to_revision=result["new_revision"], requester=user)
         affected = [change.get("node_id") for change in diff["changes"] if change.get("node_id") is not None]
-        event_payload = {"artifact_id": runtime.artifact_id, "revision": result["new_revision"],
-                         "run_id": runtime.run_id, "conversation_id": runtime.conversation_id,
-                         "summary": summary}
+        project_id = artifact_service.get_artifact(
+            db, artifact_id=runtime.artifact_id, requester=user).project_id
+        # P09.3B：SSE 只携带 compact 通知/元数据，绝不作为完整 Diff transport。
+        # 完整 Diff 一律 GET /test-artifacts/{id}/diff 获取。
+        event_payload = {
+            "artifact_id": runtime.artifact_id,
+            "project_id": project_id,
+            "from_revision": expected_revision,
+            "to_revision": result["new_revision"],
+            "run_id": runtime.run_id,
+            "conversation_id": runtime.conversation_id,
+            "summary": summary,
+            "change_counts": _change_counts(diff["changes"]),
+        }
+        # 同事务写入 revision + 事件；rollback 或 fencing 失败都不留事件（append 后统一 commit）
         agent_run_service.append_event(db, runtime.conversation_id, runtime.run_id,
                                        "artifact_revision_created", event_payload)
         agent_run_service.append_event(db, runtime.conversation_id, runtime.run_id,
-                                       "artifact_diff_created", event_payload | {"changes": diff["changes"]})
+                                       "artifact_diff_created", event_payload)
         _assert_write_fence(db, runtime)  # 与 cancel/claim 串行化的最终守卫
         db.commit()
         return _ok(summary, {"revision": result["new_revision"],

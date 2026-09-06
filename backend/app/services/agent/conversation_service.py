@@ -449,16 +449,26 @@ def conversation_snapshot(db: Session, *, session_id: int,
     if focused_id is not None:
         from app.models.project import Project
         from app.models.test_artifact.test_artifact import TestArtifact
+        from app.models.user import User
+        from app.services.permission_service import can_read_project
         artifact_row = db.get(TestArtifact, focused_id)
         if artifact_row is not None:
-            project_name = (db.execute(select(Project.name).where(
-                Project.id == artifact_row.project_id)).scalar_one_or_none()
-                if artifact_row.project_id is not None else None)
-            focused_artifact = {
-                "id": artifact_row.id, "title": artifact_row.title,
-                "artifact_type": artifact_row.artifact_type,
-                "project_id": artifact_row.project_id, "project_name": project_name,
-            }
+            # P09.3B §2.2：project-scoped Artifact 元数据必须通过当前用户 Project read；
+            # 权限被撤销时按“不可用”处理，不泄漏 project/artifact 名称。
+            owner = db.get(User, requester_user_id)
+            visible = artifact_row.project_id is None or (
+                owner is not None and can_read_project(db, owner, artifact_row.project_id))
+            if not visible:
+                focused_id = None
+            else:
+                project_name = (db.execute(select(Project.name).where(
+                    Project.id == artifact_row.project_id)).scalar_one_or_none()
+                    if artifact_row.project_id is not None else None)
+                focused_artifact = {
+                    "id": artifact_row.id, "title": artifact_row.title,
+                    "artifact_type": artifact_row.artifact_type,
+                    "project_id": artifact_row.project_id, "project_name": project_name,
+                }
     head = db.execute(
         select(AgentRun).where(
             AgentRun.session_id == session.id,
@@ -701,3 +711,75 @@ def _visible_rows_by_turn(db: Session, session_id: int, rows: list,
             visible.append((owner, row.sequence_no, row))
     visible.sort(key=lambda item: (item[0], item[1]))
     return [row for _, _, row in visible]
+
+
+def run_artifact_changes(db: Session, *, run_id: int, requester_user_id: int) -> list[dict]:
+    """P09.3B §39：薄只读聚合——按 run 汇总 compact Artifact Revision 元数据。
+
+    数据来源：该 Run 已持久化的 artifact_revision_created 事件（不读完整 Diff）；
+    仅返回 compact 字段，绝不含 before/after Diff。
+    要求：Conversation owner + Artifact 当前 Project read ACL；无权限项直接跳过/不可用。
+    """
+    from app.models.agent.agent_event import AgentEvent
+    from app.models.agent.agent_run import AgentRun
+    from app.models.agent.agent_session import AgentSession
+    from app.models.test_artifact.test_artifact import TestArtifact
+    from app.models.user import User
+    from app.services.permission_service import can_read_project
+
+    run = db.query(AgentRun).filter(AgentRun.id == run_id).first()
+    if run is None:
+        raise ConversationDataError("Run 不存在")
+    session = db.query(AgentSession).filter(AgentSession.id == run.session_id).first()
+    if session is None or session.user_id != requester_user_id:
+        raise AgentPermissionError("无权查看该 Run 的 Artifact 变更")
+    events = (
+        db.query(AgentEvent)
+        .filter(AgentEvent.session_id == run.session_id,
+                AgentEvent.run_id == run_id,
+                AgentEvent.event_type == "artifact_revision_created")
+        .order_by(AgentEvent.sequence_no.asc())
+        .all()
+    )
+    requester = db.get(User, requester_user_id)
+    per_artifact: dict[int, dict] = {}
+    for event in events:
+        payload = event.payload_json if isinstance(event.payload_json, dict) else {}
+        artifact_id = payload.get("artifact_id")
+        if type(artifact_id) is not int:
+            continue
+        entry = per_artifact.setdefault(artifact_id, {
+            "artifact_id": artifact_id,
+            "conversation_id": run.session_id,
+            "run_id": run.id,
+            "project_id": payload.get("project_id"),
+            "from_revision": payload.get("from_revision"),
+            "to_revision": payload.get("to_revision"),
+            "revision_count": 0,
+            "change_counts": {"added": 0, "updated": 0, "deleted": 0, "moved": 0},
+        })
+        counts = payload.get("change_counts") if isinstance(payload.get("change_counts"), dict) else {}
+        for key in entry["change_counts"]:
+            value = counts.get(key)
+            if type(value) is int and value > 0:
+                entry["change_counts"][key] += value
+        entry["revision_count"] += 1
+        # 单调推进 from/to
+        if entry["from_revision"] is None or (type(payload.get("from_revision")) is int
+                                             and payload["from_revision"] < entry["from_revision"]):
+            entry["from_revision"] = payload.get("from_revision")
+        if entry["to_revision"] is None or (type(payload.get("to_revision")) is int
+                                           and payload["to_revision"] > entry["to_revision"]):
+            entry["to_revision"] = payload.get("to_revision")
+    result: list[dict] = []
+    for artifact_id, entry in per_artifact.items():
+        row = db.get(TestArtifact, artifact_id)
+        project_id = row.project_id if row is not None else None
+        if row is not None and project_id is not None:
+            if requester is None or not can_read_project(db, requester, project_id):
+                continue  # 权限被撤销：不泄漏；历史 Assistant 文本仍保留在消息历史
+        if row is None:
+            continue
+        entry["project_id"] = project_id
+        result.append(entry)
+    return result

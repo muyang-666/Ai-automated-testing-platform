@@ -246,6 +246,22 @@ def submit_turn(conversation_id: int, payload: TurnSubmitRequest,
     )
 
 
+@router.get("/conversation-runs/{run_id}/artifact-changes", response_model=list[dict])
+def run_artifact_changes_api(run_id: int, db: Session = Depends(get_db),
+                             current_user: User = Depends(get_current_user)):
+    """P09.3B §39：按 Run 汇总 compact Artifact Revision 元数据（owner + Artifact ACL）。
+
+    只返回 from/to revision 与 change_counts 等 compact 字段，不返回完整 Diff；
+    无当前 Project 读权限的 Artifact 项一律不可用/跳过。
+    """
+    _require_conversation_run(db, run_id, current_user)
+    try:
+        return conversation_service.run_artifact_changes(
+            db, run_id=run_id, requester_user_id=current_user.id)
+    except AgentError as e:
+        raise _http_error(e)
+
+
 @router.get("/conversations/{conversation_id}/events")
 def stream_events(conversation_id: int,
                   after_sequence: int | None = Query(default=None, ge=0),

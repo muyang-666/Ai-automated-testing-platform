@@ -21,6 +21,13 @@ import { buildNodeIndex } from "../components/v2-workspace/mindMapModel";
 import { getStoredProjectId, resolveProjectId, storeProjectId } from "../utils/projectSelection";
 import { isViewerOnly } from "../utils/authPermissions";
 import useFunctionalWorkspace from "../components/v2-workspace/useFunctionalWorkspace.js";
+import { agentArtifactEventBus } from "../components/v2-workspace/agentArtifactEventBus.js";
+import { agentArtifactNavigation } from "../components/v2-workspace/agentArtifactNavigation.js";
+import {
+  applyArtifactEvent,
+  initialState,
+  markRefreshed,
+} from "../components/v2-workspace/artifactRealtimeModel.js";
 import { deriveFunctionalWorkspace } from "../components/v2-workspace/functionalWorkspaceModel.js";
 
 const PRIORITY_COLOR = { P0: "red", P1: "orange", P2: "gold", P3: "default" };
@@ -128,6 +135,7 @@ export default function FunctionCasePage() {
   const [keyword, setKeyword] = useState("");
   const [priority, setPriority] = useState(undefined);
   const [viewMode, setViewMode] = useState("list");
+  const [fitNonce, setFitNonce] = useState(0);
   const [collapsed, setCollapsed] = useState([]);
   const [selectedNodeId, setSelectedNodeId] = useState(null);
   const [writeBusy, setWriteBusy] = useState(false);
@@ -146,6 +154,11 @@ export default function FunctionCasePage() {
   const [conflict, setConflict] = useState(null); // {expected,current}
 
   const seq = useRef(0);
+  const artifactRef = useRef(null);
+  const selectedRef = useRef(null);
+  const scopeRef = useRef(null);
+  const realtimeRef = useRef(initialState({ artifactId: 0, currentRevision: 0 }));
+  const refreshTimer = useRef(null);
   const viewerOnly = isViewerOnly();
   const writeVisible = !!artifact && !viewerOnly;
 
@@ -183,6 +196,7 @@ export default function FunctionCasePage() {
       if (artifactRow) {
         setArtifact(artifactRow.data);
         await refreshContent(artifactRow.data.id);
+        setFitNonce((n) => n + 1); // 首次/Artifact 切换：允许 MindMap fit
         setScopeId(null);
         setSelectedNodeId(null);
       }
@@ -233,6 +247,69 @@ export default function FunctionCasePage() {
   }, [setWorkspace, workspaceValue]);
 
   useEffect(() => () => leaveWorkspace(), [leaveWorkspace]);
+
+  // P09.3B：Artifact Revision realtime —— 订阅 agentArtifactEventBus，按 Artifact 过滤，
+  // revision guard + 21→23 coalesce；短 debounce 后 GET tree/revisions；刷新后按需清理
+  // 被删除的 selectedNode/scope（§16/§17）。
+  useEffect(() => {
+    // Artifact 切换或 revision 前进时重建 realtime 基线；pending（等待刷新）期间保留
+    // coalesced target，不被 tree 变化重置。
+    artifactRef.current = artifact?.id ?? null;
+    if (realtimeRef.current.pending) return;
+    const current = Number(tree?.current_revision) || 0;
+    if (realtimeRef.current.artifactId !== (artifact?.id ?? 0)
+        || current !== realtimeRef.current.currentRevision) {
+      realtimeRef.current = initialState({
+        artifactId: artifact?.id ?? 0,
+        currentRevision: current,
+      });
+    }
+  }, [artifact?.id, tree?.current_revision]);
+
+  useEffect(() => {
+    selectedRef.current = selectedNodeId;
+  }, [selectedNodeId]);
+  useEffect(() => {
+    scopeRef.current = scopeId;
+  }, [scopeId]);
+
+  const refreshAfterArtifactEvent = useCallback(async () => {
+    const aid = artifactRef.current;
+    if (aid == null) return;
+    for (let guard = 0; guard < 3 && realtimeRef.current.pending; guard += 1) {
+      const loaded = await refreshContent(aid);
+      realtimeRef.current = markRefreshed(
+        realtimeRef.current, Number(loaded?.current_revision) || 0);
+      if (loaded?.root) {
+        const indexAfter = buildNodeIndex(loaded.root);
+        if (selectedRef.current != null && !indexAfter.has(selectedRef.current)) {
+          setSelectedNodeId(null);
+        }
+        if (scopeRef.current != null && scopeRef.current !== loaded.root.id
+            && !indexAfter.has(scopeRef.current)) {
+          setScopeId(null);
+        }
+      }
+    }
+  }, [refreshContent]);
+
+  useEffect(() => {
+    const unsubscribe = agentArtifactEventBus.subscribe((event) => {
+      if (event.artifactId !== artifactRef.current) return; // §9 其它 Artifact 忽略
+      const next = applyArtifactEvent(realtimeRef.current, event);
+      if (!next) return; // duplicate / stale
+      realtimeRef.current = next;
+      clearTimeout(refreshTimer.current);
+      refreshTimer.current = setTimeout(() => {
+        void refreshAfterArtifactEvent();
+      }, 100);
+    });
+    return () => {
+      unsubscribe();
+      clearTimeout(refreshTimer.current);
+    };
+  }, [refreshAfterArtifactEvent]);
+
   const moduleTree = useMemo(() => (tree ? buildModuleTree(tree.root) : null), [tree]);
   const rows = useMemo(() => (tree ? collectScopeCases(tree.root, scopeId) : []), [tree, scopeId]);
   const scopedRoot = useMemo(() => {
@@ -268,6 +345,7 @@ export default function FunctionCasePage() {
     const content = row?.content && typeof row.content === "object" ? row.content : {};
     const base = {
       mode, // create|edit
+      baseRevision: tree?.current_revision ?? null, // P09.3B：编辑基于打开时的 revision
       title: row?.title || "",
       moduleId: row ? index.get(row.nodeId)?.parent_id ?? null : defaultModuleId ?? scopeId,
       priority: content.priority || "P1",
@@ -282,7 +360,7 @@ export default function FunctionCasePage() {
       })),
     };
     setCaseDlg({ ...base, nodeId: row?.nodeId ?? null });
-  }, [scopeId, index]);
+  }, [scopeId, index, tree]);
 
   const openRecentDiff = useCallback(async () => {
     if (!artifact || !tree) return;
@@ -295,6 +373,38 @@ export default function FunctionCasePage() {
       setError(err?.response?.data?.detail || err?.message || "加载 diff 失败");
     }
   }, [artifact, tree]);
+
+  const openRangeDiff = useCallback(async (fromRevision, toRevision) => {
+    if (!artifact || !tree) return;
+    if (fromRevision == null || toRevision == null || toRevision <= fromRevision) return;
+    try {
+      const res = await getArtifactDiff(artifact.id, {
+        from_revision: fromRevision, to_revision: toRevision,
+      });
+      setDiffData({ ...res.data, title: `Revision ${fromRevision} → ${toRevision}` });
+      setDiffOpen(true);
+    } catch (err) {
+      setError(err?.response?.data?.detail || err?.message || "加载 diff 失败");
+    }
+  }, [artifact, tree]);
+
+  // P09.3B §32-36 View Changes：消费“打开 FunctionCasePage Diff”意图；
+  // 只消费属于当前 Artifact 的意图；Artifact 未加载完成时保持 pending，由依赖变化再触发。
+  // （必须位于 openRangeDiff 声明之后，避免 TDZ 渲染期 ReferenceError。）
+  useEffect(() => {
+    const consume = async () => {
+      const intent = agentArtifactNavigation.getPending();
+      if (!intent || intent.page !== "functionCases") return;
+      if (artifact?.id == null || intent.artifactId !== artifact.id) return;
+      agentArtifactNavigation.clear();
+      await openRangeDiff(intent.fromRevision, intent.toRevision);
+    };
+    const unsubscribe = agentArtifactNavigation.subscribe(() => {
+      void consume();
+    });
+    void consume();
+    return unsubscribe;
+  }, [artifact?.id, openRangeDiff]);
 
   const openRevisionDiff = useCallback(async (revisionNo) => {
     if (!artifact) return;
@@ -309,13 +419,16 @@ export default function FunctionCasePage() {
     }
   }, [artifact]);
 
-  const runWrite = useCallback(async (operations, summary) => {
+  const runWrite = useCallback(async (operations, summary, expectedOverride = null) => {
     if (!artifact || !tree) return false;
-    const expected = tree.current_revision;
+    // P09.3B §19-20：编辑器打开时记录 baseRevision，保存用 base（而不是 realtime 后更新的
+    // tree.current_revision），否则会把 Agent 并发改动静默覆盖成“最新”通过。
+    const expected = expectedOverride ?? tree.current_revision;
     setWriteBusy(true);
     try {
       await applyArtifactOperations(artifact.id, { expected_revision: expected, operations, summary });
       await refreshContent(artifact.id);
+      setFitNonce((n) => n + 1); // 人工写成功：允许 fit；Agent realtime 刷新不加
       setConflict(null);
       return true;
     } catch (err) {
@@ -349,7 +462,11 @@ export default function FunctionCasePage() {
     const ops = caseEditorModel.moduleOps({
       kind: moduleDlg.kind, parentId: moduleDlg.parentId, nodeId: moduleDlg.nodeId, title,
     });
-    const ok = await runWrite(ops, moduleDlg.kind === "create" ? `新增模块 ${title}` : `重命名模块 → ${title}`);
+    const ok = await runWrite(
+      ops,
+      moduleDlg.kind === "create" ? `新增模块 ${title}` : `重命名模块 → ${title}`,
+      moduleDlg.baseRevision ?? null,
+    );
     if (ok) setModuleDlg(null);
   };
 
@@ -372,7 +489,7 @@ export default function FunctionCasePage() {
         title, content, sourceRefs: null,
       });
       const summary = caseDlg.mode === "create" ? `新增用例 ${title}` : `编辑用例 ${title}`;
-      const ok = await runWrite(ops, summary);
+      const ok = await runWrite(ops, summary, caseDlg.baseRevision ?? null);
       if (ok) setCaseDlg(null);
     } catch (err) {
       setError(err?.message || "表单校验失败");
@@ -385,7 +502,8 @@ export default function FunctionCasePage() {
       operation_type: "delete_node",
       target_node_id: deleteDlg.node.id,
     }];
-    const ok = await runWrite(ops, `删除 ${deleteDlg.node.node_type === "module" ? "模块" : "用例"} ${deleteDlg.node.title}`);
+    const ok = await runWrite(ops, `删除 ${deleteDlg.node.node_type === "module" ? "模块" : "用例"} ${deleteDlg.node.title}`,
+      deleteDlg.baseRevision ?? null);
     if (ok) {
       if (scopeId === deleteDlg.node.id) setScopeId(null);
       if (selectedNodeId === deleteDlg.node.id) setSelectedNodeId(null);
@@ -398,7 +516,7 @@ export default function FunctionCasePage() {
     const ops = caseEditorModel.moduleOps({
       kind: "move", nodeId: moveDlg.node.id, newParentId: moveDlg.parentId,
     });
-    const ok = await runWrite(ops, `移动 ${moveDlg.node.title}`);
+    const ok = await runWrite(ops, `移动 ${moveDlg.node.title}`, moveDlg.baseRevision ?? null);
     if (ok) setMoveDlg(null);
   };
 
@@ -414,6 +532,7 @@ export default function FunctionCasePage() {
       setWriteBusy(true);
       await undoArtifact(artifact.id, tree?.current_revision);
       await refreshContent(artifact.id);
+      setFitNonce((n) => n + 1);
       setUndoVisible(false);
     } catch (err) {
       const d = err?.response?.data?.detail;
@@ -433,6 +552,7 @@ export default function FunctionCasePage() {
       setWriteBusy(true);
       await restoreArtifact(artifact.id, restoreTarget, tree?.current_revision);
       await refreshContent(artifact.id);
+      setFitNonce((n) => n + 1);
       setRestoreTarget(null);
     } catch (err) {
       const d = err?.response?.data?.detail;
@@ -454,12 +574,12 @@ export default function FunctionCasePage() {
       { key: "delete", label: "删除", danger: true },
     ],
     onClick: ({ key }) => {
-      if (key === "child") setModuleDlg({ kind: "create", parentId: node.id, title: "" });
-      if (key === "rename") setModuleDlg({ kind: "rename", nodeId: node.id, title: node.title });
+      if (key === "child") setModuleDlg({ kind: "create", parentId: node.id, title: "", baseRevision: tree?.current_revision ?? null });
+      if (key === "rename") setModuleDlg({ kind: "rename", nodeId: node.id, title: node.title, baseRevision: tree?.current_revision ?? null });
       if (key === "move") {
-        setMoveDlg({ kind: "module", node, parentId: null });
+        setMoveDlg({ kind: "module", node, parentId: null, baseRevision: tree?.current_revision ?? null });
       }
-      if (key === "delete") setDeleteDlg({ kind: "module", node });
+      if (key === "delete") setDeleteDlg({ kind: "module", node, baseRevision: tree?.current_revision ?? null });
     },
   });
 
@@ -509,6 +629,13 @@ export default function FunctionCasePage() {
 
   return (
     <Card size="small" title={null} className="case-page">
+      {(() => {
+        const dlg = [moduleDlg, caseDlg, deleteDlg, moveDlg].find(Boolean);
+        if (dlg?.baseRevision != null && tree && tree.current_revision > dlg.baseRevision) {
+          return <div className="v2w-realtime-note">测试资产已更新。当前编辑内容基于 Revision {dlg.baseRevision}。</div>;
+        }
+        return null;
+      })()}
       <div className="case-page-toolbar">
         <Space wrap>
           <span>项目：</span>
@@ -560,7 +687,7 @@ export default function FunctionCasePage() {
             <strong>Modules</strong>
             {writeVisible && (
               <Button size="small" type="text" onClick={() => {
-                setModuleDlg({ kind: "create", parentId: tree?.root?.id ?? null, title: "" });
+                setModuleDlg({ kind: "create", parentId: tree?.root?.id ?? null, title: "", baseRevision: tree?.current_revision ?? null });
               }}>＋ 新增模块</Button>
             )}
           </div>
@@ -631,7 +758,7 @@ export default function FunctionCasePage() {
                       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
                     ))}
                     artifactKey={artifact?.id}
-                    treeNonce={tree?.current_revision}
+                    treeNonce={fitNonce} // P09.3B §14：Agent realtime 刷新不加 fitNonce，画布不跳
                   />
                 </ReactFlowProvider>
               ) : (
@@ -647,13 +774,13 @@ export default function FunctionCasePage() {
                     <Space size={4} style={{ float: "right" }}>
                       <Button size="small"
                         onClick={() => selectedNode.node_type === "module"
-                          ? setModuleDlg({ kind: "rename", nodeId: selectedNode.id, title: selectedNode.title })
+                          ? setModuleDlg({ kind: "rename", nodeId: selectedNode.id, title: selectedNode.title, baseRevision: tree?.current_revision ?? null })
                           : openCaseEditor("edit", selectedNode)}>编辑</Button>
                       {selectedNode.node_type === "module"
                         ? <Button size="small"
-                            onClick={() => setDeleteDlg({ kind: "module", node: selectedNode })} danger>删除</Button>
+                            onClick={() => setDeleteDlg({ kind: "module", node: selectedNode, baseRevision: tree?.current_revision ?? null })} danger>删除</Button>
                         : <Button size="small"
-                            onClick={() => setDeleteDlg({ kind: "case", node: selectedNode })} danger>删除</Button>}
+                            onClick={() => setDeleteDlg({ kind: "case", node: selectedNode, baseRevision: tree?.current_revision ?? null })} danger>删除</Button>}
                     </Space>
                   )}
                 </div>

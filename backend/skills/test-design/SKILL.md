@@ -24,8 +24,10 @@ results. Preserve source references when they explain why a node exists.
    duplicate checks, or coverage analysis only when the user's goal calls for them.
 5. Never silently delete a large human-authored branch. Explain the impact and respect policy.
 6. Prefer one small atomic batch for several edits that express one intent.
-7. On revision conflict, read the current revision and relevant nodes before retrying once or
-   asking the user when intent is ambiguous.
+7. On revision conflict, read the current revision and the relevant nodes, re-evaluate, then retry
+   at most twice in total (bounded recovery). If the target module/node no longer exists or the
+   original intent is no longer clear, do not recreate it and do not guess — ask the user which
+   part to change.
 8. Quality tools diagnose only. They do not change the Artifact.
 9. If “this one”, “the second”, or another reference cannot be resolved from recent messages
    and the recent diff, ask the user instead of guessing.

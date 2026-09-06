@@ -1,4 +1,5 @@
 import { workspaceTurnPayload } from "../v2-workspace/functionalWorkspaceModel.js";
+import { planSubmitWithMismatch, looksLikeAssetDirective } from "../v2-workspace/artifactMismatchGuard.js";
 
 export function messageNeedsWorkspaceContext(text) {
   return /(这里|这边|这个模块|当前模块|这个用例|当前用例|选中的|所选)/.test(String(text || ""));
@@ -7,7 +8,10 @@ export function messageNeedsWorkspaceContext(text) {
 export function planWorkspaceSubmission({ isUnsaved, snapshotReady = true,
   focusedArtifactId, phase, workspace, message = "" }) {
   if (workspace?.page === "functionCases" && workspace.artifactId == null) {
-    return { action: "workspace-loading", workspaceContext: null };
+    // P09.3B §2.3/§60：无可用 Artifact（加载中/空/无权限创建）时，普通聊天照常允许；
+    // 引用“这里/这个模块”或资产型指令明确提示当前无可用功能测试资产，不伪造上下文。
+    const assetIntent = messageNeedsWorkspaceContext(message) || looksLikeAssetDirective(message);
+    return { action: assetIntent ? "no-artifact" : "submit", workspaceContext: null };
   }
   const payload = workspaceTurnPayload(workspace);
   if (!payload) return { action: "submit", workspaceContext: null };
@@ -19,8 +23,14 @@ export function planWorkspaceSubmission({ isUnsaved, snapshotReady = true,
       : { action: "focus-then-submit", workspaceContext: payload };
   }
   if (focusedArtifactId !== workspace.artifactId) {
-    return { action: messageNeedsWorkspaceContext(message) ? "mismatch" : "submit",
-             workspaceContext: null };
+    // P09.3B §2.1：mismatch 时普通 continuation（继续解释/为什么…）允许继续旧 Conversation；
+    // 资产型指令或无法可靠判断的内容一律阻止提交，避免改错项目。
+    const plan = planSubmitWithMismatch({
+      content: message,
+      mismatch: true,
+      messageNeedsWorkspaceContext: messageNeedsWorkspaceContext(message),
+    });
+    return { action: plan.allowed ? "submit" : "mismatch", workspaceContext: null };
   }
   return { action: "submit", workspaceContext: payload };
 }

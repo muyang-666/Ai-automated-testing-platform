@@ -70,9 +70,16 @@ test("busy 或已绑定其他 Artifact 都不会 silent refocus", () => {
   assert.equal(planWorkspaceSubmission({ isUnsaved: false, snapshotReady: true,
     focusedArtifactId: 99, phase: "running", workspace, message: "继续解释刚才的回答" }).action,
   "submit");
+  // P09.3B §2.3/§60：功能用例页无 Artifact（加载中/空/无权限）时普通聊天照常允许，
+  // 只有引用“这里/这个模块”或资产型指令时明确提示“无可用功能测试资产”。
   assert.equal(planWorkspaceSubmission({ isUnsaved: false, snapshotReady: true,
-    focusedArtifactId: 9, phase: "idle", workspace: { ...workspace, artifactId: null } }).action,
-  "workspace-loading");
+    focusedArtifactId: 9, phase: "idle",
+    workspace: { ...workspace, artifactId: null }, message: "为什么这么设计？" }).action,
+  "submit");
+  assert.equal(planWorkspaceSubmission({ isUnsaved: false, snapshotReady: true,
+    focusedArtifactId: 9, phase: "idle",
+    workspace: { ...workspace, artifactId: null }, message: "这里补一条边界" }).action,
+  "no-artifact");
 });
 
 test("Turn payload 只包含 selection/view，不重复 project/artifact", () => {
