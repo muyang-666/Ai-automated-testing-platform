@@ -108,11 +108,12 @@ class ConversationRunner:
             restored = self._restore(db, session_id, actor_user_id, run,
                                        until_sequence_no=self._current_user_sequence(db, run))
             self._assert_history_ends_with_current_user_message(db, run, restored)
-            # P08.2：Runner 始终使用 Run 上的可信快照（submit 时固化），
-            # 不读取可变的 Session focus —— 会话焦点只影响未来新 Turn。
+            # P08.2/P08.3：Runner 只使用 Run 上的可信快照（submit 时固化），
+            # 不读取可变的 Session focus/context —— 会话焦点只影响未来新 Turn。
             run_context = conversation_service.artifact_context_from_run(run)
             artifact_id = run_context.get("artifact_id")
-            project_id = run.project_id  # submit 时已与会话 project 同事务固化
+            # project 亦以快照为准（快照缺失时回退 run.project_id，兼容迁移前的旧行）
+            project_id = run_context.get("project_id") or run.project_id
             requirement_id = run_context.get("requirement_id")
             # Release the Runner's read transaction before the context factory
             # performs its own short permission lookup.
@@ -131,7 +132,9 @@ class ConversationRunner:
                 tool_registry=self.tool_registry,
                 metadata={"user_id": actor_user_id, "conversation_id": session_id,
                           "project_id": project_id,
-                          "artifact_id": artifact_id, "run_id": run_id,
+                          "artifact_id": artifact_id,
+                          "requirement_id": requirement_id,
+                          "run_id": run_id,
                           "permissions": sorted(getattr(application_context, "permissions", ()))},
                 application_context=application_context,
             )

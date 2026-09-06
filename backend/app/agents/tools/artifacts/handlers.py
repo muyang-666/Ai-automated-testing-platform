@@ -67,8 +67,21 @@ def _context(runtime, *, write: bool = False):
         user = db.get(User, runtime.user_id)
         session = db.get(AgentSession, runtime.conversation_id)
         if user is None or session is None or session.user_id != runtime.user_id \
-                or session.mode != "conversation" \
-                or conversation_service.focused_artifact_id(session) != runtime.artifact_id:
+                or session.mode != "conversation":
+            raise _reported("runtime_context_invalid", "Trusted Artifact context is no longer valid.")
+        # P08.3：本 Turn 的 Artifact identity 以 Run 快照为准，绝不重新依赖当前 Session
+        # focus —— 会话焦点在 Run 执行期间切换不影响正在运行的 Turn。
+        if runtime.run_id is not None:
+            run = db.get(AgentRun, runtime.run_id)
+            run_artifact_id = (conversation_service.artifact_context_from_run(run)
+                               .get("artifact_id")) if run is not None else None
+            if run is None or run.session_id != runtime.conversation_id \
+                    or run.requester_user_id != runtime.user_id \
+                    or run_artifact_id != runtime.artifact_id:
+                raise _reported("runtime_context_invalid",
+                                "Trusted Artifact context is no longer valid (Run snapshot mismatch).")
+        elif conversation_service.focused_artifact_id(session) != runtime.artifact_id:
+            # run_id 缺失的兼容路径（测试/直连上下文）：仍要求与会话一致
             raise _reported("runtime_context_invalid", "Trusted Artifact context is no longer valid.")
         if write and runtime.worker_id is not None and runtime.execution_token is not None:
             agent_run_service.assert_execution_ownership(

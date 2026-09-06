@@ -302,6 +302,16 @@ def focus_conversation_requirement(db: Session, *, session_id: int,
     requirement = db.get(RequirementDoc, requirement_id)
     if requirement is None or requirement.is_deleted             or not can_read_project(db, requester, requirement.project_id):
         raise AgentPermissionError("Requirement 不存在或无权访问")
+    # P08.3 project invariant：已 focus Artifact 时，Artifact 项目必须与 Requirement 项目一致，
+    # 否则 409 —— 绝不产生 Conversation.project != focused Artifact.project 的组合。
+    focused = focused_artifact_id(session)
+    if focused is not None:
+        from app.models.test_artifact.test_artifact import TestArtifact
+        artifact_row = db.get(TestArtifact, focused)
+        artifact_project = artifact_row.project_id if artifact_row is not None else None
+        if artifact_project != requirement.project_id:
+            raise ConversationConflict(
+                "Requirement 与已聚焦 Artifact 项目不一致（Artifact→Requirement 必须保持同一 project scope）")
     if session.project_id is not None and requirement.project_id != session.project_id:
         raise ConversationConflict("Requirement 与 Conversation 项目不一致")
     if session.project_id is None and requirement.project_id is not None:

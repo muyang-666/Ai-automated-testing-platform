@@ -210,21 +210,24 @@ def test_forged_identity_and_server_fields_are_rejected_before_handler(runtime_f
     assert _revision(db_session, artifact_id) == before
 
 
-def test_cross_user_and_changed_focus_are_denied(runtime_fixture, db_session):
-    runtime, artifact_id, _root_id = runtime_fixture
-    foreign = ArtifactRuntimeContext(session_factory=SessionLocal, user_id=USER_B,
-        conversation_id=runtime.conversation_id, run_id=runtime.run_id,
-        artifact_id=artifact_id, project_id=None,
-        permissions=frozenset({"artifact:read", "artifact:write"}))
-    outcome, _ = _execute("get_current_artifact", {}, foreign)
-    assert outcome.message.is_error and outcome.message.details["error_code"] == "runtime_context_invalid"
-    session = db_session.get(__import__("app.models.agent.agent_session", fromlist=["AgentSession"]).AgentSession,
-                             runtime.conversation_id)
+def test_cross_user_denied_and_changed_focus_uses_run_snapshot(runtime_fixture, db_session):
+    """P08.3：跨用户仍拒绝；同一用户改 Session focus 后，工具按 Run 快照继续工作。"""
+    runtime, artifact_id, root_id = runtime_fixture
+    other = ArtifactRuntimeContext(
+        session_factory=SessionLocal, user_id=USER_B, conversation_id=runtime.conversation_id,
+        run_id=runtime.run_id, artifact_id=artifact_id, project_id=None,
+        permissions=frozenset({"artifact:read", "artifact:write"}),
+    )
+    denied, _ = _execute("get_current_artifact", {}, other)
+    assert denied.message.is_error is True
+    assert denied.error_code == "runtime_context_invalid"
+    session = conversation_service._owned_conversation(
+        db_session, runtime.conversation_id, USER_A, require_active=False)
     session.context_json = {"focused_artifact_id": artifact_id + 999}
     db_session.commit()
-    outcome, _ = _execute("get_current_artifact", {}, runtime)
-    assert outcome.message.details["error_code"] == "runtime_context_invalid"
-
+    ok, _ = _execute("get_current_artifact", {}, runtime)
+    assert ok.message.is_error is False
+    assert ok.message.details["data"]["artifact_id"] == artifact_id
 
 def test_batch_failure_rolls_back_every_operation(runtime_fixture, db_session):
     runtime, artifact_id, root_id = runtime_fixture
@@ -564,3 +567,48 @@ def test_read_requirement_rejects_soft_deleted_requirement(project_runtime_fixtu
     read, _ = _execute("read_requirement", {"requirement_id": req_a}, runtime)
     assert read.message.is_error is True
     assert read.error_code == "requirement_not_found"
+
+
+# ── P08.3：Tool 使用 Run Snapshot，不再依赖当前 Session focus ──
+
+
+def test_tool_uses_run_snapshot_after_focus_switch_before_promote(runtime_fixture, db_session):
+    """A 运行中排队 follow-up（快照 A）→ A 终态 → 会话切到 B → follow-up promote 后
+    工具仍按 Run 快照 A 工作，不因 Session focus=B 失效。"""
+    from dataclasses import replace
+
+    from app.models.agent.agent_run import AgentRun
+
+    runtime, artifact_id, root_id = runtime_fixture
+    follow = conversation_service.submit_conversation_turn(
+        db_session, session_id=runtime.conversation_id, requester_user_id=USER_A,
+        content="排队", client_request_id="p083-queue", queue_mode="follow_up",
+        message_id_factory=lambda: "p083-queue-msg", timestamp_ms_factory=lambda: 4,
+    ).run
+    head = db_session.get(AgentRun, runtime.run_id)
+    head.status = "succeeded"
+    db_session.commit()
+    art_b = artifact_service.create_artifact(db_session, requester=db_session.get(User, USER_A),
+                                             title="B")
+    conversation_service.focus_conversation_artifact(
+        db_session, session_id=runtime.conversation_id, artifact_id=art_b.id,
+        requester=db_session.get(User, USER_A))
+    db_session.commit()
+    follow.status = "running"  # promote 后成为新 head（快照仍 A）
+    db_session.commit()
+    follow_runtime = replace(runtime, run_id=follow.id)
+    meta, _ = _execute("get_current_artifact", {}, follow_runtime)
+    assert meta.message.is_error is False
+    assert meta.message.details["data"]["artifact_id"] == artifact_id
+    added, _ = _execute("add_artifact_node", {"expected_revision": 1,
+        "parent_id": root_id, "node": {"node_type": "test_case", "title": "TC-A"}},
+        follow_runtime)
+    assert added.message.is_error is False
+    assert added.message.details["data"]["revision"] == 2
+    db_session.expire_all()
+    session = conversation_service._owned_conversation(
+        db_session, runtime.conversation_id, USER_A, require_active=False)
+    assert conversation_service.focused_artifact_id(session) == art_b.id
+    assert artifact_service.get_artifact(
+        db_session, artifact_id=artifact_id, requester=db_session.get(User, USER_A)
+    ).current_revision == 2

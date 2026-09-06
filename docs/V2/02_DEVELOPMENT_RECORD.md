@@ -992,3 +992,30 @@ v2-chat 已含浮动窗口（min/max/launcher）、SSE 订阅（eventStream.js �
 ### 回归（真实结果）
 - P07/P08/Conversation/Worker/Migration 相关套件 + 全后端：`pytest tests`（排除同名 test_isolation 收集冲突）→ **688 passed**；
   isolation 单独 3 passed；P08 Scripted Eval 24 cases 全过（task_success 等 1.0、unintended_modification_rate 0）。
+
+## 2.32 2026-09-06 — P08.3 Hardening（Runner/Tool 全面切换到 Run Snapshot；无新能力）
+
+### 1) ConversationRunner 真正使用 Run Snapshot
+- Runner 已不再读取 Session focus/context：artifact_id / project_id / requirement_id 全部来自
+  `artifact_context_from_run(run)`（project 缺省回退 run.project_id 兼容旧行）；requirement_id 同时
+  传入 application_context_factory 与 AgentLoop metadata。
+- 测试：submit under A → 会话 focus 改 B → Run 仍 A；binding R1 submit（含 queued follow-up）→ 会话改绑 R2
+  → 已提交 Run 仍 R1、重绑定后新 Turn 为 R2。
+
+### 2) Artifact Tool 不再依赖当前 Session focus
+- `_context()` 改为：runtime.run_id → AgentRun → artifact_context_json.artifact_id == runtime.artifact_id，
+  并验证 run.session_id == conversation_id、run.requester_user_id == user_id；Session 只校验 owner/mode
+  （run_id 缺失的直连测试路径仍校验 session focus 一致）。Write fencing 保持。
+- 测试：跨用户仍拒；同用户改 Session focus 后工具按 Run 快照继续；A 运行中排队 follow-up → A 终态 → 切 B →
+  promote 后新 head（快照 A）工具读写仍作用于 A。
+
+### 3) Requirement binding 保持 Project invariant
+- `focus_conversation_requirement` 增加：若已 focus Artifact，则 artifact.project == requirement.project，
+  否则 409（不再把 projectless Artifact + 项目 Requirement 提升成不一致 scope）。
+- 测试：Artifact→Requirement（projectless 后绑项目 → 409；同项目 → ok）与 Requirement→Artifact
+  （绑 R1 后 focus P2 Artifact → 409；同项目 → ok）正反序均保持同一 project scope。
+
+### 回归（真实结果）
+- `pytest tests`（排除同名 test_isolation 收集冲突）→ **691 passed**；isolation 3 passed；
+  P08 Scripted Eval 24 cases 全过（各指标 1.0，unintended_modification_rate 0）。
+- 结论：P08（含 P08.1/2/3 hardening）完成 → **P09 ready**。
