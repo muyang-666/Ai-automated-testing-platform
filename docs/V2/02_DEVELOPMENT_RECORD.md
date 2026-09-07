@@ -1288,3 +1288,9 @@ P08 scripted eval -> 24 cases；成功/选择/参数/编辑/遵循/冲突/非修
 - 四页统一为扩大后的白色工作区、透明紧凑工具栏、蓝色主操作、250px 左模块栏、12px 布局间距、浅灰列表卡与表头；表格统一 18px 表头、16px 正文、顶部对齐并支持长文本换行。
 - 原黑色主按钮、灰色大模块按钮和多层大圆角 Card 在该作用域内收敛为功能用例页的蓝色/浅灰状态；抽屉、Modal 与其它管理页面不受影响。1400px 内仍保持左右布局，900px 以下才切单列。
 - frontend 全量 node 98 passed；ESLint 0 errors（6 条既有页面 hook warning）；Vite build passed；`git diff --check` 无错误。未执行浏览器验收。
+
+P10.1（进行中，第一增量）：
+- Audit 完成（恢复/loop/system/artifact/usage/summary 现状见 §报告）。
+- 新增 context_builder.py（纯函数）：ContextBudgetConfig（recent_message_limit/context_token_budget/reserved_output/summary/artifact 分项，chars_per_token=3 保守估算，未知≠0）、estimate_text_tokens/estimate_message_tokens、原子交换组切分（assistant ToolCall+对应 ToolResult 同组同取舍）、build_prepared_context（尾部按组收集 + count/token 双限、当前 UserMessage 无条件保留、summary 存在则超预算即停并注入 system 侧 summary 块、无 summary 发生裁切标 context_limit 由调用方降级、输出 included/omitted/diagnostics，不返回 ORM）。
+- 测试 tests/conversation/test_context_builder.py 6 passed：短会话不压缩、工具对不拆（窗口切对边界）、summary 压缩且原消息不变、无 summary 超限 context_limit、估算非 0、omitted 记录。
+P10.1 剩余：Summary 持久化模型+迁移 0009（through_sequence 单调防旧覆盖）、Runner 接入 PreparedContext、Incremental Summary（只总结 31..K）与失败降级、Artifact metadata/relevant nodes/recent diff 组装、context_prepared/context_compacted 事件、follow-up 隔离与乐观并发、200+ 消息测试与回归。P10.1 未 complete；P10.2 Approval next。
