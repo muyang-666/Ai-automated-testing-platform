@@ -7,12 +7,12 @@ function SourceRefList({ refs }) {
   if (!refs?.length) return null;
   return (
     <div className="v2w-insp-field">
-      <span className="v2w-insp-label">Source</span>
+      <span className="v2w-insp-label">来源</span>
       <ul className="v2w-insp-refs">
         {refs.map((ref, i) => (
           <li key={`${ref.source_type}-${ref.source_id}-${i}`}>
             {ref.source_type === "requirement" || ref.source_type === "requirement_doc"
-              ? `Requirement #${ref.source_id}`
+              ? `需求 #${ref.source_id}`
               : `${ref.source_type} #${ref.source_id}`}
             {ref.fragment_id ? ` · ${ref.fragment_id}` : ""}
           </li>
@@ -48,20 +48,20 @@ export default function NodeInspector({ tree, selectedNodeId }) {
   return (
     <div className="v2w-inspector">
       <div className="v2w-insp-title">{node.title}</div>
-      <div className="v2w-insp-sub">{node.node_type}</div>
+      <div className="v2w-insp-sub">{node.node_type === "test_case" ? "用例" : node.node_type === "module" ? "模块" : "项目"}</div>
 
       <div className="v2w-insp-field">
-        <span className="v2w-insp-label">Type</span>
-        <span className="v2w-insp-value">{node.node_type}</span>
+        <span className="v2w-insp-label">类型</span>
+        <span className="v2w-insp-value">{node.node_type === "test_case" ? "用例" : node.node_type === "module" ? "模块" : "项目"}</span>
       </div>
       <div className="v2w-insp-field">
-        <span className="v2w-insp-label">Parent</span>
+        <span className="v2w-insp-label">父节点</span>
         <span className="v2w-insp-value">{parent ? parent.title : "—"}</span>
       </div>
 
       {(node.node_type === "module" || node.node_type === "root") && (
         <div className="v2w-insp-field">
-          <span className="v2w-insp-label">Children</span>
+          <span className="v2w-insp-label">直接子节点</span>
           <span className="v2w-insp-value">{childrenCount}</span>
         </div>
       )}
@@ -69,18 +69,18 @@ export default function NodeInspector({ tree, selectedNodeId }) {
       {node.node_type === "test_case" && (
         <>
           <div className="v2w-insp-field">
-            <span className="v2w-insp-label">Priority</span>
+            <span className="v2w-insp-label">优先级</span>
             <span className="v2w-insp-value">{content.priority ?? "P1"}</span>
           </div>
           <div className="v2w-insp-field">
-            <span className="v2w-insp-label">Tags</span>
+            <span className="v2w-insp-label">标签</span>
             <span className="v2w-insp-value">
               {(content.tags || []).join(", ") || "—"}
             </span>
           </div>
           {content.preconditions?.length > 0 && (
             <div className="v2w-insp-field">
-              <span className="v2w-insp-label">Preconditions</span>
+              <span className="v2w-insp-label">前置条件</span>
               <ul className="v2w-insp-list">
                 {content.preconditions.map((item, i) => <li key={i}>{item}</li>)}
               </ul>
@@ -88,7 +88,7 @@ export default function NodeInspector({ tree, selectedNodeId }) {
           )}
           {(content.steps || []).length > 0 && (
             <div className="v2w-insp-field">
-              <span className="v2w-insp-label">Steps</span>
+              <span className="v2w-insp-label">步骤</span>
               <ul className="v2w-insp-list">
                 {content.steps.map((step, i) => <StepRow key={i} step={step} index={i} />)}
               </ul>
@@ -96,7 +96,7 @@ export default function NodeInspector({ tree, selectedNodeId }) {
           )}
           {(content.expected_results || []).length > 0 && (
             <div className="v2w-insp-field">
-              <span className="v2w-insp-label">Expected</span>
+              <span className="v2w-insp-label">预期结果</span>
               <ul className="v2w-insp-list">
                 {content.expected_results.map((item, i) => (
                   <li key={i}>

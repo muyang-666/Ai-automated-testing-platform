@@ -2,7 +2,7 @@
 // 所有人工写操作 → /operations → Artifact Service → Revision；本页只是 View + 编排。
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Button, Card, Drawer, Dropdown, Empty, Input, Modal, Select, Space,
+  Button, Card, Drawer, Dropdown, Empty, Input, Modal, Pagination, Select, Space,
   Table, Tag, Tree, Typography,
 } from "antd";
 import { ReactFlowProvider } from "@xyflow/react";
@@ -17,9 +17,11 @@ import {
   collectScopeCases, buildModuleTree, expectedSummary, stepsSummary,
 } from "../components/v2-workspace/caseView";
 import { formatCaseNumber } from "../components/v2-workspace/caseNumber";
-import { buildNodeIndex } from "../components/v2-workspace/mindMapModel";
+import { buildNodeIndex, selectMindMapScope } from "../components/v2-workspace/mindMapModel";
 import { getStoredProjectId, resolveProjectId, storeProjectId } from "../utils/projectSelection";
 import { isViewerOnly } from "../utils/authPermissions";
+import { paginateCases } from "../components/v2-workspace/casePaginationModel.js";
+import { nextModuleMenu } from "../components/v2-workspace/moduleMenuModel.js";
 import useFunctionalWorkspace from "../components/v2-workspace/useFunctionalWorkspace.js";
 import { agentArtifactEventBus } from "../components/v2-workspace/agentArtifactEventBus.js";
 import { agentArtifactNavigation } from "../components/v2-workspace/agentArtifactNavigation.js";
@@ -139,6 +141,9 @@ export default function FunctionCasePage() {
   const [collapsed, setCollapsed] = useState([]);
   const [selectedNodeId, setSelectedNodeId] = useState(null);
   const [writeBusy, setWriteBusy] = useState(false);
+  const [openMenuNodeId, setOpenMenuNodeId] = useState(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
 
   const [historyOpen, setHistoryOpen] = useState(false);
   const [diffData, setDiffData] = useState(null);
@@ -166,6 +171,8 @@ export default function FunctionCasePage() {
     const [treeRes, revRes] = await Promise.all([
       getArtifactTree(aid), getArtifactRevisions(aid),
     ]);
+    // P09.3B.1 #5：晚返回的旧 Artifact 响应不得污染当前页面
+    if (artifactRef.current !== aid) return treeRes.data;
     setTree(treeRes.data);
     setRevisions(revRes.data);
     return treeRes.data;
@@ -238,9 +245,10 @@ export default function FunctionCasePage() {
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === projectId) || null,
     [projects, projectId]);
+  const artifactStatus = loading ? "loading" : error ? "error" : artifact ? "ready" : "empty";
   const workspaceValue = useMemo(() => deriveFunctionalWorkspace({
-    project: selectedProject, artifact, index, scopeId, selectedNodeId, viewMode,
-  }), [selectedProject, artifact, index, scopeId, selectedNodeId, viewMode]);
+    project: selectedProject, artifact, index, scopeId, selectedNodeId, viewMode, artifactStatus,
+  }), [selectedProject, artifact, index, scopeId, selectedNodeId, viewMode, artifactStatus]);
 
   useEffect(() => {
     setWorkspace(workspaceValue);
@@ -313,10 +321,8 @@ export default function FunctionCasePage() {
   const moduleTree = useMemo(() => (tree ? buildModuleTree(tree.root) : null), [tree]);
   const rows = useMemo(() => (tree ? collectScopeCases(tree.root, scopeId) : []), [tree, scopeId]);
   const scopedRoot = useMemo(() => {
-    if (!tree) return null;
-    if (scopeId == null || scopeId === tree.root?.id) return tree.root;
-    return index.get(scopeId) || tree.root;
-  }, [tree, scopeId, index]);
+    return selectMindMapScope(tree?.root ?? null, scopeId);
+  }, [tree, scopeId]);
 
   const filtered = useMemo(() => rows.filter((row) => {
     if (priority && row.priority !== priority) return false;
@@ -330,6 +336,16 @@ export default function FunctionCasePage() {
     }
     return true;
   }), [rows, keyword, priority]);
+  const paged = useMemo(() => paginateCases(filtered, page, pageSize),
+    [filtered, page, pageSize]);
+
+  useEffect(() => { setPage(1); }, [projectId, scopeId, keyword, priority, pageSize]);
+  useEffect(() => { if (page !== paged.page) setPage(paged.page); }, [page, paged.page]);
+  useEffect(() => {
+    const closeOnEscape = (event) => { if (event.key === "Escape") setOpenMenuNodeId(null); };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, []);
 
   const treeData = useMemo(() => {
     const map = (n) => ({
@@ -367,7 +383,7 @@ export default function FunctionCasePage() {
     const from = Math.max(0, tree.current_revision - 1);
     try {
       const res = await getArtifactDiff(artifact.id, { from_revision: from, to_revision: tree.current_revision });
-      setDiffData({ ...res.data, title: `Revision ${from} → ${tree.current_revision}` });
+      setDiffData({ ...res.data, title: `版本 ${from} → ${tree.current_revision}` });
       setDiffOpen(true);
     } catch (err) {
       setError(err?.response?.data?.detail || err?.message || "加载 diff 失败");
@@ -381,7 +397,8 @@ export default function FunctionCasePage() {
       const res = await getArtifactDiff(artifact.id, {
         from_revision: fromRevision, to_revision: toRevision,
       });
-      setDiffData({ ...res.data, title: `Revision ${fromRevision} → ${toRevision}` });
+      if (artifactRef.current !== artifact.id) return; // 切换 Artifact 后丢弃旧 diff
+      setDiffData({ ...res.data, title: `版本 ${fromRevision} → ${toRevision}` });
       setDiffOpen(true);
     } catch (err) {
       setError(err?.response?.data?.detail || err?.message || "加载 diff 失败");
@@ -406,13 +423,25 @@ export default function FunctionCasePage() {
     return unsubscribe;
   }, [artifact?.id, openRangeDiff]);
 
+  // P09.3B.1 #4：跨页/跨项目 View Changes —— 页面不在目标 Artifact 时先切项目再等加载后消费意图
+  useEffect(() => {
+    const unsubscribe = agentArtifactNavigation.subscribe((intent) => {
+      if (!intent || intent.page !== "functionCases") return;
+      if (intent.projectId != null && intent.projectId !== projectId) {
+        storeProjectId(intent.projectId);
+        setProjectId(intent.projectId);
+      }
+    });
+    return unsubscribe;
+  }, [projectId]);
+
   const openRevisionDiff = useCallback(async (revisionNo) => {
     if (!artifact) return;
     try {
       const res = await getArtifactDiff(artifact.id, {
         from_revision: Math.max(0, revisionNo - 1), to_revision: revisionNo,
       });
-      setDiffData({ ...res.data, title: `Revision ${Math.max(0, revisionNo - 1)} → ${revisionNo}` });
+      setDiffData({ ...res.data, title: `版本 ${Math.max(0, revisionNo - 1)} → ${revisionNo}` });
       setDiffOpen(true);
     } catch (err) {
       setError(err?.response?.data?.detail || err?.message || "加载 diff 失败");
@@ -574,6 +603,7 @@ export default function FunctionCasePage() {
       { key: "delete", label: "删除", danger: true },
     ],
     onClick: ({ key }) => {
+      setOpenMenuNodeId(null);
       if (key === "child") setModuleDlg({ kind: "create", parentId: node.id, title: "", baseRevision: tree?.current_revision ?? null });
       if (key === "rename") setModuleDlg({ kind: "rename", nodeId: node.id, title: node.title, baseRevision: tree?.current_revision ?? null });
       if (key === "move") {
@@ -614,8 +644,14 @@ export default function FunctionCasePage() {
       return <span className="module-row" onClick={() => { setScopeId(node.id); setSelectedNodeId(node.id); }}>{content}</span>;
     }
     return (
-      <Dropdown trigger={["contextMenu", "hover"]} menu={moduleMenu(node)}>
-        <span className="module-row" onClick={(e) => { e.stopPropagation(); setScopeId(node.id); setSelectedNodeId(node.id); }}>
+      <Dropdown trigger={["contextMenu"]} menu={moduleMenu(node)}
+        open={openMenuNodeId === node.id}
+        onOpenChange={(open) => setOpenMenuNodeId((current) => nextModuleMenu(
+          current,
+          open ? { type: "open", nodeId: node.id } : { type: "close" },
+        ))}>
+        <span className="module-row" title={node.title}
+          onClick={(e) => { e.stopPropagation(); setOpenMenuNodeId(null); setScopeId(node.id); setSelectedNodeId(node.id); }}>
           {content}
         </span>
       </Dropdown>
@@ -628,11 +664,11 @@ export default function FunctionCasePage() {
   };
 
   return (
-    <Card size="small" title={null} className="case-page">
+    <Card size="small" title={null} className="case-page" onClick={() => setOpenMenuNodeId(null)}>
       {(() => {
         const dlg = [moduleDlg, caseDlg, deleteDlg, moveDlg].find(Boolean);
         if (dlg?.baseRevision != null && tree && tree.current_revision > dlg.baseRevision) {
-          return <div className="v2w-realtime-note">测试资产已更新。当前编辑内容基于 Revision {dlg.baseRevision}。</div>;
+          return <div className="v2w-realtime-note">测试资产已更新。当前编辑内容基于版本 {dlg.baseRevision}。</div>;
         }
         return null;
       })()}
@@ -644,6 +680,7 @@ export default function FunctionCasePage() {
               // Clear Artifact/selection in the same interaction. Until B loads,
               // Chat must never mistake the previous Project A Artifact for B.
               setArtifact(null); setTree(null); setScopeId(null); setSelectedNodeId(null);
+              setLoading(true);
               setProjectId(v); storeProjectId(v);
             }}
             options={projects.map((p) => ({ value: p.id, label: p.name }))} />
@@ -659,7 +696,7 @@ export default function FunctionCasePage() {
           {artifact && (
             <>
               <Typography.Text type="secondary">
-                {artifact.title} · Revision {tree?.current_revision}
+                {artifact.title} · 版本 {tree?.current_revision}
               </Typography.Text>
               {writeVisible && (
                 <Button size="small" onClick={async () => {
@@ -673,7 +710,7 @@ export default function FunctionCasePage() {
               <Button size="small" onClick={openRecentDiff}>查看最近变更</Button>
               <Button size="small" onClick={() => setHistoryOpen(true)}>历史</Button>
               {writeVisible && tree && tree.current_revision > 1 && (
-                <Button size="small" danger onClick={() => setUndoVisible(true)}>Undo latest</Button>
+                <Button size="small" danger onClick={() => setUndoVisible(true)}>撤销上次修改</Button>
               )}
             </>
           )}
@@ -684,7 +721,7 @@ export default function FunctionCasePage() {
       <div className="case-page-body">
         <aside className="case-module-panel">
           <div className="case-module-head">
-            <strong>Modules</strong>
+            <strong>模块</strong>
             {writeVisible && (
               <Button size="small" type="text" onClick={() => {
                 setModuleDlg({ kind: "create", parentId: tree?.root?.id ?? null, title: "", baseRevision: tree?.current_revision ?? null });
@@ -726,7 +763,7 @@ export default function FunctionCasePage() {
                 </div>
               )}
               {!loading && artifact && (
-                <Table size="small" rowKey="nodeId" columns={columns} dataSource={filtered}
+                <Table size="small" rowKey="nodeId" columns={columns} dataSource={paged.items}
                   pagination={false} scroll={{ x: 1160 }}
                   onRow={(row) => ({
                     style: { cursor: "pointer" },
@@ -735,6 +772,14 @@ export default function FunctionCasePage() {
                       if (writeVisible) openCaseEditor("edit", row);
                     },
                   })} />
+              )}
+              {!loading && artifact && filtered.length > 0 && (
+                <Pagination size="small" className="case-pagination"
+                  current={paged.page} pageSize={paged.pageSize} total={paged.total}
+                  pageSizeOptions={[20, 50, 100]} showSizeChanger
+                  locale={{ items_per_page: "条/页" }}
+                  showTotal={(total) => `共 ${total} 条`}
+                  onChange={(nextPage, nextSize) => { setPage(nextPage); setPageSize(nextSize); }} />
               )}
               {!loading && !artifact && (
                 <Empty description={viewerOnly ? "只读：当前项目没有 Artifact" : "暂无用例"} />
@@ -769,8 +814,10 @@ export default function FunctionCasePage() {
                   <Typography.Text strong>
                     {selectedNode.node_type === "test_case" ? formatCaseNumber(selectedNode.id) : selectedNode.title}
                   </Typography.Text>
-                  <Typography.Text type="secondary"> · {selectedNode.node_type}</Typography.Text>
-                  {writeVisible && (
+                  <Typography.Text type="secondary">
+                    {` · ${selectedNode.node_type === "test_case" ? "用例" : selectedNode.node_type === "module" ? "模块" : "项目"}`}
+                  </Typography.Text>
+                  {writeVisible && selectedNode.node_type !== "root" && (
                     <Space size={4} style={{ float: "right" }}>
                       <Button size="small"
                         onClick={() => selectedNode.node_type === "module"
@@ -816,7 +863,7 @@ export default function FunctionCasePage() {
           ]}
         />
         <Typography.Paragraph type="secondary" style={{ marginTop: 8, fontSize: 12 }}>
-          后端会校验 parent 类型/环/Revision。
+          后端会校验父节点类型、循环关系和版本。
         </Typography.Paragraph>
       </Modal>
 
@@ -827,7 +874,7 @@ export default function FunctionCasePage() {
         destroyOnClose>
         {deleteDlg?.kind === "module" && (() => {
           const counts = deleteDlg?.node ? subtreeCounts(tree?.root, deleteDlg.node.id) : null;
-          return <div>{counts ? `${counts.modules} 个子模块，${counts.cases} 条用例` : ""}，删除后可在 Revision 历史中恢复。</div>;
+          return <div>{counts ? `${counts.modules} 个子模块，${counts.cases} 条用例` : ""}，删除后可在版本历史中恢复。</div>;
         })()}
         {deleteDlg?.kind === "case" && <div>删除用例「{deleteDlg?.node?.title}」。可稍后 Undo 恢复。</div>}
       </Modal>
@@ -985,19 +1032,19 @@ export default function FunctionCasePage() {
         destroyOnClose>
         {revisions.length > 0 && (
           <div>
-            最近：Revision {revisions[revisions.length - 1].revision_no} — {revisions[revisions.length - 1].summary || "（无摘要）"}
+            最近：版本 {revisions[revisions.length - 1].revision_no} — {revisions[revisions.length - 1].summary || "（无摘要）"}
           </div>
         )}
-        <div style={{ marginTop: 6 }}>撤销会创建新 Revision，不删除历史。</div>
+        <div style={{ marginTop: 6 }}>撤销会创建新版本，不删除历史。</div>
       </Modal>
 
       {/* History Drawer */}
-      <Drawer title="Revision History" width={520} open={historyOpen} onClose={() => setHistoryOpen(false)}>
+      <Drawer title="版本历史" width={520} open={historyOpen} onClose={() => setHistoryOpen(false)}>
         <Space direction="vertical" style={{ width: "100%" }}>
           {[...revisions].reverse().map((rev) => (
             <div key={rev.revision_no} className="history-item">
               <div className="history-head">
-                <Typography.Text strong>Revision {rev.revision_no}</Typography.Text>
+                <Typography.Text strong>版本 {rev.revision_no}</Typography.Text>
                 <Typography.Text type="secondary">
                   {actorName(rev.actor_type)} · {rev.summary || "—"}
                 </Typography.Text>
@@ -1006,11 +1053,11 @@ export default function FunctionCasePage() {
                 {new Date(rev.created_at).toLocaleString()}
               </Typography.Text>
               <div>
-                <Button size="small" onClick={() => openRevisionDiff(rev.revision_no)}>Diff</Button>
+                <Button size="small" onClick={() => openRevisionDiff(rev.revision_no)}>查看差异</Button>
                 {writeVisible && rev.revision_no < tree?.current_revision && (
                   <Button size="small" style={{ marginLeft: 6 }}
                     onClick={() => { setRestoreTarget(rev.revision_no); setHistoryOpen(false); }}>
-                    Restore
+                    恢复
                   </Button>
                 )}
               </div>
@@ -1024,11 +1071,11 @@ export default function FunctionCasePage() {
         title="恢复到此版本？"
         okText="恢复" okButtonProps={{ danger: true, loading: writeBusy }}
         onOk={doRestore} onCancel={() => setRestoreTarget(null)}>
-        恢复不会删除后续历史：将创建新 Revision（当前 {tree?.current_revision} → {tree?.current_revision + 1}）。
+        恢复不会删除后续历史：将创建新版本（当前 {tree?.current_revision} → {tree?.current_revision + 1}）。
       </Modal>
 
       {/* Diff viewer */}
-      <Drawer title={diffData?.title || "Diff"} width={640} open={diffOpen} onClose={() => setDiffOpen(false)}>
+      <Drawer title={diffData?.title || "差异"} width={640} open={diffOpen} onClose={() => setDiffOpen(false)}>
         {diffData?.changes?.map((line, i) => <DiffLine key={i} line={line} treeIndex={index} />)}
         {diffData && !diffData.changes?.length && <Empty description="无变更" />}
       </Drawer>
@@ -1040,13 +1087,14 @@ export default function FunctionCasePage() {
         .case-module-head { display:flex; align-items:center; justify-content:space-between; margin-bottom: 6px; }
         .case-module-all { display:block; width:100%; text-align:left; border:0; background:transparent; padding:4px 6px; border-radius:6px; cursor:pointer; margin-bottom:4px; }
         .case-module-all.active, .module-row:hover { background: #eeeeef; }
-        .module-row { display:block; padding: 2px 4px; border-radius: 4px; cursor:pointer; }
+        .module-row { display:block; min-width:0; padding: 2px 4px; overflow:hidden; border-radius:4px; cursor:pointer; text-overflow:ellipsis; white-space:nowrap; }
         .case-list-panel { flex: 1; min-width: 0; }
         .case-toolbar-actions { margin-bottom: 6px; text-align: right; }
+        .case-pagination { display:flex; justify-content:flex-end; margin-top:12px; }
         .cell-preview { white-space: pre-line; display:block; max-height: 60px; overflow:hidden; font-size:12px; color:#444; }
         .case-page-error { color:#b42318; padding: 4px 0; }
         .mindmap-host { border: 1px solid #e6e6e7; border-radius: 8px; min-height: 560px; position: relative; overflow: hidden; }
-        .mindmap-host .react-flow { height: 520px; }
+        .mindmap-host > .v2w-mindmap { height: 520px; min-height: 520px; }
         .mindmap-inspector { position:absolute; left:10px; bottom:8px; right:10px; background:rgba(255,255,255,.95); border:1px solid #e6e6e7; border-radius:8px; padding:8px 12px; }
         .history-item { border:1px solid #e6e6e7; border-radius:8px; padding:8px 10px; width:100%; }
         .history-head { display:flex; justify-content:space-between; gap:8px; }

@@ -146,3 +146,16 @@ P09.3B 未完成；P09 未标记 complete；P09.3B 不进入 P10。
 - [x] 无 Artifact 时普通聊天放行、资产/引用型指令提示“尚无可用的功能测试资产”（§2.3/§60）
 - [x] Editor 打开期间 Agent realtime 前进时显示 Revision 基线提示（§18）
 - [ ] P09.3B 浏览器 E2E（§47-62，双浏览器并发/undo-restore/F5/Agent selected module/case 全流程）：NOT VERIFIED（无浏览器环境，跳过）
+- [x] P09.3B.1 五项审查修正（mismatch 分级 / artifactStatus viewer-empty / summary 去双计 / 跨页 View Changes / stale Artifact race）node 88 + build 通过（02 记录同段）
+- [ ] P09.3B.1 Browser E2E（mismatch/viewer-empty/realtime/summary/view-changes/race/concurrent draft/rapid/two-browser/undo）：NOT VERIFIED（无浏览器环境）
+
+#### P09.3B.2 UI / Interaction Hardening（2026-09-06）
+- [x] Module Dropdown 由 `openMenuNodeId` 统一受控；父/子连续右键始终只有最后一个菜单，Escape/空白/执行操作关闭。
+- [x] Conversation 以 Turn 为唯一展示单位；Tool/Assistant/Changes/Error 按 run_id 归属，Run Error 不再污染 User bubble 或全局 banner。
+- [x] Revision/Diff 事件去双计；领域/通用计数回退；缺 from_revision 时恢复为区间或仅显示“版本 N”，不显示 `? → N`。
+- [x] Tool Activity 按 run_id+tool_call_id 合并，主文案产品化；ToolCall 不进入 Assistant 正文；纯标点 Conversation title 回退“新对话”。
+- [x] MindMap 0 高度根因修复；项目→模块→用例左到右布局、scope、view-only collapse、Inspector、非 realtime auto-fit；200+ nodes 纯模型测试通过且 position finite。
+- [x] List 过滤后分页 20/50/100；筛选重置、删除/realtime 数量变化 clamp、List/MindMap 独立；中文文案收敛。
+- [x] 自动化：frontend node 94 passed、lint 0 errors、build passed；backend relevant 76 passed，另 P09.3A/Artifact/migration 组合 63 passed；P08 scripted eval 24 cases。
+- [x] 单浏览器：菜单、历史 Turn/Changes/Error/Tool、真实 21 节点脑图、scope/collapse/Inspector、分页尺寸控件通过；浏览器中发现并修复菜单接线与脑图 0 高度两个真实问题。
+- [ ] Browser E2E 剩余：真实数据仅 13 条，未实跑 >20 条第 2 页；Agent 当前失败态，未现场新增后验证 realtime；双浏览器并发未执行。P09 仍不标 complete，不进入 P10。

@@ -20,7 +20,7 @@ export function extractText(content) {
       .map((block) => {
         if (typeof block === "string") return block;
         if (block?.type === "text") return block.text || "";
-        if (block?.type === "toolCall") return `🔧 ${block.name}`;
+        if (block?.type === "toolCall") return "";
         return "";
       })
       .join("");
@@ -75,7 +75,10 @@ export function buildConversationTurns({
       }
       toolByKey.set(key, existing);
     } else if (["run_succeeded", "run_failed", "run_cancelled", "run_interrupted"].includes(event.event_type)) {
-      if (event.run_id != null) terminalStatusByRunId.set(event.run_id, event.event_type.replace("run_", ""));
+      if (event.run_id != null) terminalStatusByRunId.set(event.run_id, {
+        status: event.event_type.replace("run_", ""),
+        errorCode: event.payload?.error_code ?? null,
+      });
     }
   }
   const toolActivities = [...toolByKey.values()]
@@ -161,7 +164,8 @@ export function buildConversationTurns({
     if (turn.runId != null) {
       const terminal = terminalStatusByRunId.get(turn.runId);
       if (terminal) {
-        turn.status = terminal;
+        turn.status = terminal.status;
+        turn.errorCode = terminal.errorCode || turn.errorCode;
       } else if (overridesMap[turn.runId]) {
         turn.status = overridesMap[turn.runId].status;
         turn.errorCode = overridesMap[turn.runId].errorCode || null;

@@ -1,7 +1,7 @@
 # 新 V2 开发记录：对话式 Test Agent
 
 > 更新：2026-09-04。旧路线记录已原文归档，不删除其中最新修复与测试证据。
-> 当前状态：V2-R01 与 V2-P01～P08 已完成各自声明范围验收；P09 为下一阶段，本轮未进入。
+> 当前状态：V2-R01 与 V2-P01～P08 已完成各自声明范围验收；P09.1～P09.3B.2 已实现并完成自动化回归，P09 浏览器验收仍有 >20 条真实翻页、现场 realtime 与双浏览器场景未覆盖，不进入 P10。
 > P05～P10 阶段主题为 Conversation Runtime 收敛 / Conversation API / Test Artifact Core / Artifact Tools / Chat+MindMap+Diff / Context+Approval+Recovery（不沿用旧“Skill / 上下文 / 人工门禁”标题）。
 
 ## 1. 当前任务状态
@@ -17,7 +17,7 @@
 | V2-P06 | Conversation API + SSE + 基础工作台 | 已完成声明范围 | 见 2.22～2.26 与 P06-R01/R02 |
 | V2-P07 | Test Artifact Core | 已完成 | P07/P07.1，见 2.27～2.28 |
 | V2-P08 | Artifact Tools + Test Design Skill | 已完成 | 23 项 Tool/Agent 场景 + 24 条 Scripted Eval，见 2.29 |
-| V2-P09 | Chat + MindMap + Diff 协作工作台 | 进行中：P09.1/P09.1.1/P09.2 已实现；P09.3A 代码与针对性测试完成（见 2.38）；浏览器人工验收待做，P09.3B 未开始 | 按 [01](01_DEVELOPMENT_PLAN.md) |
+| V2-P09 | Chat + MindMap + Diff 协作工作台 | 进行中：P09.1～P09.3B.2 实现完成；自动化与单浏览器主流程通过，三类真实浏览器场景待补（见 2.40） | 按 [01](01_DEVELOPMENT_PLAN.md) |
 | V2-P10 | Context / Approval / Recovery / E2E | 待实施 | 同上 |
 
 ## 2. 2026-09-03 — 重新划分 V2/V3 并阅读 Pi
@@ -1212,3 +1212,35 @@ npx eslint（P09.3A 前端改动文件）→ exit 0
 真实 MySQL 验证（2026-09-06，用户显式授权）：ALEMBIC_ALLOW_MYSQL=1 执行 alembic current = 0007_artifact_module_convergence → upgrade head 成功（0008_agent_run_workspace_context: snapshot FunctionCasePage selection per Turn，非破坏 DDL）；alembic_version=0008；`agent_runs.workspace_context_json` 与 agent_sessions mode/next_message_sequence/next_event_sequence 均存在。浏览器级 E2E（双浏览器/人工走查）仍无浏览器基础设施 → NOT VERIFIED。
 
 收尾（无浏览器环境，浏览器项按 NOT VERIFIED 跳过）：编辑器打开期间若 tree 已前进（Agent realtime 20→21），页面顶部显示轻量提示「测试资产已更新。当前编辑内容基于 Revision X」；功能用例页无 Artifact（加载/空/无权限）时普通聊天放行，资产型/引用型指令返回明确「当前项目尚无可用的功能测试资产。」（chatContextModel action=no-artifact + hook 文案）。frontend node 84 passed / eslint 0 / build ok。**浏览器级 E2E（§47-62）跳过并标记 NOT VERIFIED**（无浏览器基础设施，不假装完成）。
+
+P09.3B.1（审查修正）：
+1. mismatch 分类重写为 5 级顺序（workspace/reference → asset（含问句形式）→ continuation 白名单 → 明确知识问答 → 默认 block）；资产型问句“登录模块有哪些用例？”等一律 block，“什么是边界值测试？”等知识问答放行；不再用“任意 ? 结尾”放行。
+2. 引入 artifactStatus（loading/ready/empty/error，FunctionCasePage 由 loading/error/artifact 推导并传入 workspace）；移除 useConversationChat.send 里 artifactId==null 无条件 return，统一走 planWorkspaceSubmission（loading+资产→workspace-loading；empty+知识→submit；empty+资产→no-artifact）。
+3. Change Summary 只消费 artifact_revision_created（artifact_diff_created 不参与 run 聚合）→ 同一次 write 不再双计数（+3/1 revision）。
+4. Cross-page View Changes：App 订阅 agentArtifactNavigation，收到意图切 functionCases 并 storeProjectId；FunctionCasePage 收到跨项目意图先 setProjectId 再加载，待 artifact 匹配后消费意图并打开真实 Diff。
+5. Stale Artifact race：refreshContent/openRangeDiff 写 state 前校验 artifactRef.current===请求 artifact（晚返回旧 Artifact 响应不污染当前页）。
+
+验证：frontend node 88 passed（含新增 14 条 P09.3B.1 反例：mismatch 分类/artifactStatus/summary dedupe）；eslint 0 errors；build ok。Browser E2E 无浏览器环境 → 继续 NOT VERIFIED；P09.3B implemented、Browser E2E pending、P09 not complete。
+
+## 2.40 2026-09-06 — P09.3B.2 UI / Interaction Hardening
+
+实现与根因：
+- Module 菜单改为页面级 `openMenuNodeId` 单一受控状态；浏览器走查额外发现接线时误用纯模型参数签名，修正为显式 open/close action，并移除多余 contextMenu 阻断。父/子模块切换后仅一个 Dropdown 可见，Escape/空白在关闭动画后均不可见。
+- Conversation 继续以 `run_id` 构建 Turn；User、去重后的 Tool、Assistant、Artifact Changes 与 Run Error 只在各自 Turn 渲染。Run failed 不再挂在 User bubble 或全局 banner；全局错误仅保留初始化/网络类错误。
+- Revision/Diff 两类 compact event 以 run+artifact+to_revision 去重，缺失 `from_revision` 时由 `to_revision-1` 恢复；领域计数优先使用后端基于 operation node_type 生成的 `domain_change_counts`，旧事件回退 change_counts，避免真实写入显示“无变更”或“? → N”。
+- Tool Activity 以 run_id+tool_call_id 合并 started/finished/replay；主文案映射为“读取测试结构 / 读取测试用例 / 批量修改测试资产 / 检查测试覆盖 / 检查重复用例”，raw tool_name 只留开发者详情。ToolCall 不再拼进 Assistant 正文。
+- Conversation 标题把空值和纯标点视为无效，依次回退首条有效 UserMessage、`新对话`。
+- MindMap 空白真实根因是 `.v2w-mindmap` 在 FunctionCasePage 非 flex 宿主下高度约为 0；修为宿主直接子容器 520px。数据链为 Artifact tree → scope subtree → deterministic left-to-right layout → React Flow；root/module/case 分层、case 只显示编号与标题，折叠只改 view state，realtime 不递增 fitNonce。
+- List 采用过滤后前端分页，20/50/100、筛选重置第 1 页、数据减少时 clamp；List/MindMap 状态独立。业务可见文案收敛为中文，AI 浮窗布局/尺寸/位置未修改。
+
+验证：
+```text
+frontend: node --test tests/*.test.mjs -> 94 passed
+frontend: npm run lint -> 0 errors（6 条其它旧页面 hook warnings）
+frontend: npm run build -> passed（仅既有大 chunk warning）
+backend: artifact_tools + workspace API/service + conversation events -> 76 passed
+backend: P09.3A/Artifact/migration 组合回归 -> 63 passed
+P08 scripted eval -> 24 cases；成功/选择/参数/编辑/遵循/冲突/非修改均 1.0，unintended modification rate 0.0（仅脚本基线）
+```
+
+真实浏览器：使用本地已登录 `测试1 / 功能测试` 数据走查。已验证父子 Module 菜单单开；历史 Conversation 的 Tool/Assistant/Changes/Error 按 Turn 归属；旧事件因没有 node_type 领域计数，诚实显示“新增 6 项，更新 1 项，移动 1 项，版本 3→7”和“新增 12 项，版本 7→11”，新事件才按 `domain_change_counts` 区分模块/用例；内部 tool_name 未作为主文案；纯标点标题回退“新对话”；MindMap 从白屏恢复为 21 个真实节点的项目→模块→用例横向树；双击折叠后节点 21→1 且版本仍为 11；分页控件显示 20/50/100 条/页。当前真实项目只有 13 条用例且 Agent 为失败态，因此未通过“不污染数据”的方式现场验证 >20 条第 2 页和 Agent 新增后的 realtime；双浏览器并发也未执行。P09.3B.2 代码完成，P09 整体仍不标 complete，不进入 P10。

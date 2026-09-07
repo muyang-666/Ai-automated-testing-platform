@@ -8,10 +8,14 @@ export function messageNeedsWorkspaceContext(text) {
 export function planWorkspaceSubmission({ isUnsaved, snapshotReady = true,
   focusedArtifactId, phase, workspace, message = "" }) {
   if (workspace?.page === "functionCases" && workspace.artifactId == null) {
-    // P09.3B §2.3/§60：无可用 Artifact（加载中/空/无权限创建）时，普通聊天照常允许；
-    // 引用“这里/这个模块”或资产型指令明确提示当前无可用功能测试资产，不伪造上下文。
+    // P09.3B.1 #2：由 artifactStatus 区分 loading / empty：
+    // 普通聊天照常允许；资产/引用型指令按状态给出不同提示。
     const assetIntent = messageNeedsWorkspaceContext(message) || looksLikeAssetDirective(message);
-    return { action: assetIntent ? "no-artifact" : "submit", workspaceContext: null };
+    if (workspace.artifactStatus === "loading") {
+      return { action: assetIntent ? "workspace-loading" : "submit", workspaceContext: null };
+    }
+    if (assetIntent) return { action: "no-artifact", workspaceContext: null };
+    return { action: "submit", workspaceContext: null };
   }
   const payload = workspaceTurnPayload(workspace);
   if (!payload) return { action: "submit", workspaceContext: null };

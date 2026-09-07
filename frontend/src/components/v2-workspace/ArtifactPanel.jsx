@@ -4,7 +4,7 @@ import ArtifactMindMap from "./artifact/ArtifactMindMap";
 import EmptyArtifactState from "./artifact/EmptyArtifactState";
 import NodeInspector from "./artifact/NodeInspector";
 
-const TYPE_LABEL = { test_design: "Test Design" };
+const TYPE_LABEL = { test_design: "测试设计" };
 
 export default function ArtifactPanel(props) {
   const {
@@ -41,7 +41,7 @@ export default function ArtifactPanel(props) {
             onClick={() => { setMenuOpen((v) => !v); setCreating(false); }}
             disabled={busy}>
             <span className="v2w-selector-title">
-              {active ? active.title : "No test artifact selected"}
+              {active ? active.title : "未选择测试资产"}
             </span>
             <span className="v2w-selector-caret">▾</span>
           </button>
@@ -52,14 +52,14 @@ export default function ArtifactPanel(props) {
                 <button type="button" key={artifact.id} className="v2w-selector-item"
                   onClick={() => pick(artifact)}>
                   <span className="v2w-selector-item-title">{artifact.title}</span>
-                  <span className="v2w-selector-item-rev">Rev {artifact.current_revision}</span>
+                  <span className="v2w-selector-item-rev">版本 {artifact.current_revision}</span>
                 </button>
               ))}
               {!listLoading && (!artifacts || artifacts.length === 0) && (
-                <div className="v2w-selector-note">还没有 Artifact</div>
+                <div className="v2w-selector-note">还没有测试资产</div>
               )}
               <button type="button" className="v2w-selector-item v2w-selector-new"
-                onClick={startCreate}>＋ New test artifact</button>
+                onClick={startCreate}>＋ 新建测试资产</button>
             </div>
           )}
         </div>
@@ -68,11 +68,11 @@ export default function ArtifactPanel(props) {
           {active && (
             <span className="v2w-revision">
               {TYPE_LABEL[active.artifact_type] || active.artifact_type}
-              {currentRevision != null ? ` · Revision ${currentRevision}` : ""}
+              {currentRevision != null ? ` · 版本 ${currentRevision}` : ""}
             </span>
           )}
-          <button type="button" className="v2w-icon-btn" title="Refresh Artifact"
-            aria-label="Refresh Artifact" disabled={busy || treeLoading || !active}
+          <button type="button" className="v2w-icon-btn" title="刷新测试资产"
+            aria-label="刷新测试资产" disabled={busy || treeLoading || !active}
             onClick={() => void onRetryTree()}>↻</button>
           <button type="button" className="v2w-icon-btn" title="新建测试资产" aria-label="新建测试资产"
             disabled={busy} onClick={startCreate}>＋</button>
@@ -89,11 +89,11 @@ export default function ArtifactPanel(props) {
               if (event.key === "Enter") submitCreate();
               if (event.key === "Escape") { setCreating(false); setDraftTitle(""); }
             }}
-            placeholder="Artifact title"
+            placeholder="测试资产标题"
             maxLength={200}
           />
           <button type="button" className="v2w-btn v2w-btn-primary" onClick={submitCreate}
-            disabled={busy || !draftTitle.trim()}>Create</button>
+            disabled={busy || !draftTitle.trim()}>创建</button>
           <button type="button" className="v2w-btn"
             onClick={() => { setCreating(false); setDraftTitle(""); }}>×</button>
         </div>
@@ -102,17 +102,17 @@ export default function ArtifactPanel(props) {
       {focusError && <div className="v2w-banner v2w-banner-error">{focusError}</div>}
       {treeError && (
         <div className="v2w-banner v2w-banner-error">
-          Unable to load test artifact.
-          <button type="button" className="v2w-retry" onClick={() => void onRetryTree()}>Retry</button>
+          无法加载测试资产。
+          <button type="button" className="v2w-retry" onClick={() => void onRetryTree()}>重试</button>
         </div>
       )}
       {unavailable && (
         <div className="v2w-banner v2w-banner-error">
-          该 Artifact 已删除或不可访问（unavailable）。可选择其他 Artifact 继续。
+          该测试资产已删除或不可访问。可选择其他测试资产继续。
         </div>
       )}
 
-      {skeleton && <div className="v2w-skeleton" aria-label="加载 Artifact 中">Loading tree…</div>}
+      {skeleton && <div className="v2w-skeleton" aria-label="加载测试资产中">正在加载结构…</div>}
 
       {!skeleton && !treeError && !unavailable && active && tree && (
         <>

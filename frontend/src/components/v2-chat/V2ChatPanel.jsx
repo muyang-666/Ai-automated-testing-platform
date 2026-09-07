@@ -5,9 +5,9 @@ import ChatComposer from "./ChatComposer.jsx";
 import { AddIcon, HistoryIcon, MaximizeIcon, MinimizeIcon, RestoreIcon } from "./ChatIcons.jsx";
 import ContextIndicator from "./ContextIndicator.jsx";
 import { buildContextIndicator } from "./chatContextModel.js";
-import { summaryLabel } from "../v2-workspace/artifactChangeSummaryModel.js";
 import { agentArtifactNavigation } from "../v2-workspace/agentArtifactNavigation.js";
 import useFunctionalWorkspace from "../v2-workspace/useFunctionalWorkspace.js";
+import { conversationDisplayTitle } from "./chatState.js";
 import "./v2Chat.css";
 
 const PHASE_TEXT = { running: "回答中…", queued: "排队中…", paused: "已暂停", failed: "失败",
@@ -241,7 +241,7 @@ export default function V2ChatPanel({ currentUser }) {
         </div>
         <div className="v2chat-conv-head">
           <span className="v2-chat-title" title="双击重命名" onDoubleClick={handleRenameTitle}>
-            {chat.active?.title || "新的对话"}
+            {conversationDisplayTitle(chat.active?.title, chat.turns?.[0]?.userText)}
           </span>
           {chat.phase === "running" && (
             <span className="v2chat-status-chip is-running"><i className="v2chat-dot" />正在回答</span>
@@ -304,35 +304,6 @@ export default function V2ChatPanel({ currentUser }) {
         )}
         {chat.runError && chat.capabilities?.model_ready !== false
           && <div className="v2chat-error">{chat.runError}</div>}
-        {(chat.artifactSummaries?.length || 0) > 0 && (
-          <div className="v2chat-changes">
-            {chat.artifactSummaries.map((summary) => (
-              summary.artifacts.map((artifact) => (
-                <div key={`${summary.runId}-${artifact.artifactId}`} className="v2chat-changes-row">
-                  <span className="v2chat-changes-text">
-                    Changes · {summaryLabel(artifact.changeCounts)}
-                    {" · "}Revision {artifact.fromRevision ?? "?"} → {artifact.toRevision}
-                  </span>
-                  {artifact.artifactId === functionalWorkspace.state?.artifactId ? (
-                    <button type="button" className="v2chat-changes-link" onClick={() => {
-                      agentArtifactNavigation.publish({
-                        page: "functionCases",
-                        projectId: artifact.projectId ?? null,
-                        artifactId: artifact.artifactId,
-                        fromRevision: artifact.fromRevision,
-                        toRevision: artifact.toRevision,
-                      });
-                    }}>
-                      查看变更
-                    </button>
-                  ) : (
-                    <span className="v2chat-changes-dim" title="当前页面 Artifact 与变更不一致">变更不可用</span>
-                  )}
-                </div>
-              ))
-            ))}
-          </div>
-        )}
         {chat.phase === "paused" && (
           <div className="v2chat-paused">上一轮失败/中断，本轮已暂停（可新建对话继续）。</div>
         )}
@@ -341,6 +312,12 @@ export default function V2ChatPanel({ currentUser }) {
           streaming={chat.streaming}
           activeId={chat.active?.id}
           sendNonce={sendNonce}
+          currentArtifactId={functionalWorkspace.state?.artifactId}
+          onViewChanges={(artifact) => agentArtifactNavigation.publish({
+            page: "functionCases", projectId: artifact.projectId ?? null,
+            artifactId: artifact.artifactId, fromRevision: artifact.fromRevision,
+            toRevision: artifact.toRevision,
+          })}
         />
         <footer className="v2chat-footer">
           <ChatComposer
@@ -350,7 +327,7 @@ export default function V2ChatPanel({ currentUser }) {
             onStop={chat.cancel}
             disabled={!canSend}
             stopping={chat.phase === "running"}
-            placeholder="Ask TestMind"
+            placeholder="询问 TestMind"
             focusKey={`${layout.mode}:${chat.active?.id || "none"}:${focusNonce}`}
           />
         </footer>

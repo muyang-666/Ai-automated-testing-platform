@@ -16,22 +16,38 @@ export function artifactEventFromStream(rawEvent) {
   return {
     artifactId,
     projectId: typeof payload?.project_id === "number" ? payload.project_id : null,
-    fromRevision: payload?.from_revision ?? null,
+    fromRevision: payload?.from_revision ?? (to > 0 ? to - 1 : null),
     toRevision: to,
     runId: payload?.run_id ?? null,
     conversationId: payload?.conversation_id ?? null,
     sequenceNo: Number(rawEvent?.sequence_no ?? rawEvent?.sequenceNo ?? 0) || 0,
     summary: payload?.summary ?? "",
-    changeCounts: normalizeCounts(payload?.change_counts),
+    changeCounts: normalizeCounts(payload?.change_counts, payload?.changes),
+    domainCounts: normalizeDomainCounts(payload?.domain_change_counts),
   };
 }
 
-export function normalizeCounts(value) {
+export function normalizeCounts(value, changes = null) {
   const base = { added: 0, updated: 0, deleted: 0, moved: 0 };
+  if (value && typeof value === "object") {
+    for (const key of Object.keys(base)) {
+      const n = Number(value[key]);
+      if (Number.isFinite(n) && n > 0) base[key] += Math.floor(n);
+    }
+  }
+  if (!Object.values(base).some(Boolean) && Array.isArray(changes)) {
+    for (const change of changes) if (change?.change in base) base[change.change] += 1;
+  }
+  return base;
+}
+
+export function normalizeDomainCounts(value) {
+  const base = { modules_added: 0, cases_added: 0, modules_deleted: 0,
+    cases_deleted: 0, updated: 0, moved: 0 };
   if (!value || typeof value !== "object") return base;
   for (const key of Object.keys(base)) {
     const n = Number(value[key]);
-    if (Number.isFinite(n) && n > 0) base[key] += Math.floor(n);
+    if (Number.isFinite(n) && n > 0) base[key] = Math.floor(n);
   }
   return base;
 }

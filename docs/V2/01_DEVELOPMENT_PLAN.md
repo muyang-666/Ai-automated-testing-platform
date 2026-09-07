@@ -1,7 +1,7 @@
 # V2 开发主计划（Development Plan）
 
 > 生效：2026-09-03（Pi 架构 Python 实现路线）；2026-09-04 起调整 P05 及之后路线为“对话式 Test Agent + TestArtifact 协作编辑”。方向决策已执行，ADR 原文归档为 archive/V2_DIRECTION_ADR_2026-09-04.md。
-> 状态：V2-P01～P08 已完成各自声明范围验收；P07/P07.1 Artifact Core 与 Hardening、P08 Artifact Tools + Test Design Skill + Scripted Eval 已于 2026-09-06 验收。下一阶段为 P09（Chat + MindMap + Diff），本轮不进入。
+> 状态：V2-P01～P08 已完成各自声明范围验收；P09.1～P09.3B.2 已完成实现与自动化回归。2026-09-06 已完成单浏览器真实走查并修复 Module 菜单与 MindMap 高度问题；因当前项目仅 13 条用例且 Agent 为失败态，>20 条真实翻页、现场 Agent 写入后的 realtime、双浏览器并发仍未实跑，P09 暂不标 complete，不进入 P10。
 > 本文件是 V2 **唯一开发路线 Source of Truth**：P01～P10 的 Goal / Scope / Key implementation / Acceptance / Stop boundary 全部在此。实现级数据模型与工具合同见 [05_TECHNICAL_DESIGN.md](05_TECHNICAL_DESIGN.md)，产品行为见 [04_PRODUCT_PRD.md](04_PRODUCT_PRD.md)。
 > 本文件替代旧 V2.1/V2.2/V2.3 任务路线，不代表 Pi 全功能复刻或官方 Python 移植。
 
@@ -73,7 +73,7 @@ TestMind 已有但不等于完整对话内核：
 | V2-P06 | Conversation API + SSE + 基础持续聊天工作台 | P02、P04、P05 | 后端完成并测试；前端已接入且 build 通过；浏览器人工验收已推进至 P07（记录见 02 §2.22–§2.26） |
 | V2-P07 | Test Artifact Core：Case Tree / Node / Revision / Operation / Diff / Undo / 乐观锁 | P04、P06 | 已完成（P07/P07.1，53 项复验通过，见 02 §2.27–§2.28） |
 | V2-P08 | Artifact Tools + Test Design Skill：read/add/update/delete/move/validate/coverage | P07 | 已完成（2026-09-06，23 项 Tool/Agent 场景 + 24 条 Scripted Eval，见 02 §2.29） |
-| V2-P09 | Chat + MindMap + Diff 协作工作台（产品方向调整：AI 嵌入功能用例页，废弃独立 Workspace） | P06、P07、P08 | In progress：P09.1/P09.2 完成；P09.3A Conversation×Artifact Workspace Context 代码与针对性测试完成（56 backend + 74 frontend + lint 0，见 02 §2.38）；浏览器人工验收待做，P09.3B 未开始 |
+| V2-P09 | Chat + MindMap + Diff 协作工作台（产品方向调整：AI 嵌入功能用例页，废弃独立 Workspace） | P06、P07、P08 | In progress：P09.1～P09.3B.2 实现完成；frontend 94、backend 76、P08 scripted eval 24 通过；单浏览器已验证菜单/Turn/变更/脑图/分页控件，>20 条真实翻页、现场 realtime 与双浏览器流程待验收（见 02 §2.40） |
 | V2-P10 | Context / Compaction / Approval / Conflict / Recovery / E2E | P05～P09 | 待实施 |
 
 里程碑 A：P03 后，Fake 模型能多轮聊天并调用无副作用工具（已完成）。

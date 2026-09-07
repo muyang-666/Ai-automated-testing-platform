@@ -1,11 +1,12 @@
-import { messageFailure } from "./conversationErrors.js";
+import { messageFailure, runErrorMessage } from "./conversationErrors.js";
 import ToolActivity from "./ToolActivity.jsx";
+import ArtifactChangeSummary from "./ArtifactChangeSummary.jsx";
 import { renderMarkdown } from "./markdownRender.js";
 
 const TURN_BADGE = {
   queued: { text: "排队中", cls: "queued" },
   running: null,
-  failed: { text: "失败", cls: "failed" },
+  failed: null,
   interrupted: { text: "已中断", cls: "interrupted" },
   cancelled: { text: "已取消", cls: "cancelled" },
   paused: { text: "已暂停", cls: "paused" },
@@ -68,8 +69,10 @@ function MarkdownBody({ text, streaming }) {
 
 // 一个 Turn = 一条用户消息 + 该 Run 的工具活动 + 助手回复。
 // 组件只消费 turnModel.buildConversationTurns 的结构化结果。
-export default function ChatTurn({ turn }) {
+export default function ChatTurn({ turn, currentArtifactId, onViewChanges }) {
   const badge = turn.status ? TURN_BADGE[turn.status] : null;
+  const failedMessage = turn.status === "failed"
+    ? (messageFailure(turn.assistantMessage || {}) || runErrorMessage(turn.errorCode)) : null;
   return (
     <section className="v2-turn" data-status={turn.status || "idle"}>
       {turn.userMessage ? (
@@ -92,9 +95,12 @@ export default function ChatTurn({ turn }) {
 
       {turn.streamingText ? <MarkdownBody streaming text={turn.streamingText} /> : null}
 
-      {turn.assistantMessage?.error_code ? (
-        <div className="v2-turn-error" role="status">{messageFailure(turn.assistantMessage)}</div>
-      ) : null}
+      {failedMessage ? <div className="v2-turn-error" role="status">
+        <strong>Agent 执行失败</strong><span>{failedMessage}</span>
+      </div> : null}
+
+      <ArtifactChangeSummary summary={turn.artifactChanges}
+        currentArtifactId={currentArtifactId} onViewChanges={onViewChanges} />
     </section>
   );
 }

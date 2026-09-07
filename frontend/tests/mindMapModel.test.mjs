@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  buildMindMap, buildMindMapView, buildNodeIndex, byOrder, flattenTree,
+  buildMindMap, buildMindMapView, buildNodeIndex, byOrder, flattenTree, selectMindMapScope,
 } from "../src/components/v2-workspace/mindMapModel.js";
 import {
   focusFailureMessage, isTreeLoadStale, shouldApplyResponse,
@@ -18,11 +18,11 @@ function sampleTree() {
   //   状态 → p3(账号锁定)
   const tc1 = node(4, "test_case", "TC001");
   const tc2 = node(5, "test_case", "TC002");
-  const p1 = node(3, "test_point", "正常登录", [tc1, tc2]);
-  const p2 = node(6, "test_point", "密码错误");
-  const p3 = node(7, "test_point", "账号锁定");
-  const g1 = node(2, "group", "功能", [p1, p2], 1);
-  const g2 = node(8, "group", "状态", [p3], 2);
+  const p1 = node(3, "module", "正常登录", [tc1, tc2]);
+  const p2 = node(6, "module", "密码错误");
+  const p3 = node(7, "module", "账号锁定");
+  const g1 = node(2, "module", "功能", [p1, p2], 1);
+  const g2 = node(8, "module", "状态", [p3], 2);
   return node(1, "root", "登录测试", [g1, g2]);
 }
 
@@ -36,9 +36,9 @@ test("Test1: tree → 正确的 nodes/edges", () => {
 
 test("Test2: nested ordering 稳定（与插入顺序无关，按 order_key/id）", () => {
   // 故意把 children 打乱传入：buildMindMap 必须按 (order_key,id) 稳定输出
-  const p2 = node(6, "test_point", "密码错误");
-  const p1 = node(3, "test_point", "正常登录");
-  const g1 = node(2, "group", "功能", [p2, p1], 1); // p2(6) 先于 p1(3)
+  const p2 = node(6, "module", "密码错误");
+  const p1 = node(3, "module", "正常登录");
+  const g1 = node(2, "module", "功能", [p2, p1], 1); // p2(6) 先于 p1(3)
   const root = node(1, "root", "登录测试", [g1]);
   const first = buildMindMap(root);
   const second = buildMindMap(root);
@@ -62,14 +62,14 @@ test("collapse: 折叠子树不进 nodes/edges，但保留计数", () => {
 });
 
 test("200+ 节点：render 数据一次树请求即可构造，id 稳定且布局确定性", () => {
-  // 1 root + 8 group + 40 test_point + 160 test_case = 209
+  // 1 root + 8 modules + 40 submodules + 160 cases = 209
   const groups = Array.from({ length: 8 }, (_, gi) => {
     const points = Array.from({ length: 5 }, (_, pi) => {
       const cases = Array.from({ length: 4 }, (_, ci) =>
         node(30_000 + gi * 1000 + pi * 40 + ci, "test_case", `C${gi}-${pi}-${ci}`));
-      return node(10_000 + gi * 100 + pi, "test_point", `P${gi}-${pi}`, cases);
+      return node(10_000 + gi * 100 + pi, "module", `P${gi}-${pi}`, cases);
     });
-    return node(100 + gi, "group", `G${gi}`, points);
+    return node(100 + gi, "module", `G${gi}`, points);
   });
   const root = node(1, "root", "大库", groups);
   const view = buildMindMapView(root, []);
@@ -79,19 +79,27 @@ test("200+ 节点：render 数据一次树请求即可构造，id 稳定且布�
   assert.equal(ids.size, 209, "node key 必须唯一且稳定对应 ArtifactNode.id");
   const index = buildNodeIndex(root);
   assert.equal(index.size, 209);
-  // 深度逐层递增（root y=0 → group y=96 → point y=192 → case y=288）
+  // 左到右：层级决定 x；y 只负责纵向铺开叶子。
   for (const n of view.nodes) {
     const pos = view.positions.get(n.key);
     assert.ok(pos && Number.isFinite(pos.x) && Number.isFinite(pos.y));
   }
   const byLevel = new Map();
   for (const n of view.nodes) byLevel.set(n.key, n.level);
-  assert.equal(view.positions.get("n1").y, 0);
+  assert.equal(view.positions.get("n1").x, 0);
   assert.equal(byLevel.get("n1"), 0);
   assert.equal([...view.positions.values()].every((p) => p.y >= 0), true);
   // 确定性：重复调用布局结果一致
   const again = buildMindMapView(root, []);
   assert.deepEqual(view.positions, again.positions);
+});
+
+test("MindMap scope: root 显示全部，子模块只显示自身和子用例", () => {
+  const root = sampleTree();
+  assert.equal(buildMindMap(selectMindMapScope(root, null)).nodes.length, 8);
+  const scoped = selectMindMapScope(root, 3);
+  assert.equal(scoped.id, 3);
+  assert.deepEqual(buildMindMap(scoped).nodes.map((item) => item.nodeId), [3, 4, 5]);
 });
 
 test("race/409 纯逻辑：late response 丢弃；409 保留旧视图并给可读消息", () => {

@@ -37,7 +37,7 @@ export function shouldWarnConcurrency(editor, currentTreeRevision) {
     return {
       baseRevision: editor.baseRevision,
       currentRevision: Number(currentTreeRevision),
-      message: `测试资产已更新。当前编辑内容基于 Revision ${editor.baseRevision}。`,
+      message: `测试资产已更新。当前编辑内容基于版本 ${editor.baseRevision}。`,
     };
   }
   return null;

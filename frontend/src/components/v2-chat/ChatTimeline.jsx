@@ -9,7 +9,8 @@ const SCROLL_THRESHOLD = 80;
 // 切换/打开任意 Conversation 都默认滚到底（不做 per-conversation 只滚一次）；
 // 自己发送强制到底；流式仅在近底部跟随；用户主动上滑看历史时绝不强制拉回，
 // 只显示"↓ 回到最新"。
-export default function ChatTimeline({ turns, streaming, activeId, sendNonce }) {
+export default function ChatTimeline({ turns, streaming, activeId, sendNonce,
+  currentArtifactId, onViewChanges }) {
   const containerRef = useRef(null);
   const intent = useRef(null); // "force"（切换会话/自己发送时置位）
   const lastSendNonce = useRef(sendNonce);
@@ -74,7 +75,8 @@ export default function ChatTimeline({ turns, streaming, activeId, sendNonce }) 
           <div className="v2-empty">开始新的对话…<br />可以直接提问，AI 会自主决定是否使用工具。</div>
         )}
         {turns?.map((turn) => (
-          <ChatTurn key={`${turn.ownerSequence}-${turn.runId || "pending"}`} turn={turn} />
+          <ChatTurn key={`${turn.ownerSequence}-${turn.runId || "pending"}`} turn={turn}
+            currentArtifactId={currentArtifactId} onViewChanges={onViewChanges} />
         ))}
         {jumpVisible && (
           <button type="button" className="v2-jump-bottom"

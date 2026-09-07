@@ -5,6 +5,7 @@ import {
   Background, Controls, Handle, Position, ReactFlow, useReactFlow,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
+import "../v2Workspace.css";
 import { buildMindMapView, shortTitle } from "../mindMapModel";
 import { formatCaseNumber } from "../caseNumber";
 
@@ -13,13 +14,13 @@ function MindMapNodeView({ data, selected }) {
   return (
     <div className={`v2w-node v2w-node-${type}${selected ? " is-selected" : ""}`}
       data-selected={selected || undefined}>
-      <Handle type="target" position={Position.Top} className="v2w-node-handle" />
+      <Handle type="target" position={Position.Left} className="v2w-node-handle" />
       <div className="v2w-node-title" title={title}>{shortTitle({ title })}</div>
       <div className="v2w-node-meta">
-        {type === "test_case" ? formatCaseNumber(data.nodeId) : type}
+        {type === "test_case" ? formatCaseNumber(data.nodeId) : type === "root" ? "项目" : "模块"}
         {collapsed && hiddenDescendants > 0 ? ` · +${hiddenDescendants}` : ""}
       </div>
-      <Handle type="source" position={Position.Bottom} className="v2w-node-handle" />
+      <Handle type="source" position={Position.Right} className="v2w-node-handle" />
     </div>
   );
 }
@@ -50,7 +51,7 @@ export default function ArtifactMindMap({
       hiddenDescendants: node.hiddenDescendants,
     },
     selected: node.nodeId === selectedNodeId,
-  })), [view]);
+  })), [view, selectedNodeId]);
   const flowEdges = useMemo(() => view.edges.map((edge) => ({
     id: edge.id, source: edge.source, target: edge.target, type: "smoothstep",
   })), [view]);
@@ -68,7 +69,7 @@ export default function ArtifactMindMap({
   }, [artifactKey, treeNonce, hasNodes]);
 
   if (!hasNodes) {
-    return <div className="v2w-mindmap-empty">该 Artifact 暂无节点</div>;
+    return <div className="v2w-mindmap-empty">当前项目暂无测试模块</div>;
   }
 
   return (

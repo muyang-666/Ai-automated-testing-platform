@@ -113,11 +113,7 @@ export default function useConversationChat(userId, functionalWorkspace = null) 
     // 提交 follow-up 不再直接改全局 phase。
     const nextPhase = conversationState(snap);
     setPhase(nextPhase);
-    if (nextPhase === "failed" || nextPhase === "interrupted") {
-      setRunError(runErrorMessage(snap.latest_run?.error_code));
-    } else {
-      setRunError("");
-    }
+    if (nextPhase !== "failed" && nextPhase !== "interrupted") setRunError("");
     return { snap, msgs };
   }, [backfillToolOwners]);
 
@@ -212,12 +208,10 @@ export default function useConversationChat(userId, functionalWorkspace = null) 
         } else if (event.event_type === "run_succeeded") {
           scheduleRefresh(); // 顶部状态交给 snapshot 派生（worker 可能立刻提升下一个 run）
         } else if (event.event_type === "run_failed") {
-          setRunError(runErrorMessage(event.payload?.error_code));
           scheduleRefresh();
         } else if (event.event_type === "run_cancelled") {
           scheduleRefresh();
         } else if (event.event_type === "run_interrupted") {
-          setRunError("Agent Worker 已中断，本轮没有生成回答，请重新发送。");
           scheduleRefresh();
         } else if (event.event_type === "conversation_message_committed") {
           scheduleRefresh();
@@ -387,7 +381,7 @@ export default function useConversationChat(userId, functionalWorkspace = null) 
     return () => { disposed = true; clearTimeout(timer); };
   }, [active, phase, connectionError, refresh]);
 
-  const turns = useMemo(
+  const baseTurns = useMemo(
     () => buildConversationTurns({
       messages,
       events: allEvents,
@@ -402,9 +396,12 @@ export default function useConversationChat(userId, functionalWorkspace = null) 
 
   // P09.3B §25-31/37：Change Summary 由真实 Artifact Revision 事件按 run 聚合
   // （聊天 SSE 事件在 DB 持久化，重连/重新打开时从游标重放 → 可恢复）。
+  // P09.3B.1 #3：Change Summary 只消费 artifact_revision_created；
+  // artifact_diff_created 不参与 run 聚合，避免同一 write 双计数。
   const artifactSummaries = useMemo(
     () => aggregateByRun(
       allEvents
+        .filter((event) => ["artifact_revision_created", "artifact_diff_created"].includes(event.event_type))
         .map((event) => artifactEventFromStream({
           event_type: event.event_type,
           sequence_no: event.sequence_no,
@@ -414,6 +411,13 @@ export default function useConversationChat(userId, functionalWorkspace = null) 
     ),
     [allEvents],
   );
+
+  const turns = useMemo(() => {
+    const byRun = new Map(artifactSummaries.map((summary) => [summary.runId, summary]));
+    return baseTurns.map((turn) => ({
+      ...turn, artifactChanges: turn.runId == null ? null : byRun.get(turn.runId) || null,
+    }));
+  }, [baseTurns, artifactSummaries]);
 
   const send = useCallback(async (text) => {
     if (!active || !text.trim()) return;
@@ -425,10 +429,8 @@ export default function useConversationChat(userId, functionalWorkspace = null) 
     }
     setError("");
     setRunError("");
-    if (workspace?.page === "functionCases" && workspace.artifactId == null) {
-      setError("当前项目的功能用例正在加载，请稍后再发送。");
-      return;
-    }
+    // P09.3B.1 #2：不再用 artifactId==null 做前置 return（会误拦 Viewer 空项目的普通聊天）；
+    // 全部判断统一进入 planWorkspaceSubmission（loading/empty 由其按 artifactStatus 处理）。
     const scope = generation.current;
     try {
       const wasUnsaved = isUnsavedConversation(active);

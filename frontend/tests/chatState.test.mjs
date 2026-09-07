@@ -1,10 +1,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  canSendMessage, conversationState, createUnsavedConversation, isUnsavedConversation,
+  canSendMessage, conversationDisplayTitle, conversationState, createUnsavedConversation, isUnsavedConversation,
   mergeConversationSummaries, mergeRenamedConversation, shouldAdoptInitialConversation, stopTargetRun,
   renameActiveConversation, renameConversationSummaries,
 } from "../src/components/v2-chat/chatState.js";
+
+test("Conversation 标题优先有效 title，异常问号回退首条用户消息", () => {
+  assert.equal(conversationDisplayTitle("登录测试", "第一条"), "登录测试");
+  assert.equal(conversationDisplayTitle("?", "帮我补充登录边界"), "帮我补充登录边界");
+  assert.equal(conversationDisplayTitle("?", "?"), "新对话");
+  assert.equal(conversationDisplayTitle("？", "！！"), "新对话");
+  assert.equal(conversationDisplayTitle("", ""), "新对话");
+});
 
 test("未发送的新对话只创建本地草稿，不具备服务端会话 ID", () => {
   const draft = createUnsavedConversation();

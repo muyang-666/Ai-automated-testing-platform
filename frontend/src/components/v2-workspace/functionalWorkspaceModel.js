@@ -1,7 +1,7 @@
 export const EMPTY_FUNCTIONAL_WORKSPACE = Object.freeze({
   page: null, projectId: null, projectName: "", artifactId: null, artifactTitle: "",
   selectedModuleId: null, selectedCaseId: null, modulePath: [], caseLabel: "",
-  viewMode: null, selectionError: "",
+  viewMode: null, selectionError: "", artifactStatus: null,
 });
 
 function modulePath(index, moduleId) {
@@ -17,7 +17,9 @@ function modulePath(index, moduleId) {
 }
 
 export function deriveFunctionalWorkspace({ project, artifact, index, scopeId,
-  selectedNodeId, viewMode }) {
+  selectedNodeId, viewMode, artifactStatus }) {
+  // P09.3B.1 #2：artifactStatus = loading | ready | empty | error；默认按 artifact 推导。
+  const status = artifactStatus ?? (artifact ? "ready" : "empty");
   const selected = selectedNodeId == null ? null : index.get(selectedNodeId) || null;
   const scoped = scopeId == null ? null : index.get(scopeId) || null;
   const selectedCaseId = selected?.node_type === "test_case" ? selected.id : null;
@@ -36,6 +38,7 @@ export function deriveFunctionalWorkspace({ project, artifact, index, scopeId,
     caseLabel: selectedCaseId == null ? "" : `TC-${String(selectedCaseId).padStart(6, "0")}`,
     viewMode: viewMode === "mindmap" ? "mindmap" : "list",
     selectionError: "",
+    artifactStatus: status,
   };
 }
 

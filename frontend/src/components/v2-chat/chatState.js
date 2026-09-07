@@ -68,3 +68,11 @@ export function renameConversationSummaries(conversations, conversationId, title
 export function renameActiveConversation(active, conversationId, title) {
   return active && active.id === conversationId ? { ...active, title } : active;
 }
+
+export function conversationDisplayTitle(title, firstUserText = "") {
+  const value = String(title || "").replace(/\s+/g, " ").trim();
+  const first = String(firstUserText || "").replace(/\s+/g, " ").trim();
+  const meaningful = (text) => text && !/^[?？!！。.，,、…\s]+$/.test(text);
+  if (meaningful(value)) return value;
+  return meaningful(first) ? first.slice(0, 28) : "新对话";
+}

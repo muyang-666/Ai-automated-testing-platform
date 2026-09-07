@@ -4,13 +4,14 @@
 // 本模块绝不产生 ArtifactOperation / Revision，也不把坐标写回后端——
 // 坐标/collapse 属于 UI View State（useArtifactViewState 管理，session 内有效）。
 //
-// 布局方向：垂直树（root 在上，逐层向下）。全阶段保持一致。
+// 用例平台式左到右树：Project/Root → Module → Case。
 
 export const LAYOUT = {
-  direction: "vertical",
-  nodeWidth: 172,
-  levelGap: 96, // 相邻层级 y 间距
-  leafGap: 24, // 相邻叶子（同层）x 间距（布局用单位）
+  direction: "horizontal",
+  nodeWidth: 184,
+  nodeHeight: 58,
+  levelGap: 236,
+  leafGap: 18,
 };
 
 // ── 通用树辅助 ──
@@ -44,6 +45,11 @@ export function buildNodeIndex(root) {
   const index = new Map();
   for (const node of flattenTree(root)) index.set(node.id, node);
   return index;
+}
+
+export function selectMindMapScope(root, scopeId) {
+  if (!root || scopeId == null || scopeId === root.id) return root;
+  return buildNodeIndex(root).get(scopeId) || root;
 }
 
 // ── Tree → MindMap 派生（buildMindMap） ──
@@ -87,7 +93,7 @@ export function buildMindMap(root, collapsedIds = []) {
   return { nodes, edges };
 }
 
-// ── 布局（垂直树，确定性递归；collapsed 子树按单个叶子占位） ──
+// ── 布局（左到右，确定性递归；collapsed 子树按单个叶子占位） ──
 
 export function layoutMindMap(nodes) {
   // 输入为 buildMindMap 输出的可见节点（前序）。
@@ -100,21 +106,21 @@ export function layoutMindMap(nodes) {
       childrenByKey.set(`n${node.parentId}`, list);
     }
   }
-  // 叶子从左到右分配 x（单位），内部节点取首尾子节点中点
+  // 叶子从上到下分配 y，内部节点取首尾子节点中点。
   const positions = new Map();
   let cursor = 0;
   const assign = (key, level) => {
     const children = childrenByKey.get(key) || [];
-    const unit = LAYOUT.nodeWidth + LAYOUT.leafGap;
+    const unit = LAYOUT.nodeHeight + LAYOUT.leafGap;
     if (!children.length) {
-      positions.set(key, { x: cursor * unit, y: level * LAYOUT.levelGap });
+      positions.set(key, { x: level * LAYOUT.levelGap, y: cursor * unit });
       cursor += 1;
       return;
     }
     for (const child of children) assign(child.key, level + 1);
     const first = positions.get(children[0].key);
     const last = positions.get(children[children.length - 1].key);
-    positions.set(key, { x: (first.x + last.x) / 2, y: level * LAYOUT.levelGap });
+    positions.set(key, { x: level * LAYOUT.levelGap, y: (first.y + last.y) / 2 });
   };
   if (nodes.length) assign(nodes[0].key, 0);
   return positions;

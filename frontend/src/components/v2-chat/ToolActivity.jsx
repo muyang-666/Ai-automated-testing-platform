@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { CheckIcon, CloseIcon, SpinnerIcon } from "./ChatIcons.jsx";
+import { toolDisplayName } from "./toolActivityModel.js";
 
 const STATUS_ICON = { running: SpinnerIcon, success: CheckIcon, error: CloseIcon };
 
@@ -14,13 +15,14 @@ export default function ToolActivity({ activity }) {
       <button type="button" className="v2-tool-summary" onClick={() => setOpen((v) => !v)}
         aria-expanded={open}>
         <span className="v2-tool-icon"><StatusIcon /></span>
-        <span className="v2-tool-name">{activity.toolName}</span>
+        <span className="v2-tool-name">{toolDisplayName(activity.toolName)}</span>
         {status === "running" ? <span className="v2-tool-status">使用中…</span> : null}
         {status === "success" ? <span className="v2-tool-status">完成</span> : null}
         {status === "error" ? <span className="v2-tool-status">失败</span> : null}
       </button>
       {open && (
         <div className="v2-tool-details">
+          <span>tool: {activity.toolName || "unknown"}</span>
           {activity.errorCode ? <span>error: {activity.errorCode}</span> : null}
         </div>
       )}

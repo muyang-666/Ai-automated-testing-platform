@@ -16,6 +16,8 @@ import UserPage from "./pages/UserPage";
 // import TestAgentWidget from "./components/test-agent/TestAgentWidget";
 import V2ChatPanel from "./components/v2-chat/V2ChatPanel";
 import FunctionalWorkspaceProvider from "./components/v2-workspace/FunctionalWorkspaceProvider.jsx";
+import { agentArtifactNavigation } from "./components/v2-workspace/agentArtifactNavigation.js";
+import { storeProjectId } from "./utils/projectSelection";
 
 const { Sider, Content } = Layout;
 const { Text } = Typography;
@@ -40,6 +42,15 @@ const clearStoredAuth = () => {
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState("cases");
+  // P09.3B.1 #4：跨页 View Changes —— 收到 artifact 导航意图时切到功能用例页并选中目标项目
+  useEffect(() => {
+    const unsubscribe = agentArtifactNavigation.subscribe((intent) => {
+      if (!intent || intent.page !== "functionCases") return;
+      if (intent.projectId != null) storeProjectId(intent.projectId);
+      setCurrentPage("functionCases");
+    });
+    return unsubscribe;
+  }, []);
   const [currentUser, setCurrentUser] = useState(null);
   const [authChecking, setAuthChecking] = useState(true);
 

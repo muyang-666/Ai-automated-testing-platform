@@ -38,7 +38,7 @@ export default function ChatComposer({
         value={value}
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={handleKeyDown}
-        placeholder={placeholder || "Ask TestMind"}
+        placeholder={placeholder || "询问 TestMind"}
         disabled={disabled}
       />
       {stopping ? (

@@ -281,6 +281,23 @@ def _change_counts(changes: list[dict]) -> dict:
     return counts
 
 
+def _domain_change_counts(changes: list[dict]) -> dict:
+    counts = {"modules_added": 0, "cases_added": 0, "modules_deleted": 0,
+              "cases_deleted": 0, "updated": 0, "moved": 0}
+    for change in changes:
+        kind, node_type = change.get("change"), change.get("node_type")
+        if kind == "added":
+            if node_type == "test_case": counts["cases_added"] += 1
+            elif node_type == "module": counts["modules_added"] += 1
+        elif kind == "deleted":
+            # P07 delete diff has no subtree types; preserve generic deleted in change_counts.
+            if node_type == "test_case": counts["cases_deleted"] += 1
+            elif node_type == "module": counts["modules_deleted"] += 1
+        elif kind in ("updated", "moved"):
+            counts[kind] += 1
+    return counts
+
+
 def _assert_write_fence(db, runtime) -> None:
     """P08.2：Artifact 写事务提交前的 fencing。
 
@@ -323,6 +340,7 @@ def _apply_write(runtime, expected_revision: int, operations: list[dict], summar
             "conversation_id": runtime.conversation_id,
             "summary": summary,
             "change_counts": _change_counts(diff["changes"]),
+            "domain_change_counts": _domain_change_counts(diff["changes"]),
         }
         # 同事务写入 revision + 事件；rollback 或 fencing 失败都不留事件（append 后统一 commit）
         agent_run_service.append_event(db, runtime.conversation_id, runtime.run_id,
