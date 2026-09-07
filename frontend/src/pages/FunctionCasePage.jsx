@@ -20,7 +20,9 @@ import { formatCaseNumber } from "../components/v2-workspace/caseNumber";
 import { buildNodeIndex, selectMindMapScope } from "../components/v2-workspace/mindMapModel";
 import { getStoredProjectId, resolveProjectId, storeProjectId } from "../utils/projectSelection";
 import { isViewerOnly } from "../utils/authPermissions";
-import { paginateCases } from "../components/v2-workspace/casePaginationModel.js";
+import {
+  CASE_PAGE_SIZE_OPTIONS, DEFAULT_CASE_PAGE_SIZE, paginateCases,
+} from "../components/v2-workspace/casePaginationModel.js";
 import { nextModuleMenu } from "../components/v2-workspace/moduleMenuModel.js";
 import useFunctionalWorkspace from "../components/v2-workspace/useFunctionalWorkspace.js";
 import { agentArtifactEventBus } from "../components/v2-workspace/agentArtifactEventBus.js";
@@ -143,7 +145,7 @@ export default function FunctionCasePage() {
   const [writeBusy, setWriteBusy] = useState(false);
   const [openMenuNodeId, setOpenMenuNodeId] = useState(null);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState(DEFAULT_CASE_PAGE_SIZE);
 
   const [historyOpen, setHistoryOpen] = useState(false);
   const [diffData, setDiffData] = useState(null);
@@ -223,9 +225,9 @@ export default function FunctionCasePage() {
         if (disposed) return;
         setProjects(response.data || []);
         const initial = resolveProjectId(response.data || [], getStoredProjectId());
-        if (initial) {
-          setProjectId(initial.id);
-          storeProjectId(initial.id);
+        if (initial != null) {
+          setProjectId(initial);
+          storeProjectId(initial);
         }
       } catch {
         if (!disposed) setError("加载项目列表失败");
@@ -358,12 +360,15 @@ export default function FunctionCasePage() {
   }, [moduleTree]);
 
   const openCaseEditor = useCallback((mode, row, defaultModuleId) => {
-    const content = row?.content && typeof row.content === "object" ? row.content : {};
+    const nodeId = row?.nodeId ?? row?.id ?? null;
+    const sourceNode = nodeId != null ? index.get(nodeId) ?? row : row;
+    const content = sourceNode?.content && typeof sourceNode.content === "object"
+      ? sourceNode.content : {};
     const base = {
       mode, // create|edit
       baseRevision: tree?.current_revision ?? null, // P09.3B：编辑基于打开时的 revision
-      title: row?.title || "",
-      moduleId: row ? index.get(row.nodeId)?.parent_id ?? null : defaultModuleId ?? scopeId,
+      title: sourceNode?.title || "",
+      moduleId: sourceNode ? sourceNode.parent_id ?? null : defaultModuleId ?? scopeId,
       priority: content.priority || "P1",
       tags: (content.tags || []).join(", "),
       preconditions: [...(content.preconditions || [])],
@@ -375,7 +380,7 @@ export default function FunctionCasePage() {
         expected: typeof e === "string" ? e : e?.expected ?? "",
       })),
     };
-    setCaseDlg({ ...base, nodeId: row?.nodeId ?? null });
+    setCaseDlg({ ...base, nodeId });
   }, [scopeId, index, tree]);
 
   const openRecentDiff = useCallback(async () => {
@@ -597,18 +602,14 @@ export default function FunctionCasePage() {
 
   const moduleMenu = (node) => ({
     items: [
-      { key: "child", label: "新增子模块" },
-      { key: "rename", label: "重命名" },
-      { key: "move", label: "移动" },
-      { key: "delete", label: "删除", danger: true },
+      { key: "child", label: "新增模块" },
+      { key: "case", label: "新增用例" },
+      { key: "delete", label: "删除模块", danger: true },
     ],
     onClick: ({ key }) => {
       setOpenMenuNodeId(null);
       if (key === "child") setModuleDlg({ kind: "create", parentId: node.id, title: "", baseRevision: tree?.current_revision ?? null });
-      if (key === "rename") setModuleDlg({ kind: "rename", nodeId: node.id, title: node.title, baseRevision: tree?.current_revision ?? null });
-      if (key === "move") {
-        setMoveDlg({ kind: "module", node, parentId: null, baseRevision: tree?.current_revision ?? null });
-      }
+      if (key === "case") openCaseEditor("create", null, node.id);
       if (key === "delete") setDeleteDlg({ kind: "module", node, baseRevision: tree?.current_revision ?? null });
     },
   });
@@ -619,17 +620,19 @@ export default function FunctionCasePage() {
   }, [moduleTree]);
 
   const columns = [
-    { title: "编号", dataIndex: "caseNumber", width: 120, fixed: "left",
-      render: (v) => <Typography.Text type="secondary">{v}</Typography.Text> },
-    { title: "模块", key: "module", width: 160, render: (_, r) => r.modulePath.join(" / ") || "—" },
-    { title: "名称", dataIndex: "title", ellipsis: true, width: 200 },
-    { title: "前置条件", key: "pre", width: 170,
-      render: (_, r) => <span className="cell-preview">{summarize(r.preconditions.join("；")) || "—"}</span> },
-    { title: "步骤", key: "steps", width: 210,
-      render: (_, r) => <span className="cell-preview">{summarize(stepsSummary(r.steps)) || "—"}</span> },
-    { title: "预期", key: "expected", width: 210,
-      render: (_, r) => <span className="cell-preview">{summarize(expectedSummary(r.expectedResults)) || "—"}</span> },
-    { title: "优先级", dataIndex: "priority", width: 90,
+    { title: "编号", dataIndex: "caseNumber", width: 92, fixed: "left",
+      render: (v) => <Typography.Text type="secondary" className="case-number case-wrap-text">{v}</Typography.Text> },
+    { title: "模块", key: "module", width: 150,
+      render: (_, r) => <span className="case-wrap-text">{r.modulePath.join(" / ") || "—"}</span> },
+    { title: "名称", dataIndex: "title", width: 170,
+      render: (value) => <span className="case-wrap-text">{value || "—"}</span> },
+    { title: "前置条件", key: "pre", width: 230,
+      render: (_, r) => <span className="cell-preview">{r.preconditions.join("；") || "—"}</span> },
+    { title: "步骤", key: "steps", width: 270,
+      render: (_, r) => <span className="cell-preview">{stepsSummary(r.steps) || "—"}</span> },
+    { title: "预期", key: "expected", width: 270,
+      render: (_, r) => <span className="cell-preview">{expectedSummary(r.expectedResults) || "—"}</span> },
+    { title: "优先级", dataIndex: "priority", width: 72, align: "right", fixed: "right",
       render: (v) => <Tag color={PRIORITY_COLOR[v] || "default"}>{v}</Tag> },
   ];
 
@@ -651,7 +654,12 @@ export default function FunctionCasePage() {
           open ? { type: "open", nodeId: node.id } : { type: "close" },
         ))}>
         <span className="module-row" title={node.title}
-          onClick={(e) => { e.stopPropagation(); setOpenMenuNodeId(null); setScopeId(node.id); setSelectedNodeId(node.id); }}>
+          onClick={(e) => { e.stopPropagation(); setOpenMenuNodeId(null); setScopeId(node.id); setSelectedNodeId(node.id); }}
+          onDoubleClick={(e) => {
+            e.stopPropagation();
+            setModuleDlg({ kind: "rename", nodeId: node.id, title: node.title,
+              baseRevision: tree?.current_revision ?? null });
+          }}>
           {content}
         </span>
       </Dropdown>
@@ -673,7 +681,7 @@ export default function FunctionCasePage() {
         return null;
       })()}
       <div className="case-page-toolbar">
-        <Space wrap>
+        <Space wrap className="case-page-toolbar-main">
           <span>项目：</span>
           <Select style={{ width: 220 }} value={projectId}
             onChange={(v) => {
@@ -715,6 +723,10 @@ export default function FunctionCasePage() {
             </>
           )}
         </Space>
+        {writeVisible && viewMode === "list" && (
+          <Button className="case-add-button" size="small" type="primary"
+            onClick={() => openCaseEditor("create", null, scopeId)}>＋ 新增用例</Button>
+        )}
       </div>
       {error && <div className="case-page-error">{error}</div>}
 
@@ -756,15 +768,9 @@ export default function FunctionCasePage() {
         <section className="case-list-panel">
           {viewMode === "list" ? (
             <>
-              {writeVisible && (
-                <div className="case-toolbar-actions">
-                  <Button size="small" type="primary"
-                    onClick={() => openCaseEditor("create", null, scopeId)}>＋ 新增用例</Button>
-                </div>
-              )}
               {!loading && artifact && (
-                <Table size="small" rowKey="nodeId" columns={columns} dataSource={paged.items}
-                  pagination={false} scroll={{ x: 1160 }}
+                <Table size="small" className="case-table" rowKey="nodeId" columns={columns} dataSource={paged.items}
+                  pagination={false} scroll={{ x: 1254 }}
                   onRow={(row) => ({
                     style: { cursor: "pointer" },
                     onClick: () => {
@@ -776,7 +782,7 @@ export default function FunctionCasePage() {
               {!loading && artifact && filtered.length > 0 && (
                 <Pagination size="small" className="case-pagination"
                   current={paged.page} pageSize={paged.pageSize} total={paged.total}
-                  pageSizeOptions={[20, 50, 100]} showSizeChanger
+                  pageSizeOptions={CASE_PAGE_SIZE_OPTIONS} showSizeChanger
                   locale={{ items_per_page: "条/页" }}
                   showTotal={(total) => `共 ${total} 条`}
                   onChange={(nextPage, nextSize) => { setPage(nextPage); setPageSize(nextSize); }} />
@@ -797,8 +803,40 @@ export default function FunctionCasePage() {
                       const node = index.get(id);
                       if (!node) return;
                       setSelectedNodeId(id);
-                      if (node.node_type === "module") setScopeId(id);
                     }}
+                    onEditCase={(id) => {
+                      const node = index.get(id);
+                      if (node?.node_type === "test_case") openCaseEditor("edit", node);
+                    }}
+                    onRenameNode={(id) => {
+                      const node = index.get(id);
+                      if (!node) return;
+                      if (node.node_type === "module") {
+                        setModuleDlg({ kind: "rename", nodeId: node.id, title: node.title,
+                          baseRevision: tree?.current_revision ?? null });
+                      } else if (node.node_type === "test_case") {
+                        openCaseEditor("edit", node);
+                      }
+                    }}
+                    onCreateModule={(id) => {
+                      const node = index.get(id);
+                      if (node?.node_type === "module") {
+                        setModuleDlg({ kind: "create", parentId: node.id, title: "",
+                          baseRevision: tree?.current_revision ?? null });
+                      }
+                    }}
+                    onCreateCase={(id) => {
+                      const node = index.get(id);
+                      if (node?.node_type === "module") openCaseEditor("create", null, node.id);
+                    }}
+                    onDeleteNode={(id) => {
+                      const node = index.get(id);
+                      if (node && (node.node_type === "module" || node.node_type === "test_case")) {
+                        setDeleteDlg({ kind: node.node_type === "module" ? "module" : "case", node,
+                          baseRevision: tree?.current_revision ?? null });
+                      }
+                    }}
+                    editable={writeVisible}
                     onToggleCollapse={(id) => setCollapsed((prev) => (
                       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
                     ))}
@@ -1081,20 +1119,27 @@ export default function FunctionCasePage() {
       </Drawer>
 
       <style>{`
-        .case-page-toolbar { margin-bottom: 10px; }
+        .case-page { min-height:calc(100vh - 24px); margin:-12px; }
+        .case-page-toolbar { display:flex; align-items:flex-start; gap:10px; margin-bottom:10px; }
+        .case-page-toolbar-main { min-width:0; flex:1; }
+        .case-add-button { flex:none; margin-left:auto; }
         .case-page-body { display: flex; gap: 12px; align-items: flex-start; }
         .case-module-panel { width: 250px; flex: none; border: 1px solid #e6e6e7; border-radius: 8px; padding: 8px; max-height: 74vh; overflow: auto; }
         .case-module-head { display:flex; align-items:center; justify-content:space-between; margin-bottom: 6px; }
-        .case-module-all { display:block; width:100%; text-align:left; border:0; background:transparent; padding:4px 6px; border-radius:6px; cursor:pointer; margin-bottom:4px; }
-        .case-module-all.active, .module-row:hover { background: #eeeeef; }
+        .case-page button.case-module-all { display:block; width:100%; text-align:left; border:0; background:transparent; color:#292b2f; padding:4px 6px; border-radius:6px; cursor:pointer; margin-bottom:4px; }
+        .case-page button.case-module-all:hover, .case-page button.case-module-all.active, .module-row:hover { border-color:transparent; background:#eeeeef; color:#292b2f; }
         .module-row { display:block; min-width:0; padding: 2px 4px; overflow:hidden; border-radius:4px; cursor:pointer; text-overflow:ellipsis; white-space:nowrap; }
         .case-list-panel { flex: 1; min-width: 0; }
-        .case-toolbar-actions { margin-bottom: 6px; text-align: right; }
         .case-pagination { display:flex; justify-content:flex-end; margin-top:12px; }
-        .cell-preview { white-space: pre-line; display:block; max-height: 60px; overflow:hidden; font-size:12px; color:#444; }
+        .case-table .ant-table-cell { vertical-align:top; }
+        .case-table .ant-table-tbody > tr > td:not(:first-child) { font-size:16px; line-height:1.5; }
+        .case-table .cell-preview, .case-table .ant-tag { font-size:inherit; }
+        .case-table .case-number { font-size:14px; }
+        .case-wrap-text, .cell-preview { display:block; min-width:0; white-space:pre-line; overflow:visible; overflow-wrap:anywhere; word-break:break-word; }
+        .cell-preview { color:#444; }
         .case-page-error { color:#b42318; padding: 4px 0; }
-        .mindmap-host { border: 1px solid #e6e6e7; border-radius: 8px; min-height: 560px; position: relative; overflow: hidden; }
-        .mindmap-host > .v2w-mindmap { height: 520px; min-height: 520px; }
+        .mindmap-host { height:max(560px, calc(100vh - 94px)); min-height:560px; border:1px solid #e6e6e7; border-radius:8px; position:relative; overflow:hidden; }
+        .mindmap-host > .v2w-mindmap { height:100%; min-height:0; }
         .mindmap-inspector { position:absolute; left:10px; bottom:8px; right:10px; background:rgba(255,255,255,.95); border:1px solid #e6e6e7; border-radius:8px; padding:8px 12px; }
         .history-item { border:1px solid #e6e6e7; border-radius:8px; padding:8px 10px; width:100%; }
         .history-head { display:flex; justify-content:space-between; gap:8px; }
@@ -1108,6 +1153,10 @@ export default function FunctionCasePage() {
         .case-editor .editor-sec { margin-top: 12px; border-top:1px dashed #e6e6e7; padding-top:8px; }
         .editor-row { display:flex; align-items:center; gap:6px; margin: 4px 0; }
         .steps-row .step-no { width: 26px; color:#8c959f; font-size:12px; text-align:right; }
+        @media (max-width: 1100px) {
+          .case-page-toolbar { flex-wrap:wrap; }
+          .case-add-button { margin-left:0; }
+        }
       `}</style>
     </Card>
   );

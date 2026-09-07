@@ -8,11 +8,54 @@
 
 export const LAYOUT = {
   direction: "horizontal",
-  nodeWidth: 184,
-  nodeHeight: 58,
-  levelGap: 236,
-  leafGap: 18,
+  nodeWidth: 220,
+  nodeHeight: 76,
+  levelGap: 340,
+  leafGap: 14,
 };
+
+const CASE_DETAIL_SPECS = [
+  { kind: "preconditions", label: "前置" },
+  { kind: "steps", label: "步骤" },
+  { kind: "expected", label: "预期" },
+];
+
+export function caseDetailText(node, kind) {
+  const content = node?.content && typeof node.content === "object" ? node.content : {};
+  if (kind === "preconditions") return (content.preconditions || []).filter(Boolean).join("\n");
+  if (kind === "steps") return (content.steps || []).map((step, index) => (
+    `${step?.step_no ?? index + 1}. ${step?.action || ""}`
+  )).filter((line) => !/^\d+\.\s*$/.test(line)).join("\n");
+  if (kind === "expected") return (content.expected_results || []).map((item) => (
+    typeof item === "string" ? item : item?.expected || ""
+  )).filter(Boolean).join("\n");
+  return "";
+}
+
+function displayUnits(text) {
+  return [...String(text || "")].reduce((sum, char) => (
+    sum + (char.codePointAt(0) > 255 ? 2 : 1)
+  ), 0);
+}
+
+export function caseDetailMetrics(text) {
+  const lines = String(text || "").split("\n");
+  const longest = Math.max(1, ...lines.map(displayUnits));
+  const width = Math.min(300, Math.max(188, 34 + longest * 6));
+  const contentWidth = Math.max(120, width - 24);
+  const wrappedLines = lines.reduce((sum, line) => (
+    sum + Math.max(1, Math.ceil((displayUnits(line) * 6) / contentWidth))
+  ), 0);
+  const height = Math.max(48, 18 + wrappedLines * 17);
+  return { width, height };
+}
+
+export function caseNameMetrics(title) {
+  // 202px 卡片扣除左右 padding、priority 与 gap 后，名称约有 132px 可用。
+  // displayUnits 同时兼顾中英文宽度，卡片高度严格落在 1/2/3 行三个档位。
+  const lineCount = Math.min(3, Math.max(1, Math.ceil(displayUnits(title) / 24)));
+  return { lineCount, height: 34 + (lineCount - 1) * 16 };
+}
 
 // ── 通用树辅助 ──
 
@@ -70,23 +113,69 @@ export function buildMindMap(root, collapsedIds = []) {
   const walk = (node, parentId, level) => {
     const children = directChildrenOf(node);
     const isCollapsed = collapsed.has(node.id);
-    nodes.push({
+    const caseMetrics = node.node_type === "test_case" ? caseNameMetrics(node.title) : null;
+    const renderedNode = {
       key: `n${node.id}`,
       nodeId: node.id,
       node_type: node.node_type,
       title: node.title,
+      priority: node.node_type === "test_case" ? node.content?.priority ?? "P1" : null,
       order_key: node.order_key,
       parentId: parentId ?? null,
+      parentKey: parentId != null ? `n${parentId}` : null,
       level,
       childrenCount: children.length,
       collapsed: isCollapsed,
+      caseHeight: caseMetrics?.height ?? null,
+      layoutHeight: caseMetrics?.height ?? 58,
       hiddenDescendants: isCollapsed ? subtreeSize(node) - 1 : 0,
-    });
+    };
+    nodes.push(renderedNode);
     if (parentId != null) {
-      edges.push({ id: `e${parentId}-${node.id}`, source: `n${parentId}`, target: `n${node.id}` });
+      edges.push({ id: `e${parentId}-${node.id}`, source: `n${parentId}`,
+        target: `n${node.id}`, edgeKind: "hierarchy" });
     }
     if (!isCollapsed) {
       for (const child of children) walk(child, node.id, level + 1);
+    }
+    if (node.node_type === "test_case") {
+      const details = CASE_DETAIL_SPECS.map((spec) => {
+        const text = caseDetailText(node, spec.kind);
+        return { ...spec, text, metrics: caseDetailMetrics(text) };
+      }).filter((detail) => detail.text.trim());
+      const rowHeight = Math.max(
+        LAYOUT.nodeHeight, caseMetrics?.height ?? 0,
+        ...details.map((detail) => detail.metrics.height),
+      );
+      renderedNode.rowHeight = rowHeight;
+      let parentKey = `n${node.id}`;
+      details.forEach((detail, index) => {
+        const spec = detail;
+        const key = `d${node.id}-${spec.kind}`;
+        nodes.push({
+          key,
+          nodeId: null,
+          node_type: "case_detail",
+          title: spec.label,
+          detailKind: spec.kind,
+          detailText: detail.text,
+          detailWidth: detail.metrics.width,
+          detailHeight: detail.metrics.height,
+          layoutHeight: detail.metrics.height,
+          rowHeight,
+          ownerCaseId: node.id,
+          order_key: index,
+          parentId: null,
+          parentKey,
+          level: level + index + 1,
+          childrenCount: index < CASE_DETAIL_SPECS.length - 1 ? 1 : 0,
+          collapsed: false,
+          hiddenDescendants: 0,
+        });
+        edges.push({ id: `ed${node.id}-${spec.kind}`, source: parentKey,
+          target: key, edgeKind: "detail" });
+        parentKey = key;
+      });
     }
   };
   walk(root, null, 0);
@@ -99,28 +188,36 @@ export function layoutMindMap(nodes) {
   // 输入为 buildMindMap 输出的可见节点（前序）。
   // 1) 先按前序确定每棵子树的叶子宽度（折叠节点宽度=1）
   const childrenByKey = new Map();
+  const nodeByKey = new Map(nodes.map((node) => [node.key, node]));
   for (const node of nodes) {
-    if (node.parentId != null) {
-      const list = childrenByKey.get(`n${node.parentId}`) || [];
+    const parentKey = node.parentKey ?? (node.parentId != null ? `n${node.parentId}` : null);
+    if (parentKey != null) {
+      const list = childrenByKey.get(parentKey) || [];
       list.push(node);
-      childrenByKey.set(`n${node.parentId}`, list);
+      childrenByKey.set(parentKey, list);
     }
   }
   // 叶子从上到下分配 y，内部节点取首尾子节点中点。
   const positions = new Map();
-  let cursor = 0;
+  let cursorY = 0;
+  const heightOf = (key) => nodeByKey.get(key)?.layoutHeight ?? 58;
   const assign = (key, level) => {
+    const current = nodeByKey.get(key);
     const children = childrenByKey.get(key) || [];
-    const unit = LAYOUT.nodeHeight + LAYOUT.leafGap;
     if (!children.length) {
-      positions.set(key, { x: level * LAYOUT.levelGap, y: cursor * unit });
-      cursor += 1;
+      const rowHeight = current?.rowHeight ?? LAYOUT.nodeHeight;
+      const centerY = cursorY + rowHeight / 2;
+      positions.set(key, { x: level * LAYOUT.levelGap, y: centerY - heightOf(key) / 2 });
+      cursorY += rowHeight + LAYOUT.leafGap;
       return;
     }
     for (const child of children) assign(child.key, level + 1);
     const first = positions.get(children[0].key);
     const last = positions.get(children[children.length - 1].key);
-    positions.set(key, { x: level * LAYOUT.levelGap, y: (first.y + last.y) / 2 });
+    const firstCenter = first.y + heightOf(children[0].key) / 2;
+    const lastCenter = last.y + heightOf(children[children.length - 1].key) / 2;
+    const centerY = (firstCenter + lastCenter) / 2;
+    positions.set(key, { x: level * LAYOUT.levelGap, y: centerY - heightOf(key) / 2 });
   };
   if (nodes.length) assign(nodes[0].key, 0);
   return positions;
@@ -138,4 +235,17 @@ export function buildMindMapView(root, collapsedIds = []) {
 export function shortTitle(node) {
   const title = node?.title || "";
   return title.length > 28 ? `${title.slice(0, 27)}…` : title;
+}
+
+export function mindMapContextMenuItems(nodeType, editable = true) {
+  if (!editable) return [];
+  if (nodeType === "module") return [
+    { key: "add_module", label: "新增模块" },
+    { key: "add_case", label: "新增用例" },
+    { key: "delete", label: "删除模块", danger: true },
+  ];
+  if (nodeType === "test_case") return [
+    { key: "delete", label: "删除", danger: true },
+  ];
+  return [];
 }

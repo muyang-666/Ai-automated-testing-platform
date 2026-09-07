@@ -73,7 +73,7 @@ TestMind 已有但不等于完整对话内核：
 | V2-P06 | Conversation API + SSE + 基础持续聊天工作台 | P02、P04、P05 | 后端完成并测试；前端已接入且 build 通过；浏览器人工验收已推进至 P07（记录见 02 §2.22–§2.26） |
 | V2-P07 | Test Artifact Core：Case Tree / Node / Revision / Operation / Diff / Undo / 乐观锁 | P04、P06 | 已完成（P07/P07.1，53 项复验通过，见 02 §2.27–§2.28） |
 | V2-P08 | Artifact Tools + Test Design Skill：read/add/update/delete/move/validate/coverage | P07 | 已完成（2026-09-06，23 项 Tool/Agent 场景 + 24 条 Scripted Eval，见 02 §2.29） |
-| V2-P09 | Chat + MindMap + Diff 协作工作台（产品方向调整：AI 嵌入功能用例页，废弃独立 Workspace） | P06、P07、P08 | In progress：P09.1～P09.3B.2 实现完成；frontend 94、backend 76、P08 scripted eval 24 通过；单浏览器已验证菜单/Turn/变更/脑图/分页控件，>20 条真实翻页、现场 realtime 与双浏览器流程待验收（见 02 §2.40） |
+| V2-P09 | Chat + MindMap + Diff 协作工作台（产品方向调整：AI 嵌入功能用例页，废弃独立 Workspace） | P06、P07、P08 | In progress：P09.1～P09.3B.2 实现完成；2026-09-07 MindMap follow-up 后 frontend 98、backend 76、P08 scripted eval 24 通过；单浏览器已验证菜单/Turn/变更/基础脑图，最新交互按用户要求未做浏览器验收，现场 realtime 与双浏览器流程待验收（见 02 §2.40～2.45） |
 | V2-P10 | Context / Compaction / Approval / Conflict / Recovery / E2E | P05～P09 | 待实施 |
 
 里程碑 A：P03 后，Fake 模型能多轮聊天并调用无副作用工具（已完成）。

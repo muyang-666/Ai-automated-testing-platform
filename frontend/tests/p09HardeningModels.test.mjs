@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { nextModuleMenu } from "../src/components/v2-workspace/moduleMenuModel.js";
-import { paginateCases } from "../src/components/v2-workspace/casePaginationModel.js";
+import {
+  CASE_PAGE_SIZE_OPTIONS, DEFAULT_CASE_PAGE_SIZE, paginateCases,
+} from "../src/components/v2-workspace/casePaginationModel.js";
 import { aggregateByRun, domainSummaryLabel, revisionLabel } from "../src/components/v2-workspace/artifactChangeSummaryModel.js";
 import { toolDisplayName } from "../src/components/v2-chat/toolActivityModel.js";
 
@@ -15,16 +17,18 @@ test("父子孙 Module 菜单始终只有最后一个，空白和 Escape 关闭"
   assert.equal(nextModuleMenu(3, { type: "escape" }), null);
 });
 
-test("45 条分页为 20/20/5，过滤和删除后 clamp", () => {
+test("分页默认每页 15 条，过滤和删除后 clamp", () => {
   const items = Array.from({ length: 45 }, (_, id) => ({ id }));
-  assert.equal(paginateCases(items, 1, 20).items.length, 20);
-  assert.equal(paginateCases(items, 2, 20).items.length, 20);
-  assert.equal(paginateCases(items, 3, 20).items.length, 5);
+  assert.equal(DEFAULT_CASE_PAGE_SIZE, 15);
+  assert.deepEqual(CASE_PAGE_SIZE_OPTIONS, [15, 30, 50, 100]);
+  assert.equal(paginateCases(items, 1).items.length, 15);
+  assert.equal(paginateCases(items, 2).items.length, 15);
+  assert.equal(paginateCases(items, 3).items.length, 15);
   const filtered = items.filter((item) => item.id < 6);
-  assert.deepEqual(paginateCases(filtered, 3, 20), {
-    items: filtered, total: 6, page: 1, pageSize: 20, pageCount: 1,
+  assert.deepEqual(paginateCases(filtered, 3), {
+    items: filtered, total: 6, page: 1, pageSize: 15, pageCount: 1,
   });
-  assert.equal(paginateCases(items.slice(0, 39), 3, 20).page, 2);
+  assert.equal(paginateCases(items.slice(0, 29), 3).page, 2);
 });
 
 test("Change Summary 合并 revision/diff，恢复范围且不双计数", () => {

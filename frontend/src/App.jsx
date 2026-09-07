@@ -21,6 +21,7 @@ import { storeProjectId } from "./utils/projectSelection";
 
 const { Sider, Content } = Layout;
 const { Text } = Typography;
+const DEFAULT_PAGE_KEY = "projects";
 
 const PAGE_KEYS = [
   "cases",
@@ -41,7 +42,7 @@ const clearStoredAuth = () => {
 };
 
 export default function App() {
-  const [currentPage, setCurrentPage] = useState("cases");
+  const [currentPage, setCurrentPage] = useState(DEFAULT_PAGE_KEY);
   // P09.3B.1 #4：跨页 View Changes —— 收到 artifact 导航意图时切到功能用例页并选中目标项目
   useEffect(() => {
     const unsubscribe = agentArtifactNavigation.subscribe((intent) => {
@@ -59,7 +60,7 @@ export default function App() {
   const handleAuthLost = useCallback(() => {
     clearStoredAuth();
     setCurrentUser(null);
-    setCurrentPage("cases");
+    setCurrentPage(DEFAULT_PAGE_KEY);
   }, []);
 
   useEffect(() => {
@@ -118,7 +119,7 @@ export default function App() {
 
   const handleLogin = (user) => {
     setCurrentUser(user);
-    setCurrentPage("cases");
+    setCurrentPage(DEFAULT_PAGE_KEY);
   };
 
   const handleLogout = async () => {
@@ -148,7 +149,7 @@ export default function App() {
     if (currentPage === "apiDocs") return <ApiDocPage />;
     if (currentPage === "modelConfig") return <ModelConfigPage />;
     if (currentPage === "users" && isAdmin) return <UserPage />;
-    return <CasePage />;
+    return <ProjectPage />;
   };
 
   if (authChecking) {

@@ -155,7 +155,12 @@ P09.3B 未完成；P09 未标记 complete；P09.3B 不进入 P10。
 - [x] Revision/Diff 事件去双计；领域/通用计数回退；缺 from_revision 时恢复为区间或仅显示“版本 N”，不显示 `? → N`。
 - [x] Tool Activity 按 run_id+tool_call_id 合并，主文案产品化；ToolCall 不进入 Assistant 正文；纯标点 Conversation title 回退“新对话”。
 - [x] MindMap 0 高度根因修复；项目→模块→用例左到右布局、scope、view-only collapse、Inspector、非 realtime auto-fit；200+ nodes 纯模型测试通过且 position finite。
-- [x] List 过滤后分页 20/50/100；筛选重置、删除/realtime 数量变化 clamp、List/MindMap 独立；中文文案收敛。
+- [x] List 过滤后分页，默认 15 条、支持 15/30/50/100；筛选重置、删除/realtime 数量变化 clamp、List/MindMap 独立；中文文案收敛。
 - [x] 自动化：frontend node 94 passed、lint 0 errors、build passed；backend relevant 76 passed，另 P09.3A/Artifact/migration 组合 63 passed；P08 scripted eval 24 cases。
 - [x] 单浏览器：菜单、历史 Turn/Changes/Error/Tool、真实 21 节点脑图、scope/collapse/Inspector、分页尺寸控件通过；浏览器中发现并修复菜单接线与脑图 0 高度两个真实问题。
-- [ ] Browser E2E 剩余：真实数据仅 13 条，未实跑 >20 条第 2 页；Agent 当前失败态，未现场新增后验证 realtime；双浏览器并发未执行。P09 仍不标 complete，不进入 P10。
+- [ ] Browser E2E 剩余：新版 15 条分页尚未实跑第 2 页；Agent realtime 新增和双浏览器并发未执行。P09 仍不标 complete，不进入 P10。
+- [x] 2026-09-07 UI follow-up：功能用例页恢复已保存项目；浅色 Module/Change 按钮；Card/工具栏/列宽重排；用例正文完整换行不裁剪；frontend 96 passed + lint/build。按用户要求本轮不做 Browser E2E。
+- [x] 2026-09-07 MindMap interaction follow-up：Module 单击不切 scope；Case 节点隐藏编号并展示 priority；Case 单击编辑；Module/Case 类型化右键菜单；双击重命名；frontend 97 passed + lint/build。按用户要求本轮不做 Browser E2E。
+- [x] 2026-09-07 MindMap 详情链：每个 Case 派生只读“前置→步骤→预期”真实内容节点；直线连接、最长行自适应宽度、自动换行/行高防重叠；priority 调整到名称右侧居中；209 Artifact 节点 fixture 共渲染 689 nodes/688 edges，frontend 97 passed + lint/build。未做 Browser E2E。
+- [x] 2026-09-07 MindMap 视觉细化：用例淡蓝卡按名称 1/2/3 行自适应高度；“前置/步骤/预期”移至连线与详情框交界处且无背景，框内只显示内容；frontend 97 passed + lint/build。未做 Browser E2E。
+- [x] 2026-09-07 MindMap 空详情/连线修正：空字段不生成标签、框或边；详情线在透明标签前断开，层级边恢复树形 smoothstep；用例高度收紧为 34/50/66px；frontend 98 passed + lint/build。未做 Browser E2E。

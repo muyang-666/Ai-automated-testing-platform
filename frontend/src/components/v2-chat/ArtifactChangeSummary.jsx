@@ -9,7 +9,8 @@ export default function ArtifactChangeSummary({ summary, currentArtifactId, onVi
           <span><b>变更</b> {domainSummaryLabel(artifact.domainCounts, artifact.changeCounts)}</span>
           <span className="v2-turn-change-revision">{revisionLabel(artifact.fromRevision, artifact.toRevision)}</span>
           {artifact.artifactId === currentArtifactId && artifact.fromRevision != null ? (
-            <button type="button" onClick={() => onViewChanges?.(artifact)}>查看变更</button>
+            <button type="button" className="v2chat-changes-link"
+              onClick={() => onViewChanges?.(artifact)}>查看变更</button>
           ) : null}
         </div>
       ))}

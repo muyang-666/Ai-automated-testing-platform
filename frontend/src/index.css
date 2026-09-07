@@ -39,12 +39,14 @@ button:not(.ant-btn) {
   font-size: 1em;
   font-weight: 500;
   font-family: inherit;
-  background-color: #1a1a1a;
+  background-color: transparent;
+  color: inherit;
   cursor: pointer;
-  transition: border-color 0.25s;
+  transition: border-color 0.2s, background-color 0.2s;
 }
 button:not(.ant-btn):hover {
-  border-color: #555;
+  border-color: #c9cbd0;
+  background-color: #f5f5f6;
 }
 button:not(.ant-btn):focus,
 button:not(.ant-btn):focus-visible {

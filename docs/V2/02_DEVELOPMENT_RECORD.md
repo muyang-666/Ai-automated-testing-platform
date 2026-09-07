@@ -1244,3 +1244,40 @@ P08 scripted eval -> 24 cases；成功/选择/参数/编辑/遵循/冲突/非修
 ```
 
 真实浏览器：使用本地已登录 `测试1 / 功能测试` 数据走查。已验证父子 Module 菜单单开；历史 Conversation 的 Tool/Assistant/Changes/Error 按 Turn 归属；旧事件因没有 node_type 领域计数，诚实显示“新增 6 项，更新 1 项，移动 1 项，版本 3→7”和“新增 12 项，版本 7→11”，新事件才按 `domain_change_counts` 区分模块/用例；内部 tool_name 未作为主文案；纯标点标题回退“新对话”；MindMap 从白屏恢复为 21 个真实节点的项目→模块→用例横向树；双击折叠后节点 21→1 且版本仍为 11；分页控件显示 20/50/100 条/页。当前真实项目只有 13 条用例且 Agent 为失败态，因此未通过“不污染数据”的方式现场验证 >20 条第 2 页和 Agent 新增后的 realtime；双浏览器并发也未执行。P09.3B.2 代码完成，P09 整体仍不标 complete，不进入 P10。
+
+## 2.41 2026-09-07 — P09 功能用例页 UI follow-up
+
+- 修复项目记忆失效：`resolveProjectId` 的返回值本身就是 number，旧调用却读取 `initial.id`，导致进入功能用例页后 projectId 仍为空；现直接设置并保存返回 ID，失效 ID 回退首个可访问项目。
+- 分页默认调整为 15 条，选项统一为 15/30/50/100；过滤与 realtime 后的页码重置/clamp 语义保持不变。
+- 移除全局原生 button 的黑色默认背景，改为透明/浅灰 hover；AI 发送键继续由更具体规则保持黑色。模块“全部模块”和 Chat“查看变更”增加 scoped 浅色规则，避免选择子模块或显示修改记录时出现黑块。
+- 功能用例页白色 Card 扩至视口边缘；新增用例按钮移入搜索工具栏右侧；表格与模块树顶部对齐。编号列压缩为 92px，模块/名称允许换行，优先级固定靠右，释放宽度给前置条件/步骤/预期。
+- 去除用例正文 120 字摘要与 64px 高度裁剪；编号、模块、名称、前置条件、步骤、预期均可换行并完整撑开行高，正文不再被遮挡或截断。
+- 按用户要求未执行浏览器验收。自动化：`node --test tests/*.test.mjs` 96 passed；ESLint 0 errors（6 条其它旧页面 warning）；Vite build passed；`git diff --check` 无错误。
+
+## 2.42 2026-09-07 — P09 MindMap 编辑交互 follow-up
+
+- MindMap 单击 Module 只更新 `selectedNodeId`，不再隐式修改左侧 `scopeId`，因此不会自动切入 Module subtree；scope 仍只由左侧模块树控制。
+- TestCase 节点移除 TC 编号，名称作为主信息，priority 以低饱和 badge 放在节点最后一行右下角；Module 保留独立折叠按钮，折叠仍只影响 View State。
+- 单击 TestCase 直接复用现有 Case Editor；同时修复 Editor adapter：兼容列表行 `nodeId` 与 Artifact 原始节点 `id`，始终从 Tree index 读取完整 content/parent，避免脑图或列表编辑时字段空白、target id 丢失。
+- MindMap 右键 Module 仅显示“新增模块 / 新增用例 / 删除模块”，右键 TestCase 仅显示“删除”；菜单由单一 `openMenuNodeId` 控制。双击 Module 打开重命名 Modal，双击 TestCase 打开完整编辑器，可直接修改名称。
+- 按用户要求未执行浏览器验收。自动化：frontend node 97 passed（新增 priority/context-menu 纯模型断言），ESLint 0 errors（6 条其它旧页面 warning），Vite build passed，`git diff --check` 无错误。
+
+## 2.43 2026-09-07 — P09 MindMap 用例详情链 follow-up
+
+- 每个 TestCase 在纯 view model 中稳定派生三个只读虚拟节点，形成 `用例 → 前置 → 步骤 → 预期` 水平链；虚拟节点不进入 Artifact index、不响应选择/编辑/右键，也不产生 Operation/Revision。
+- 前置、步骤、预期读取真实 case content，按逻辑项换行；空值显示“未填写”。详情框依据最长一行估算 188～300px 宽度，超过宽度继续换行，并将估算高度纳入逐行布局，避免相邻用例详情重叠。
+- 用例名称节点扩至 202px，priority badge 位于名称右侧垂直居中；所有 React Flow edge 改为 straight，同一用例及其三个详情节点按中心线水平对齐，层级间距增至 340px。
+- 200+ Artifact fixture 现在生成 689 个可视节点（209 Artifact + 480 只读详情）与 688 条边，稳定 key、finite position、重复布局一致；frontend 全量 node 97 passed，ESLint 0 errors（6 条其它旧页面 warning），Vite build passed。延续用户要求，未执行浏览器验收。
+
+## 2.44 2026-09-07 — P09 MindMap 卡片层级细化
+
+- 用例名称卡改为淡蓝底/浅蓝边框；`caseNameMetrics` 按中英文显示宽度稳定计算 1/2/3 行，高度分别为 44/60/76px，CSS 最多显示三行且完整 title 保留 tooltip，priority 继续位于名称右侧垂直居中。
+- “前置 / 步骤 / 预期”标签从详情内容流中移除，绝对定位到入线与内容框左边界的交界处；标签透明无背景，详情长方形内部只保留真实内容。详情高度估算同步去除标签占位，换行与中心线布局保持稳定。
+- frontend 全量 node 97 passed（含 1/2/3 行高度断言、689 nodes/688 edges 与中心线断言）；ESLint 0 errors（6 条其它旧页面 warning）；Vite build passed；延续用户要求未执行浏览器验收。
+
+## 2.45 2026-09-07 — P09 MindMap 空详情与分层连线修正
+
+- `caseDetailText` 空值返回空串，view model 只为非空字段生成详情节点和详情边；前置/步骤/预期任一项未填写时，对应标签、内容框与连线全部不存在，不再显示“未填写”。
+- Artifact 层级边标记为 `hierarchy` 并使用 smoothstep 树形连线；Case 详情边标记为 `detail` 并保持 straight。详情 target handle 左移并隐藏，使直线在透明标签左侧终止，不再穿过“前置/步骤/预期”文字。
+- 用例名称卡的宽度估算校准为每行 24 display units，高度档位压缩至 34/50/66px，同时减少纵向 padding，降低一两行名称卡的无效留白。
+- 新增反例：仅填写步骤时只生成“步骤”节点和一条 detail edge；无 `未填写` 占位。frontend 全量 node 98 passed，ESLint 0 errors（6 条其它旧页面 warning），Vite build passed；延续用户要求未执行浏览器验收。

@@ -1,7 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  buildMindMap, buildMindMapView, buildNodeIndex, byOrder, flattenTree, selectMindMapScope,
+  buildMindMap, buildMindMapView, buildNodeIndex, byOrder, caseDetailMetrics,
+  caseNameMetrics, flattenTree,
+  mindMapContextMenuItems, selectMindMapScope,
 } from "../src/components/v2-workspace/mindMapModel.js";
 import {
   focusFailureMessage, isTreeLoadStale, shouldApplyResponse,
@@ -31,7 +33,9 @@ test("Test1: tree → 正确的 nodes/edges", () => {
   assert.equal(nodes.length, 8);
   assert.equal(edges.length, 7);
   assert.deepEqual(nodes.map((n) => n.nodeId), [1, 2, 3, 4, 5, 6, 8, 7]);
-  assert.deepEqual(edges.map((e) => e.id), ["e1-2", "e2-3", "e3-4", "e3-5", "e2-6", "e1-8", "e8-7"]);
+  assert.equal(nodes.some((n) => n.node_type === "case_detail"), false,
+    "未填写的详情不生成节点");
+  assert.ok(edges.every((edge) => edge.edgeKind === "hierarchy"));
 });
 
 test("Test2: nested ordering 稳定（与插入顺序无关，按 order_key/id）", () => {
@@ -62,21 +66,27 @@ test("collapse: 折叠子树不进 nodes/edges，但保留计数", () => {
 });
 
 test("200+ 节点：render 数据一次树请求即可构造，id 稳定且布局确定性", () => {
-  // 1 root + 8 modules + 40 submodules + 160 cases = 209
+  // 1 root + 8 modules + 40 submodules + 160 cases = 209 个 Artifact 节点；
+  // 每条 case 再派生 3 个只读详情节点，总渲染节点 689。
   const groups = Array.from({ length: 8 }, (_, gi) => {
     const points = Array.from({ length: 5 }, (_, pi) => {
-      const cases = Array.from({ length: 4 }, (_, ci) =>
-        node(30_000 + gi * 1000 + pi * 40 + ci, "test_case", `C${gi}-${pi}-${ci}`));
+      const cases = Array.from({ length: 4 }, (_, ci) => {
+        const item = node(30_000 + gi * 1000 + pi * 40 + ci,
+          "test_case", `C${gi}-${pi}-${ci}`);
+        item.content = { priority: "P1", preconditions: ["已登录"],
+          steps: [{ step_no: 1, action: "执行" }], expected_results: ["成功"] };
+        return item;
+      });
       return node(10_000 + gi * 100 + pi, "module", `P${gi}-${pi}`, cases);
     });
     return node(100 + gi, "module", `G${gi}`, points);
   });
   const root = node(1, "root", "大库", groups);
   const view = buildMindMapView(root, []);
-  assert.equal(view.nodes.length, 209);
-  assert.equal(view.edges.length, 208);
+  assert.equal(view.nodes.length, 689);
+  assert.equal(view.edges.length, 688);
   const ids = new Set(view.nodes.map((n) => n.key));
-  assert.equal(ids.size, 209, "node key 必须唯一且稳定对应 ArtifactNode.id");
+  assert.equal(ids.size, 689, "Artifact 与虚拟详情 node key 必须全部唯一且稳定");
   const index = buildNodeIndex(root);
   assert.equal(index.size, 209);
   // 左到右：层级决定 x；y 只负责纵向铺开叶子。
@@ -99,7 +109,71 @@ test("MindMap scope: root 显示全部，子模块只显示自身和子用例", 
   assert.equal(buildMindMap(selectMindMapScope(root, null)).nodes.length, 8);
   const scoped = selectMindMapScope(root, 3);
   assert.equal(scoped.id, 3);
-  assert.deepEqual(buildMindMap(scoped).nodes.map((item) => item.nodeId), [3, 4, 5]);
+  const scopedNodes = buildMindMap(scoped).nodes;
+  assert.equal(scopedNodes.length, 3);
+  assert.deepEqual(scopedNodes.map((item) => item.nodeId), [3, 4, 5]);
+});
+
+test("MindMap 用例节点只派生优先级，右键菜单按节点类型收敛", () => {
+  const caseNode = node(4, "test_case", "发送文字");
+  caseNode.content = {
+    priority: "P2",
+    preconditions: ["账号已登录", "网络正常"],
+    steps: [{ step_no: 1, action: "输入消息" }, { step_no: 2, action: "点击发送" }],
+    expected_results: [{ step_no: 2, expected: "消息发送成功" }],
+  };
+  const moduleNode = node(3, "module", "文字消息", [caseNode]);
+  const root = node(1, "root", "功能测试", [moduleNode]);
+  const renderedCase = buildMindMap(root).nodes.find((item) => item.nodeId === 4);
+  assert.equal(renderedCase.priority, "P2");
+  const details = buildMindMap(root).nodes.filter((item) => item.ownerCaseId === 4);
+  assert.deepEqual(details.map((item) => item.title), ["前置", "步骤", "预期"]);
+  assert.equal(details[0].detailText, "账号已登录\n网络正常");
+  assert.equal(details[1].detailText, "1. 输入消息\n2. 点击发送");
+  assert.equal(details[2].detailText, "消息发送成功");
+  assert.ok(details.every((item) => Number.isFinite(item.detailWidth)
+    && Number.isFinite(item.detailHeight)));
+  assert.ok(caseDetailMetrics("很长的一行内容用于宽度计算").width
+    > caseDetailMetrics("短").width);
+  assert.deepEqual(caseNameMetrics("短名称"), { lineCount: 1, height: 34 });
+  assert.deepEqual(caseNameMetrics("这是一个刚好需要换到第二行的名称"),
+    { lineCount: 2, height: 50 });
+  assert.deepEqual(caseNameMetrics("这是一个非常长而且需要稳定限制在三行以内展示的完整用例名称"),
+    { lineCount: 3, height: 66 });
+  const view = buildMindMapView(root);
+  const rowKeys = ["n4", "d4-preconditions", "d4-steps", "d4-expected"];
+  const rowPositions = rowKeys.map((key) => view.positions.get(key));
+  const rowCenters = rowKeys.map((key, index) => {
+    const height = view.nodes.find((item) => item.key === key)?.layoutHeight ?? 58;
+    return rowPositions[index].y + height / 2;
+  });
+  assert.equal(new Set(rowCenters).size, 1, "用例与前置/步骤/预期中心线保持水平");
+  assert.ok(rowPositions.every((position, index) => (
+    index === 0 || position.x > rowPositions[index - 1].x
+  )), "详情链必须从左向右延长");
+  const detailEdges = view.edges.filter((edge) => edge.edgeKind === "detail");
+  assert.equal(detailEdges.length, 3);
+  assert.ok(detailEdges.every((edge) => edge.edgeKind === "detail"));
+  assert.deepEqual(mindMapContextMenuItems("module").map((item) => item.key),
+    ["add_module", "add_case", "delete"]);
+  assert.deepEqual(mindMapContextMenuItems("test_case").map((item) => item.key), ["delete"]);
+  assert.deepEqual(mindMapContextMenuItems("root"), []);
+  assert.deepEqual(mindMapContextMenuItems("module", false), []);
+});
+
+test("MindMap 详情按字段非空生成，缺失项不显示也不保留占位连线", () => {
+  const caseNode = node(9, "test_case", "仅有步骤");
+  caseNode.content = {
+    priority: "P1", preconditions: [],
+    steps: [{ step_no: 1, action: "点击提交" }], expected_results: [],
+  };
+  const root = node(1, "root", "功能测试", [node(2, "module", "提交", [caseNode])]);
+  const view = buildMindMapView(root);
+  const details = view.nodes.filter((item) => item.ownerCaseId === 9);
+  assert.deepEqual(details.map((item) => item.title), ["步骤"]);
+  assert.equal(view.nodes.some((item) => item.detailText === "未填写"), false);
+  assert.deepEqual(view.edges.filter((edge) => edge.edgeKind === "detail")
+    .map((edge) => [edge.source, edge.target]), [["n9", "d9-steps"]]);
 });
 
 test("race/409 纯逻辑：late response 丢弃；409 保留旧视图并给可读消息", () => {

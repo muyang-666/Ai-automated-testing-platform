@@ -358,6 +358,6 @@ button.v2chat-launcher:focus-visible { outline: 2px solid #7f8288; outline-offse
 .v2chat-changes { display: flex; flex-direction: column; gap: 4px; padding: 6px 12px 0; }
 .v2chat-changes-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #6b7280; }
 .v2chat-changes-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.v2chat-changes-link { border: none; background: none; color: #2563eb; cursor: pointer; padding: 0; font-size: 12px; }
-.v2chat-changes-link:hover { text-decoration: underline; }
+.v2chat-window button.v2chat-changes-link { border: none; background: transparent; color: #2563eb; cursor: pointer; padding: 0; font-size: 12px; }
+.v2chat-window button.v2chat-changes-link:hover { border-color: transparent; background: #eff6ff; color: #1d4ed8; text-decoration: underline; }
 .v2chat-changes-dim { font-size: 12px; color: #9ca3af; }
