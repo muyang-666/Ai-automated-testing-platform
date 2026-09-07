@@ -440,7 +440,7 @@ export default function RequirementPage() {
   ];
 
   return (
-    <div className="requirement-page">
+    <div className="requirement-page management-template-page">
       <Space direction="vertical" size="large" style={{ width: "100%" }}>
       <Card className="requirement-toolbar-card">
         <Row justify="space-between" align="middle" gutter={[16, 8]}>

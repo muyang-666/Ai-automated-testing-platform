@@ -164,3 +164,4 @@ P09.3B 未完成；P09 未标记 complete；P09.3B 不进入 P10。
 - [x] 2026-09-07 MindMap 详情链：每个 Case 派生只读“前置→步骤→预期”真实内容节点；直线连接、最长行自适应宽度、自动换行/行高防重叠；priority 调整到名称右侧居中；209 Artifact 节点 fixture 共渲染 689 nodes/688 edges，frontend 97 passed + lint/build。未做 Browser E2E。
 - [x] 2026-09-07 MindMap 视觉细化：用例淡蓝卡按名称 1/2/3 行自适应高度；“前置/步骤/预期”移至连线与详情框交界处且无背景，框内只显示内容；frontend 97 passed + lint/build。未做 Browser E2E。
 - [x] 2026-09-07 MindMap 空详情/连线修正：空字段不生成标签、框或边；详情线在透明标签前断开，层级边恢复树形 smoothstep；用例高度收紧为 34/50/66px；frontend 98 passed + lint/build。未做 Browser E2E。
+- [x] 2026-09-07 管理页样式同步：需求管理、接口文档、接口用例、场景管理复用功能用例页的白色工作区、紧凑工具栏、250px 模块栏、蓝色主操作与 18/16px 表格层级；frontend 98 passed + lint/build。未做 Browser E2E。

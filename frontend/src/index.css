@@ -1655,3 +1655,201 @@ textarea.ant-input {
     width: 100%;
   }
 }
+
+/* 功能用例页视觉基线：需求 / 接口文档 / 接口用例 / 场景管理共用 */
+.management-template-page {
+  min-height: calc(100vh - 24px);
+  box-sizing: border-box;
+  margin: -12px;
+  padding: 12px;
+  border: 1px solid #ececef;
+  border-radius: 8px;
+  background: #fff;
+  color: #292b2f;
+  font-family: "Microsoft YaHei", "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+}
+
+.management-template-page > .ant-space {
+  width: 100%;
+  gap: 10px !important;
+}
+
+.management-template-page .standard-toolbar-card,
+.management-template-page .requirement-toolbar-card {
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.management-template-page .standard-toolbar-card > .ant-card-body,
+.management-template-page .requirement-toolbar-card > .ant-card-body {
+  padding: 0 0 10px !important;
+}
+
+.management-template-page .standard-project-label,
+.management-template-page .requirement-project-label {
+  color: #292b2f;
+  font-size: 16px !important;
+  font-weight: 600;
+}
+
+.management-template-page .ant-input,
+.management-template-page .ant-input-affix-wrapper,
+.management-template-page .ant-select-selector,
+.management-template-page .ant-btn,
+.management-template-page .ant-checkbox-wrapper {
+  font-size: 14px !important;
+}
+
+.management-template-page .standard-toolbar-card .ant-btn,
+.management-template-page .requirement-toolbar-card .ant-btn {
+  height: 32px !important;
+  border-radius: 6px !important;
+}
+
+.management-template-page .standard-primary-btn,
+.management-template-page .requirement-primary-btn {
+  border-color: #1677ff !important;
+  background: #1677ff !important;
+  color: #fff !important;
+  box-shadow: none !important;
+}
+
+.management-template-page .standard-primary-btn:hover,
+.management-template-page .requirement-primary-btn:hover {
+  border-color: #4096ff !important;
+  background: #4096ff !important;
+}
+
+.management-template-page .standard-layout,
+.management-template-page .requirement-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.management-template-page .standard-module-shell,
+.management-template-page .requirement-module-shell {
+  width: 250px;
+  flex: none;
+  box-sizing: border-box;
+  padding: 8px;
+  border: 1px solid #e6e6e7;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.management-template-page .standard-module-shell > div,
+.management-template-page .requirement-module-shell > div {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.management-template-page .requirement-module-header-btn {
+  height: 32px !important;
+  border-color: #d9dadd !important;
+  border-radius: 6px !important;
+  background: #f5f5f6 !important;
+  color: #34363a !important;
+  font-size: 14px !important;
+  font-weight: 600 !important;
+  box-shadow: none !important;
+}
+
+.management-template-page .requirement-module-header-btn:hover {
+  border-color: #c4c6ca !important;
+  background: #ececee !important;
+}
+
+.management-template-page .standard-list-panel,
+.management-template-page .requirement-list-panel {
+  min-width: 0;
+  flex: 1;
+}
+
+.management-template-page .standard-list-card,
+.management-template-page .requirement-list-card {
+  border: 1px solid #e6e6e7 !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
+}
+
+.management-template-page .standard-list-card > .ant-card-head,
+.management-template-page .requirement-list-card > .ant-card-head {
+  min-height: 42px;
+  padding: 0 12px;
+  border-bottom-color: #ececef;
+}
+
+.management-template-page .standard-list-card > .ant-card-head .ant-card-head-title,
+.management-template-page .requirement-list-card > .ant-card-head .ant-card-head-title {
+  padding: 9px 0;
+  color: #292b2f;
+  font-size: 16px !important;
+  font-weight: 650;
+}
+
+.management-template-page .standard-list-card > .ant-card-body,
+.management-template-page .requirement-list-card > .ant-card-body {
+  padding: 0 !important;
+}
+
+.management-template-page .ant-table-thead > tr > th {
+  padding: 10px 12px !important;
+  background: #fafafa !important;
+  color: #292b2f !important;
+  font-size: 18px !important;
+  font-weight: 650 !important;
+}
+
+.management-template-page .ant-table-tbody > tr > td {
+  padding: 10px 12px !important;
+  color: #34363a;
+  font-size: 16px !important;
+  line-height: 1.5;
+  vertical-align: top;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.management-template-page .standard-action-btn {
+  border-color: #d9dadd !important;
+  background: #fff !important;
+  color: #34363a !important;
+  box-shadow: none !important;
+}
+
+.management-template-page .standard-delete-btn,
+.management-template-page .requirement-delete-btn {
+  border-color: #f1b7b3 !important;
+  background: #fff8f7 !important;
+  color: #b42318 !important;
+  box-shadow: none !important;
+}
+
+@media (max-width: 1400px) {
+  .management-template-page .standard-layout,
+  .management-template-page .requirement-layout {
+    flex-direction: row;
+  }
+
+  .management-template-page .standard-module-shell,
+  .management-template-page .requirement-module-shell {
+    width: 250px;
+  }
+}
+
+@media (max-width: 900px) {
+  .management-template-page .standard-layout,
+  .management-template-page .requirement-layout {
+    flex-direction: column;
+  }
+
+  .management-template-page .standard-module-shell,
+  .management-template-page .requirement-module-shell {
+    width: 100%;
+  }
+}

@@ -313,7 +313,7 @@ export default function ScenePage() {
   ];
 
   return (
-    <div className="standard-page scene-page">
+    <div className="standard-page scene-page management-template-page">
       <Space direction="vertical" size="large" style={{ width: "100%" }}>
         <Card className="standard-toolbar-card">
           <Row justify="space-between" align="middle">

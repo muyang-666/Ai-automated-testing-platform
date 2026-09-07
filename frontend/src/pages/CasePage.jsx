@@ -436,7 +436,7 @@ function CasePage() {
   ];
 
   return (
-    <div className="standard-page">
+    <div className="standard-page management-template-page">
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
       <Card className="standard-toolbar-card">
         <Row justify="space-between" align="middle">

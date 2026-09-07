@@ -1281,3 +1281,10 @@ P08 scripted eval -> 24 cases；成功/选择/参数/编辑/遵循/冲突/非修
 - Artifact 层级边标记为 `hierarchy` 并使用 smoothstep 树形连线；Case 详情边标记为 `detail` 并保持 straight。详情 target handle 左移并隐藏，使直线在透明标签左侧终止，不再穿过“前置/步骤/预期”文字。
 - 用例名称卡的宽度估算校准为每行 24 display units，高度档位压缩至 34/50/66px，同时减少纵向 padding，降低一两行名称卡的无效留白。
 - 新增反例：仅填写步骤时只生成“步骤”节点和一条 detail edge；无 `未填写` 占位。frontend 全量 node 98 passed，ESLint 0 errors（6 条其它旧页面 warning），Vite build passed；延续用户要求未执行浏览器验收。
+
+## 2.46 2026-09-07 — 管理页面视觉基线统一
+
+- 以 FunctionCasePage 为密度与信息层级模板，为 RequirementPage、ApiDocPage、CasePage、ScenePage 增加统一 `management-template-page` 样式入口；不修改四页查询、筛选、CRUD、执行或 ModuleTree 逻辑。
+- 四页统一为扩大后的白色工作区、透明紧凑工具栏、蓝色主操作、250px 左模块栏、12px 布局间距、浅灰列表卡与表头；表格统一 18px 表头、16px 正文、顶部对齐并支持长文本换行。
+- 原黑色主按钮、灰色大模块按钮和多层大圆角 Card 在该作用域内收敛为功能用例页的蓝色/浅灰状态；抽屉、Modal 与其它管理页面不受影响。1400px 内仍保持左右布局，900px 以下才切单列。
+- frontend 全量 node 98 passed；ESLint 0 errors（6 条既有页面 hook warning）；Vite build passed；`git diff --check` 无错误。未执行浏览器验收。

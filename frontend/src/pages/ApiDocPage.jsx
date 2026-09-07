@@ -452,7 +452,7 @@ function ApiDocPage() {
   ];
 
   return (
-    <div className="standard-page">
+    <div className="standard-page management-template-page">
     <Space direction="vertical" size="large" style={{ width: "100%" }}>
       {/* Top bar */}
       <Card className="standard-toolbar-card">
