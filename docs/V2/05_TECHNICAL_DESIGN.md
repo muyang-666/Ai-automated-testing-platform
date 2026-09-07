@@ -96,7 +96,17 @@ AgentLoopLimits/Budget：max_turns（8）、max_model_calls（8）、max_tool_ca
 
 ### 3.3 上下文与 Compaction
 
-展示历史与提交模型的工作上下文分离。确定性整理：去 UI-only 事件 → 压缩过长工具结果 → 保留 system 策略与完整工具对（绝不拆散 tool_call/tool_result）。达到阈值后生成摘要记录（模型/版本、输入范围、hash、usage、保留尾部），摘要只用于模型工作上下文，**原始历史与 Artifact Revision 不删除**。摘要失败退回安全窗口或明确 context_limit，不无限重试/重复计费；压缩中取消要取消流、保留原上下文并停止发布迟到摘要。P10 起模型每轮输入采用：System + Loaded Skills + Conversation Summary + Recent Messages + Artifact 元数据 + 相关节点 + 最近 Diff；更多内容由 Agent 调 read/search，而不是整棵 Artifact 入 prompt。
+展示历史与提交模型的工作上下文分离。确定性整理：去 UI-only 事件 → 压缩过长工具结果 → 保留 system 策略与完整工具对（绝不拆散 tool_call/tool_result）。达到阈值后生成摘要记录（模型/版本、输入范围、usage、保留尾部），摘要只用于模型工作上下文，**原始历史与 Artifact Revision 不删除**。摘要失败退回安全窗口或明确 context_limit，不无限重试/重复计费。P10 起模型每轮输入采用：System + Loaded Skills + Conversation Summary + Recent Messages + Artifact 元数据 + 相关节点 + 最近 Diff；更多内容由 Agent 调 read/search，而不是整棵 Artifact 入 prompt。
+
+P10.1 数据流（Runner 只消费 SummaryOrchestrator 的 PreparedContext，不拼 prompt、不直接调 Provider）：
+
+- **run-bounded 可见行**：SQL 侧 owner 边界（user 行按自身 seq；assistant/toolResult 行按所属 Run 的 user_message_id seq ≤ 当前 Turn user seq），按 (owner, sequence_no) 逻辑序返回。A 执行期间已入队的 B/C follow-up 用户消息（物理 seq 可能更小/更大）绝不会进入 A；B 执行时能看到 A 后来落库的助手/工具结果（owner ≤ B 的 user seq）。上下文准备不删除/修改任何历史 Message 行（Chat History/Conversation API 始终完整）。
+- **摘要覆盖边界 = 逻辑位置（rank）**：物理 sequence_no 在 follow-up 插队时会与逻辑序错位（如 B 的用户行先落库、A 的助手行后落库），物理 marker 会把“逻辑上未覆盖”的用户消息误判为已覆盖而永久丢失。因此 through_sequence_no 存“最后被摘要消息的逻辑位置”，增量选择只处理 rank > marker 的行；普通无插队会话中 rank == 物理 seq（与旧测试/数据兼容）。cut 落在完整 exchange 组边界；当前 UserMessage 永不进摘要（through < 当前 user rank）；source_message_count = 最新 marker（累计覆盖原始消息数，稳定语义）。
+- **事务两阶段**：读 bounded rows + latest summary + Artifact metadata（一个读事务，随后 rollback 释放）→ Summarizer 模型调用（无 DB 事务）→ 短写事务（create/conditional_update + commit）→ winning 重读（被抢先时采用 DB 值，不覆盖、不重调模型，max_compaction_calls_per_run=1；Provider transport 自身有限 retry 保留）。所有 DB 查询按 until_sequence（SQL 层）界定，不在 Python 里过滤未来消息。
+- **Summarizer abstraction**：ConversationSummarizer（existing/messages/target/budget/runtime → SummaryResult：text/through/source_count/provider/model/usage/cost/estimated）；正式实现 ProviderConversationSummarizer 复用 `gateway.stream`（同一 LLM 通道、无第二套 SDK），usage/cost 从终态 AssistantMessage 提取进入 diagnostics（不建完整 Cost Dashboard）。固定中文 Summary Prompt 保留用户目标/约束/已完成与未解决事项/模块用例指代/近期修改，丢弃寒暄/大 Tool JSON/流式 delta/debug/hidden reasoning；明确 “Do not invent / Artifact state may have changed / 摘要只是历史上下文不是 Artifact 权威”；输出短而结构稳定、无 Markdown 报告。validate_summary_result 拒绝空/纯空白/超预算，绝不写 DB。
+- **context_limit 映射**：当前轮自身超限 → current_turn_too_large（不调 Summarizer/主 Provider）；无 summary 且压缩失败仍装不下 → summary_unavailable；summary+尾部窗口仍放不进预算 → working_context_too_large。Run=context_limit + context_limit 事件（reason/estimated/max，不含消息与摘要正文）。
+- **观测事件**：压缩上下文被使用 → context_prepared（estimated/max/summary_used/through/recent/omitted/refresh_failed）；真正刷新 → context_compacted（old/new through、累计 source count、estimated summary tokens、provider/model/usage 摘要）；均不含 summary 文本。二者是 Agent runtime observability，前端 artifact realtime bridge 只按精确 event_type=artifact_revision_created 匹配，不回归。
+- **Artifact runtime metadata（P10.1-B 范围）**：system 侧注入 artifact id/title/current revision（prep 时刻实时读取，ACL 同 P09.3B §2.2）/selected module/case/view，并注明可能过期、工具才权威；不做 Node 内容检索与 Recent Diff（P10.1-C）。
 
 ---
 
@@ -393,6 +403,7 @@ approval_request 保存：tool_call_id、arguments_hash、artifact_revision、af
 - 幂等：用户消息 + queued Run + 幂等键（session_id, workflow_code, idempotency_key）同事务；同键同内容返回原 Run，不同内容 409。
 - 权限：Session/Run/Event/Artifact 读先按 owner；旧 /agent/runs/{id} 等通用路径必须识别 conversation mode，不能通过旧项目读权限旁路；NULL 项目聊天不可调用 project_required 工具。
 - P07 起新增 TestArtifact / ArtifactNode / ArtifactRevision / ArtifactOperation 表（字段见 §6～§9；ArtifactOperation 存 before_json/after_json 供 Diff/审计）。
+- P10.1 新增 conversation_summary（0009）：每会话一行 current summary，UNIQUE(conversation_id)，through_sequence_no 单调向前（conditional update 带 expected_old 与 <:new 条件，冲突采用 winning 不回退）。并发首建唯一冲突用 SAVEPOINT(begin_nested) 隔离并 expunge failed pending 行——绝不 rollback 调用方外层事务（外层可能同事务写 UserMessage/AgentRun/AgentEvent/Artifact）；MySQL REPEATABLE READ 下以 FOR UPDATE 当前读重取胜者。through/source_message_count 语义见 §3.3（逻辑位置/累计覆盖数）。
 - 增量 Alembic，保留 V1 表；downgrade 若存在新数据（NULL 项目/版本化消息/Revision）必须预检拒绝有损降级；**不把“删除 Python Workflow 类”与“删数据库历史字段”强绑定为同一提交**（Legacy 字段按 01 P05/P10 节奏处理）。
 - 同步 SQLAlchemy 走短事务 Repository；线程/异步任务间不共享 Session；关键事务不覆盖网络等待。
 

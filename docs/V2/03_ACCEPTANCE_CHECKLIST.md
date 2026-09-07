@@ -109,7 +109,14 @@
 - [ ] 200+ 节点基本交互可用；两个浏览器同时编辑产生 revision conflict 而非静默覆盖。
 
 ## P10 Context / Approval / Recovery / E2E
-- [ ] 模型输入不整棵塞 Artifact：System + Skill + 摘要 + 最近消息 + 元数据 + 相关节点 + 最近 Diff；不足时 Agent 自调 read/search。
+> P10.1-B（含 B3）完成条件已全部达成（2026-09-07，见 02 §2.47 / 05 §3.3）：
+> Runner 消费 SummaryOrchestrator 的 PreparedContext、增量摘要逻辑位置语义、
+> ≤1 次摘要模型调用/冲突采用 winning、context_limit/context_prepared/
+> context_compacted 事件与失败回退、200+ 消息集成、全回归。P10.1 剩余
+> P10.1-C（相关 Artifact 节点 + Recent Diff + 200+ 最终加固 + final acceptance），
+> P10.1 overall 仍未 complete；P10.2 Approval 未进入。下列顶层项仍按完成度勾选。
+- [x] **P10.1-B 部分**：模型输入不再每轮直传全量 transcript —— PreparedContext = System + Summary(≤预算) + Recent complete groups + 当前 User + Artifact runtime metadata（id/title/current revision/module/case/view）；摘要不删除历史、不拆散 exchange 组；摘要失败回退旧摘要+窗口或明确 context_limit（reason=current_turn_too_large / summary_unavailable / working_context_too_large），不无限重试/重复计费。
+- [ ] 模型输入不整棵塞 Artifact：**相关 Artifact 节点 + 最近 Diff 注入仍未做（P10.1-C）**；不足时 Agent 自调 read/search（Tool 侧已具备）。
 - [ ] 原始消息与工具对保留，compaction 只压缩工作上下文，不删除历史、不拆散 tool_call/tool_result。
 - [ ] Approval 按动作风险而非固定 gate：read→allow；add/update 小批量→allow；批量删除/覆盖→approval；写正式项目→approval。审批重新校验参数 hash / revision / 权限 / lease。
 - [ ] 恢复与故障注入：Provider 断流 / Worker 崩溃 / Revision 冲突 / Tool timeout / Approval 后恢复 / Cancel / SSE 重连 / Context summary 失败 / Artifact 已写入但 final response 失败；聊天失败不被误报成 Artifact 回滚。

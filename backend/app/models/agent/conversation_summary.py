@@ -16,10 +16,11 @@ class ConversationSummary(Base):
     conversation_id = Column(
         Integer, ForeignKey("agent_sessions.id", ondelete="RESTRICT"),
         nullable=False, index=True, comment="Conversation 会话 ID（agent_sessions.id）")
-    through_sequence_no = Column(Integer, nullable=False, comment="覆盖到的会话事件序列上界")
+    through_sequence_no = Column(Integer, nullable=False,
+                                 comment="覆盖逻辑位置（run-bounded 逻辑序 rank）上界；单调向前")
     summary_text = Column(Text, nullable=False, comment="旧历史的工作摘要（非事实 Source of Truth）")
     source_message_count = Column(Integer, nullable=False, default=0,
-                                  comment="被摘要覆盖的源消息数")
+                                  comment="摘要累计覆盖的原始消息数（= 最新 through rank，稳定语义）")
     schema_version = Column(Integer, nullable=False, default=1, comment="Summary 合同版本")
     provider = Column(String(100), nullable=True, comment="生成摘要的 Provider 名称")
     model = Column(String(100), nullable=True, comment="生成摘要的模型名称")

@@ -1,7 +1,8 @@
 # V2 开发主计划（Development Plan）
 
 > 生效：2026-09-03（Pi 架构 Python 实现路线）；2026-09-04 起调整 P05 及之后路线为“对话式 Test Agent + TestArtifact 协作编辑”。方向决策已执行，ADR 原文归档为 archive/V2_DIRECTION_ADR_2026-09-04.md。
-> 状态：V2-P01～P08 已完成各自声明范围验收；P09.1～P09.3B.2 已完成实现与自动化回归。2026-09-06 已完成单浏览器真实走查并修复 Module 菜单与 MindMap 高度问题；因当前项目仅 13 条用例且 Agent 为失败态，>20 条真实翻页、现场 Agent 写入后的 realtime、双浏览器并发仍未实跑，P09 暂不标 complete，不进入 P10。
+> 状态：V2-P01～P08 已完成各自声明范围验收；P09.1～P09.3B.2 已完成实现与自动化回归。2026-09-06 已完成单浏览器真实走查并修复 Module 菜单与 MindMap 高度问题；因当前项目仅 13 条用例且 Agent 为失败态，>20 条真实翻页、现场 Agent 写入后的 realtime、双浏览器并发仍未实跑，P09 暂不标 complete。
+> P10.1 分阶段状态：P10.1-A（Context Builder/Budget/Runtime Wrapper）✅；P10.1-B 数据层（ConversationSummary ORM/0009/summary service/exchange-safe cut）✅；**P10.1-B3（Summarizer Orchestration + Runner Integration）✅ complete（2026-09-07，见 02 §2.47）**；P10.1 overall 仍 NOT complete（P10.1-C：Relevant Artifact Context + Recent Diff + 200+ 最终加固 + final acceptance，未开始）；P10.2 Approval 未进入。
 > 本文件是 V2 **唯一开发路线 Source of Truth**：P01～P10 的 Goal / Scope / Key implementation / Acceptance / Stop boundary 全部在此。实现级数据模型与工具合同见 [05_TECHNICAL_DESIGN.md](05_TECHNICAL_DESIGN.md)，产品行为见 [04_PRODUCT_PRD.md](04_PRODUCT_PRD.md)。
 > 本文件替代旧 V2.1/V2.2/V2.3 任务路线，不代表 Pi 全功能复刻或官方 Python 移植。
 
@@ -404,6 +405,13 @@ LLM → read_artifact_nodes(lock-node) → read_requirement(lock clauses) → ad
 - 无限画布高级排版、多人实时 CRDT、Git 式分支、评论系统、多 Artifact 同屏、自动合并复杂冲突、全功能 XMind 兼容。
 
 ### V2-P10 — Context / Approval / Conflict / Recovery / E2E
+
+> P10.1-B（含 B3）已 complete：ConversationRunner 只消费 SummaryOrchestrator 的
+> PreparedContext（全量 transcript 不再直传 AgentLoop）；增量摘要 marker 采用
+> run-bounded 逻辑位置语义（follow-up 插队审计结论）；每 Run ≤1 次摘要模型调用；
+> context_limit/context_prepared/context_compacted 事件与失败回退就绪（详见
+> 02 §2.47 / 05 §3.3）。P10.1 剩余 = P10.1-C：Relevant Artifact Context +
+> Recent Diff + 200+ 消息最终加固 + P10.1 final acceptance。
 
 #### Goal
 

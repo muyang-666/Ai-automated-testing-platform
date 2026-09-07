@@ -2,13 +2,26 @@
 
 事务边界由调用方保证：读阶段结束事务后再调 Summarizer；写阶段开启短事务
 调用 create / conditional_update 并 commit。
+
+through_sequence_no 语义（P10.1-B3 审计后定稿）：
+- 它是"覆盖到第 N 个逻辑位置"的单调上界。逻辑位置按本会话 run-bounded
+  可见序（owner user sequence, sequence_no）排序——正常无 follow-up 插队的
+  会话中逻辑位置 == 物理 sequence_no（连续 1..N），因此 B3 之前按物理序号
+  建立的测试与数据完全兼容；
+- follow-up 在活跃 Turn 执行期间排队入库时，物理 sequence_no 会与逻辑顺序
+  错位（例如 B/C 的用户消息先落库、A 的助手消息后落库但逻辑上属于 A）。
+  此时不能用物理 sequence_no 过滤"摘要未覆盖的新消息"——否则那些用户消息
+  会因物理序号小于 marker 而被错误当作已覆盖，永久丢出后续上下文。B3 起
+  增量选择一律以调用方提供的逻辑排序键（rank）为边界；cut 落在完整
+  exchange 组边界；marker = 最后一条被摘要消息的逻辑位置（即累计覆盖
+  source_message_count，见 source_message_count 语义注释）。
 """
 
 from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, InvalidRequestError
 from sqlalchemy.orm import Session
 
 from app.agents.conversation.context_builder import _split_into_exchange_units
@@ -25,7 +38,12 @@ def create_summary(db: Session, *, conversation_id: int, through_sequence_no: in
                    summary_text: str, source_message_count: int,
                    provider: str | None = None, model: str | None = None,
                    schema_version: int = 1) -> ConversationSummary:
-    """首次创建；并发唯一冲突时回滚并安全重读（不产生两行 current）。"""
+    """首次创建；并发唯一冲突用 SAVEPOINT 隔离并安全重读（不产生两行 current）。
+
+    P10.1-B3 事务边界：冲突绝对不回滚调用方外层事务——外层可能同事务写入了
+    UserMessage/AgentRun/AgentEvent/Artifact。SAVEPOINT 回滚后必须 expunge
+    未落库的 pending 行，否则调用方稍后 commit 会重放唯一冲突并整体失败。
+    """
     if through_sequence_no < 0:
         raise ValueError("through_sequence_no 必须 >= 0")
     row = ConversationSummary(
@@ -37,16 +55,28 @@ def create_summary(db: Session, *, conversation_id: int, through_sequence_no: in
         provider=provider,
         model=model,
     )
-    # P10.1-B3：唯一冲突用 SAVEPOINT 隔离，绝不 rollback 调用方外层事务
-    # （外层可能同时写入 UserMessage/AgentRun/AgentEvent/Artifact）。
     try:
         with db.begin_nested():
             db.add(row)
             db.flush()
         return row
     except IntegrityError:
-        # 内层 SAVEPOINT 已回滚；冲突意味着 current summary 已存在
-        latest = get_latest_summary(db, conversation_id)
+        # 内层 SAVEPOINT 已回滚；failed pending 行不再参与外层 commit。
+        # SQLAlchemy 2.0 在 savepoint 内 flush 失败后会自动把该 pending 对象
+        # 移出 Session（此时 commit 不会重放唯一冲突）；保险起见显式 expunge
+        # （对象已不在 Session 时忽略）。
+        try:
+            db.expunge(row)
+        except InvalidRequestError:
+            pass  # 对象已在 flush 失败时被自动移出 Session
+        # 冲突 = 别的进程已提交 current summary。用锁定读取最新已提交行：
+        # MySQL REPEATABLE READ 的一致性快照可能早于对方提交，普通 SELECT
+        # 会读不到胜者；FOR UPDATE 是当前读。SQLite 忽略 FOR UPDATE 语义一致。
+        latest = db.execute(
+            select(ConversationSummary)
+            .where(ConversationSummary.conversation_id == conversation_id)
+            .with_for_update()
+        ).scalars().first()
         if latest is None:
             raise
         return latest
@@ -93,8 +123,14 @@ def select_incremental_inputs(
 ) -> tuple[int, list[Any], list[Any]]:
     """增量压缩：只处理 existing_through 之后的消息；cut 落在完整 exchange 组边界。
 
+    seq_messages 的 key 必须是单调递增的逻辑排序键（run-bounded 可见序的
+    rank；见模块 docstring）——B3 起禁止用物理 sequence_no 充当该键（物理序
+    与逻辑序在 follow-up 插队时错位，会导致用户消息被错误视为已覆盖）。
     从尾部保留 recent_message_limit 条消息（不足整组时整组多留，绝不切散工具对）；
-    其余完整组进入 summary。返回 (cut_sequence, for_summarizer_messages, kept_recent_messages)。
+    其余完整组进入 summary。返回 (cut_key, for_summarizer_messages, kept_recent_messages)。
+    cut_key = 最后一条被摘要消息的逻辑键；把该键作为新 marker 落库后，
+    marker 数值 == 摘要累计覆盖的原始消息数（逻辑位置连续 1..N，见
+    source_message_count 语义）。
     """
     if recent_message_limit < 1:
         recent_message_limit = 1
@@ -131,6 +167,13 @@ def select_incremental_inputs(
 
 @dataclass
 class SummaryResult:
+    """Summarizer 的单次返回。
+
+    through_sequence_no：Summarizer 收到的 target_through_sequence（最后被摘要
+    消息的逻辑键），仅作回传核对；落库 marker 与 source_message_count 由
+    Orchestrator 在写路径上统一计算（cut 键即累计覆盖数），不信任模型侧自报。
+    """
+
     summary_text: str
     through_sequence_no: int
     source_message_count: int

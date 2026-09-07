@@ -73,8 +73,10 @@ class MemoryIO(SummaryIO):
 
 
 def _budget():
-    return ContextBudgetConfig(model_context_window=600, reserved_output_tokens=100,
-                               recent_message_limit=6, summary_token_budget=500)
+    # 现实预算：压缩成功后 summary+尾部窗口必须整体放得进 max_input；
+    # 过小的人工预算会把"尾部窗口自身超限"误判成压缩失败路径。
+    return ContextBudgetConfig(model_context_window=40_000, reserved_output_tokens=4_000,
+                               recent_message_limit=12, summary_token_budget=3_000)
 
 
 def _run(coro):
@@ -142,7 +144,7 @@ def test_failure_fallbacks_no_infinite_calls():
         pairs = _history(80, fill=300)
         result = _run(SummaryOrchestrator(fake, _budget(), io).prepare(
             seq_messages=pairs, current_user_message_id="u80"))
-        assert fake.calls == [result] if False else len(fake.calls) == 1  # 最多一次
+        assert len(fake.calls) == 1  # 最多一次，无 while-retry
         assert result.summary_refresh_failed is True
         assert result.prepared.context_limit is False  # old summary fallback fits
         assert io.current.through_sequence_no == 40  # 未写回失败结果

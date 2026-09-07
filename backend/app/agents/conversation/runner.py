@@ -32,8 +32,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agents.conversation.budget import AgentLoopLimits
-from app.agents.conversation.loop import AgentLoopConfig, AgentLoopContext, run_agent_loop
+from app.agents.conversation.context_builder import ContextBudgetConfig
+from app.agents.conversation.loop import AgentLoopConfig, AgentLoopContext, AgentLoopResult, run_agent_loop
 from app.agents.conversation.messages import Message, UserMessage
+from app.agents.conversation.summarizer import ConversationSummarizer, ProviderConversationSummarizer
 from app.agents.providers.streaming import AttemptBudget, ProviderSnapshot, StreamLimits
 from app.agents.registry.tool_registry import ToolRegistry
 from app.agents.runtime.errors import AgentError, AgentPermissionError
@@ -41,6 +43,11 @@ from app.models.agent.agent_message import AgentMessage
 from app.models.agent.agent_run import AgentRun
 from app.models.agent.agent_session import AgentSession
 from app.services.agent import agent_run_service, conversation_service
+from app.services.agent.conversation_context_service import (
+    ConversationContextLimitError,
+    ConversationContextPreparer,
+    PreparedRunContext,
+)
 
 # 与 legacy AgentRunner 使用的既有 DB AgentEvent event_type 保持一致，不新造事件名。
 EVENT_RUN_STARTED = "run_started"
@@ -87,6 +94,11 @@ class ConversationRunner:
     application_context_factory: Callable[..., Any] | None = None
     id_factory: Callable[[], str] = field(default_factory=lambda: lambda: uuid.uuid4().hex)
     timestamp_factory: Callable[[], int] = field(default_factory=lambda: lambda: int(time.time() * 1000))
+    # P10.1-B3：上下文预算与 Summarizer。summarizer_factory 为空时默认构造
+    # ProviderConversationSummarizer（复用同一 gateway/snapshot；Worker 每 Run
+    # 注入 snapshot 后再调用，因此工厂在调用时解析，不在构造时绑定）。
+    context_budget: ContextBudgetConfig | None = None
+    summarizer_factory: Callable[[], ConversationSummarizer] | None = None
 
     # ------------------------------------------------------------------ 主入口
 
@@ -105,9 +117,6 @@ class ConversationRunner:
 
         loop_events: list[Any] = []
         try:
-            restored = self._restore(db, session_id, actor_user_id, run,
-                                       until_sequence_no=self._current_user_sequence(db, run))
-            self._assert_history_ends_with_current_user_message(db, run, restored)
             # P08.2/P08.3：Runner 只使用 Run 上的可信快照（submit 时固化），
             # 不读取可变的 Session focus/context —— 会话焦点只影响未来新 Turn。
             run_context = conversation_service.artifact_context_from_run(run)
@@ -116,9 +125,48 @@ class ConversationRunner:
             # project 亦以快照为准（快照缺失时回退 run.project_id，兼容迁移前的旧行）
             project_id = run_context.get("project_id") or run.project_id
             requirement_id = run_context.get("requirement_id")
-            # Release the Runner's read transaction before the context factory
-            # performs its own short permission lookup.
-            db.rollback()
+
+            if cancel_event is not None and cancel_event.is_set():
+                # 模型请求前已取消：不发起任何 Provider/Summarizer 调用
+                return self._finalize_canceled(db, run, cancel_event,
+                                               worker_id=worker_id,
+                                               execution_token=execution_token)
+
+            # P10.1-B3：上下文准备（bounded history → 需要时一次增量压缩 →
+            # PreparedContext）。Runner 不再把完整 transcript 直接交 AgentLoop；
+            # 上下文准备不修改任何历史 Message 行。
+            workspace_hint = ""
+            if any(value is not None for value in workspace_context.values()):
+                workspace_hint = (
+                    "\n\nCurrent test workspace (UI selection hint, not permission):\n"
+                    f"- selected module node id: {workspace_context.get('selected_module_id') or 'none'}\n"
+                    f"- selected test case node id: {workspace_context.get('selected_case_id') or 'none'}\n"
+                    f"- current view: {workspace_context.get('current_view') or 'none'}\n"
+                    "Use these IDs only to resolve references such as 这里/这个模块/这个用例. "
+                    "Always read current Artifact nodes with tools before changing them."
+                )
+            base_sections = [self.system_prompt] + ([workspace_hint] if workspace_hint else [])
+            prepared = await self._prepare_run_context(
+                db, run, actor_user_id, base_sections,
+                worker_id=worker_id, execution_token=execution_token,
+                cancel_event=cancel_event,
+            )
+            if prepared is None:
+                # 准备期间（含 Summarizer 模型等待）已被取消/终结/失去 ownership
+                state = self._execution_state(db, run.id, worker_id, execution_token)
+                if state == "terminal":
+                    return self._no_write_outcome_for_terminal(db, run.id)
+                return ConversationRunOutcome(status="failed", error_code="ownership_lost",
+                                              run_finalized=False)
+            if cancel_event is not None and cancel_event.is_set():
+                return self._finalize_canceled(db, run, cancel_event,
+                                               worker_id=worker_id,
+                                               execution_token=execution_token)
+            # context 事件（压缩/预算观测）在进入网络等待前用短事务落库（fenced）
+            self._persist_context_events(db, run, prepared,
+                                         worker_id=worker_id,
+                                         execution_token=execution_token)
+
             application_context = (self.application_context_factory(
                 user_id=actor_user_id, conversation_id=session_id, run_id=run_id,
                 artifact_id=artifact_id,
@@ -130,20 +178,9 @@ class ConversationRunner:
                 worker_id=worker_id, execution_token=execution_token,
             ) if self.application_context_factory is not None else None)
 
-            workspace_hint = ""
-            if any(value is not None for value in workspace_context.values()):
-                workspace_hint = (
-                    "\n\nCurrent test workspace (UI selection hint, not permission):\n"
-                    f"- selected module node id: {workspace_context.get('selected_module_id') or 'none'}\n"
-                    f"- selected test case node id: {workspace_context.get('selected_case_id') or 'none'}\n"
-                    f"- current view: {workspace_context.get('current_view') or 'none'}\n"
-                    "Use these IDs only to resolve references such as 这里/这个模块/这个用例. "
-                    "Always read current Artifact nodes with tools before changing them."
-                )
-
             context = AgentLoopContext(
-                system_prompt=self.system_prompt + workspace_hint,
-                messages=restored,
+                system_prompt=prepared.prepared.system_prompt(),
+                messages=prepared.prepared.messages,
                 tool_registry=self.tool_registry,
                 metadata={"user_id": actor_user_id, "conversation_id": session_id,
                           "project_id": project_id,
@@ -158,6 +195,18 @@ class ConversationRunner:
             )
             config = self._build_config(loop_events, cancel_event)
             result = await run_agent_loop(prompts=[], context=context, config=config)
+        except ConversationContextLimitError as exc:
+            # 无法在预算内构造合法上下文：Run=context_limit（不调用主 Agent Provider）
+            state = self._execution_state(db, run.id, worker_id, execution_token)
+            if state == "terminal":
+                return self._no_write_outcome_for_terminal(db, run.id)
+            if state == "lost":
+                return ConversationRunOutcome(status="failed", error_code="ownership_lost",
+                                              error_type="context_limit",
+                                              run_finalized=False)
+            return self._fail_run(db, run, error_code="context_limit",
+                                  error_type="context_limit",
+                                  extra_event=("context_limit", exc.event_payload()))
         except Exception as exc:
             # 执行异常：先复核 ownership/终态（旧 Worker 不得在丢失后落 failed），
             # 仍持有 ownership 才标记 failed（best-effort），不向上抛。
@@ -266,36 +315,117 @@ class ConversationRunner:
         agent_run_service.append_event(db, run.session_id, run.id, EVENT_RUN_STARTED)
         db.commit()
 
-    def _current_user_sequence(self, db: Session, run: AgentRun) -> int:
-        """本 Run 用户消息的 sequence_no，作为 run-bounded restore 的上界。
+    async def _prepare_run_context(self, db: Session, run: AgentRun, actor_user_id: int,
+                                   system_sections: list[str], *,
+                                   worker_id: str | None,
+                                   execution_token: int | None,
+                                   cancel_event: asyncio.Event | None) -> PreparedRunContext | None:
+        """上下文准备：bounded history → 压缩(≤1 次) → PreparedContext。
 
-        P05-E：A 执行期间 B/C 已入库（seq 更大），A 只能看到 <= 自己的历史；
-        提升后的 B 再以 B 的 user sequence 为上界，从而看到 A 的完整结果 + B。
+        事务边界（spec #10/#32）：读事务在本方法内释放；Summarizer 模型调用与
+        Agent Provider 网络等待期间无悬挂 DB 事务；summary 写入为独立短事务。
+        返回 None = 准备期间 Run 已被取消/终结/失去 ownership（调用方不再写状态）。
         """
-        sequence = db.execute(
-            select(AgentMessage.sequence_no).where(AgentMessage.id == run.user_message_id)
-        ).scalar_one_or_none()
-        if sequence is None:
-            raise AgentError("首条用户消息记录缺失", error_code="agent_run_data_invalid")
-        return int(sequence)
+        if self.summarizer_factory is not None:
+            summarizer = self.summarizer_factory()
+        else:
+            summarizer = ProviderConversationSummarizer(
+                gateway=self.gateway, snapshot=self.snapshot,
+                stream_limits=self.stream_limits,
+                id_factory=self.id_factory)
+        preparer = ConversationContextPreparer(summarizer=summarizer,
+                                               budget=self.context_budget)
+        try:
+            prepared = await preparer.prepare(
+                db, run, requester_user_id=actor_user_id,
+                system_sections=system_sections)
+        except ConversationContextLimitError:
+            raise
+        except Exception as exc:
+            raise AgentError(
+                f"上下文准备失败（原始异常类型：{type(exc).__name__}）",
+                error_code="context_preparation_error") from exc
+        # 上下文准备跨 Summarizer 模型等待：结束后复核 ownership/终态，
+        # 避免把过期执行者的摘要/事件写入 DB。
+        if cancel_event is not None and cancel_event.is_set():
+            db.rollback()
+            return None
+        state = self._execution_state(db, run.id, worker_id, execution_token)
+        db.rollback()  # 释放 ownership 复核产生的隐式读事务
+        if state != "ok":
+            return None
+        return prepared
 
-    def _restore(self, db: Session, session_id: int, actor_user_id: int,
-                 run: AgentRun, *, until_sequence_no: int | None = None) -> list[Message]:
-        restored = conversation_service.restore_conversation_messages(
-            db, session_id=session_id, requester_user_id=actor_user_id,
-            until_sequence_no=until_sequence_no)
-        # restore 是只读查询；立即结束读事务，确保模型等待期间无悬挂 DB 事务。
-        db.rollback()
-        return restored
+    def _persist_context_events(self, db: Session, run: AgentRun,
+                                prepared: PreparedRunContext, *,
+                                worker_id: str | None,
+                                execution_token: int | None) -> None:
+        """context_prepared / context_compacted 观测事件（fenced 短事务）。
 
-    def _assert_history_ends_with_current_user_message(self, db: Session, run: AgentRun,
-                                                       restored: list[Message]) -> None:
-        user_row = db.query(AgentMessage).filter(AgentMessage.id == run.user_message_id).first()
-        if user_row is None or user_row.message_id is None:
-            raise AgentError("首条用户消息记录缺失", error_code="agent_run_data_invalid")
-        if not restored or restored[-1].message_id != user_row.message_id:
-            raise AgentError("恢复的历史未以当前 Turn 用户消息结尾",
-                             error_code="agent_run_data_invalid")
+        只在真正使用压缩上下文时落库（summary_text 非空）；事件 payload 只含
+        预算/计数/usage 等脱敏元数据，绝不含 summary 文本或完整上下文。
+        这些事件是 Agent runtime observability，不能被 artifact realtime bridge
+        识别为 Artifact Revision Event（前端只按精确 event_type 匹配后者）。
+        """
+        ctx = prepared.prepared
+        if not ctx.summary_text:
+            return
+        if worker_id is not None and execution_token is not None:
+            agent_run_service.assert_execution_ownership(
+                db, run.id, worker_id, execution_token)
+        prepared_payload = {
+            "estimated_input_tokens": ctx.estimated_tokens,
+            "max_input_tokens": (self.context_budget or ContextBudgetConfig()).max_input_tokens,
+            "summary_used": bool(ctx.summary_text),
+            "summary_through_sequence": ctx.diagnostics.get("summary_through_sequence"),
+            "recent_message_count": len(ctx.included_message_ids),
+            "omitted_message_count": len(ctx.omitted_message_ids),
+            "summary_refresh_failed": bool(prepared.summary_refresh_failed),
+        }
+        agent_run_service.append_event(db, run.session_id, run.id,
+                                       "context_prepared", prepared_payload)
+        if prepared.summary_refreshed:
+            diag = prepared.diagnostics
+            compacted_payload = {
+                "old_through_sequence": diag.get("existing_summary_through_sequence"),
+                "new_through_sequence": diag.get("summary_through_sequence"),
+                "source_message_count": diag.get("summary_through_sequence"),
+                "estimated_summary_tokens": diag.get("summary_estimated_tokens"),
+                "provider": diag.get("summary_provider"),
+                "model": diag.get("summary_model"),
+            }
+            usage = {key[len("summary_"):]: value for key, value in diag.items()
+                     if key.startswith("summary_") and key not in {
+                         "summary_provider", "summary_model", "summary_estimated_tokens",
+                         "summary_source_message_count"}}
+            if usage:
+                compacted_payload["usage"] = usage
+            agent_run_service.append_event(db, run.session_id, run.id,
+                                           "context_compacted", compacted_payload)
+        db.commit()  # 短事务：进入主 Provider 网络等待前立即结束
+
+    def _finalize_canceled(self, db: Session, run: AgentRun,
+                           cancel_event: asyncio.Event, *,
+                           worker_id: str | None,
+                           execution_token: int | None) -> ConversationRunOutcome:
+        """模型调用前取消：合成 canceled 结果走既有 finalize 路径（含 fencing）。"""
+        synthetic = AgentLoopResult(
+            status="aborted", messages=[], new_messages=[], turns=0,
+            model_calls=0, tool_calls=0, error_code="canceled")
+        try:
+            return self._finalize_run(db, run, synthetic, [],
+                                      worker_id=worker_id, execution_token=execution_token)
+        except AgentError as exc:
+            if getattr(exc, "error_code", None) != "agent_ownership_lost":
+                raise
+            db.rollback()
+            state = self._execution_state(db, run.id, worker_id, execution_token)
+            if state == "terminal":
+                return self._no_write_outcome_for_terminal(db, run.id)
+            return ConversationRunOutcome(
+                status="failed", error_code="ownership_lost",
+                model_calls=0, tool_calls=0, turns=0, run_finalized=False,
+            )
 
     def _build_config(self, loop_events: list[Any],
                       cancel_event: asyncio.Event | None) -> AgentLoopConfig:
@@ -443,13 +573,21 @@ class ConversationRunner:
         db.commit()
 
     def _fail_run(self, db: Session, run: AgentRun, *, error_code: str,
-                  error_type: str) -> ConversationRunOutcome:
-        """恢复/执行阶段异常：不落伪消息，best-effort 推进到 failed 并记录事件。"""
+                  error_type: str,
+                  extra_event: tuple[str, dict] | None = None) -> ConversationRunOutcome:
+        """恢复/执行阶段异常：不落伪消息，best-effort 推进到 failed 并记录事件。
+
+        extra_event：(event_type, payload) 与 run_failed 同事务落库（如
+        context_limit 事件），保证失败事件与终态原子可见。
+        """
         try:
             db.rollback()
             agent_run_service.save_output_json(db, run, {
                 "turns": 0, "model_calls": 0, "tool_calls": 0, "error_code": error_code,
             })
+            if extra_event is not None:
+                agent_run_service.append_event(db, run.session_id, run.id,
+                                               extra_event[0], extra_event[1])
             self._apply_terminal(db, run, "failed", error_code)
         except Exception:
             db.rollback()

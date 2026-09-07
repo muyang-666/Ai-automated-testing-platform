@@ -18,7 +18,9 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 SCRIPT_LOCATION = str(BACKEND_DIR / "alembic")
 
 BASELINE_REVISION = "0001_v1_schema_baseline"
-HEAD_REVISION = "0008_agent_run_workspace_context"
+# P10.1：0009_conversation_summary 是当前链头（0009 自身 upgrade/downgrade 见
+# test_agent_platform_migration）
+HEAD_REVISION = "0009_conversation_summary"
 ARTIFACT_TABLE_NAMES = {"test_artifact", "artifact_node", "artifact_revision", "artifact_operation"}
 
 
