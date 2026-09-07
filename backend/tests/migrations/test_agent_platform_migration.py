@@ -24,7 +24,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 SCRIPT_LOCATION = str(BACKEND_DIR / "alembic")
 
 BASELINE_REVISION = "0001_v1_schema_baseline"
-HEAD_REVISION = "0008_agent_run_workspace_context"
+HEAD_REVISION = "0009_conversation_summary"
 
 ARTIFACT_TABLE_NAMES = {
     "test_artifact",
@@ -41,6 +41,7 @@ AGENT_TABLE_NAMES = {
     "agent_steps",
     "agent_artifacts",
     "agent_approvals",
+    "conversation_summary",
 }
 
 V1_TABLE_NAMES = {

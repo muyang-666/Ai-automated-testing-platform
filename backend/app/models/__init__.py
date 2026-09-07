@@ -26,6 +26,7 @@ from app.models.agent.agent_run import AgentRun
 from app.models.agent.agent_step import AgentStep
 from app.models.agent.agent_artifact import AgentArtifact
 from app.models.agent.agent_approval import AgentApproval
+from app.models.agent.conversation_summary import ConversationSummary
 from app.models.test_artifact.test_artifact import TestArtifact
 from app.models.test_artifact.artifact_node import ArtifactNode
 from app.models.test_artifact.artifact_revision import ArtifactRevision
@@ -60,6 +61,7 @@ __all__ = [
     "AgentStep",
     "AgentArtifact",
     "AgentApproval",
+    "ConversationSummary",
     "TestArtifact",
     "ArtifactNode",
     "ArtifactRevision",
