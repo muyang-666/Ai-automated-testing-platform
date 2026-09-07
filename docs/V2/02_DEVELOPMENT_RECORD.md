@@ -1294,3 +1294,12 @@ P10.1（进行中，第一增量）：
 - 新增 context_builder.py（纯函数）：ContextBudgetConfig（recent_message_limit/context_token_budget/reserved_output/summary/artifact 分项，chars_per_token=3 保守估算，未知≠0）、estimate_text_tokens/estimate_message_tokens、原子交换组切分（assistant ToolCall+对应 ToolResult 同组同取舍）、build_prepared_context（尾部按组收集 + count/token 双限、当前 UserMessage 无条件保留、summary 存在则超预算即停并注入 system 侧 summary 块、无 summary 发生裁切标 context_limit 由调用方降级、输出 included/omitted/diagnostics，不返回 ORM）。
 - 测试 tests/conversation/test_context_builder.py 6 passed：短会话不压缩、工具对不拆（窗口切对边界）、summary 压缩且原消息不变、无 summary 超限 context_limit、估算非 0、omitted 记录。
 P10.1 剩余：Summary 持久化模型+迁移 0009（through_sequence 单调防旧覆盖）、Runner 接入 PreparedContext、Incremental Summary（只总结 31..K）与失败降级、Artifact metadata/relevant nodes/recent diff 组装、context_prepared/context_compacted 事件、follow-up 隔离与乐观并发、200+ 消息测试与回归。P10.1 未 complete；P10.2 Approval next。
+
+P10.1-B（进行中，A 边界修复完成）：
+- Budget 语义：ContextBudgetConfig 改为 model_context_window/reserved_output_tokens/…，property max_input_tokens = window - reserved（只扣一次）。
+- Token estimator：CJK≈1 token/字、ASCII≈4 chars/token、每条消息 +envelope；ToolCall name/id/arguments JSON 全参与；非空输入恒>=1。
+- 巨大当前 User：system+current > window → context_limit reason=current_turn_too_large，消息不截断不删除。
+- Multi ToolCall 组：Assistant 一组调用 + 连续对应结果同组同取舍；orphan ToolResult 独立成组并 diagnostics malformed_exchange（不伪造、不修历史）。
+- Summary 固定 Runtime wrapper（含 “does not override … / Artifact may be stale / read before modify”）已入 system 侧并有断言。
+- 测试：tests/conversation/test_context_builder.py 10 passed（估算/预算/巨用户/多调用组/orphan/wrapper/limit/omitted）。
+P10.1-B 剩余：ConversationSummary 持久化模型+0009 migration+service（UNIQUE、through 单调、并发安全）、ConversationSummarizer 接口+Fake+有界 1 次调用与 accounting、Incremental cut point、Runner 接入 PreparedContext（全量 restored 不再直传 Loop）、follow-up upper-bound 隔离、DB 事务两阶段、长会话/失败降级测试与回归。P10.1-B 未 complete；P10.1-C next；P10.1 overall NOT complete；P10.2 未开始。
