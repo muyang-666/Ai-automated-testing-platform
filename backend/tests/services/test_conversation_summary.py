@@ -47,39 +47,39 @@ def _session(db_session):
 def test_create_read_conditional_update_monotonic(db_session):
     session = _session(db_session)
     row = conversation_summary_service.create_summary(
-        db_session, conversation_id=session.id, through_sequence_no=30,
+        db_session, conversation_id=session.id, through_visible_rank=30,
         summary_text="到 30 的摘要", source_message_count=30, provider="fake", model="fake-model")
     db_session.commit()
-    assert row.through_sequence_no == 30
+    assert row.through_visible_rank == 30
 
     updated = conversation_summary_service.conditional_update_summary(
-        db_session, conversation_id=session.id, expected_through_sequence=30,
-        new_through_sequence=60, summary_text="到 60 的摘要", source_message_count=60)
+        db_session, conversation_id=session.id, expected_through_visible_rank=30,
+        new_through_visible_rank=60, summary_text="到 60 的摘要", source_message_count=60)
     assert updated is True
     db_session.commit()
-    assert conversation_summary_service.get_latest_summary(db_session, session.id).through_sequence_no == 60
+    assert conversation_summary_service.get_latest_summary(db_session, session.id).through_visible_rank == 60
 
     # 旧进程 (expected=40) 不能覆盖 60
     stale = conversation_summary_service.conditional_update_summary(
-        db_session, conversation_id=session.id, expected_through_sequence=40,
-        new_through_sequence=80, summary_text="旧结果", source_message_count=80)
+        db_session, conversation_id=session.id, expected_through_visible_rank=40,
+        new_through_visible_rank=80, summary_text="旧结果", source_message_count=80)
     assert stale is False
     db_session.rollback()
-    assert conversation_summary_service.get_latest_summary(db_session, session.id).through_sequence_no == 60
+    assert conversation_summary_service.get_latest_summary(db_session, session.id).through_visible_rank == 60
 
 
 def test_first_create_concurrent_conflict_only_one_row(db_session):
     session = _session(db_session)
     conversation_summary_service.create_summary(
-        db_session, conversation_id=session.id, through_sequence_no=10,
+        db_session, conversation_id=session.id, through_visible_rank=10,
         summary_text="首次", source_message_count=10)
     db_session.commit()
     # 并发第二进程相同 conversation 创建 → 唯一冲突后安全重读
     again = conversation_summary_service.create_summary(
-        db_session, conversation_id=session.id, through_sequence_no=11,
+        db_session, conversation_id=session.id, through_visible_rank=11,
         summary_text="并发旧", source_message_count=11)
     db_session.commit()
-    assert again.through_sequence_no == 10
+    assert again.through_visible_rank == 10
     rows = db_session.query(conversation_summary_service.ConversationSummary).filter(
         conversation_summary_service.ConversationSummary.conversation_id == session.id).all()
     assert len(rows) == 1
@@ -102,7 +102,7 @@ def _exchange_pairs():
 def test_incremental_inputs_cut_on_exchange_boundary():
     pairs = _exchange_pairs()
     cut, for_summary, kept = conversation_summary_service.select_incremental_inputs(
-        pairs, existing_through_sequence=0, recent_message_limit=4)
+        pairs, existing_through_visible_rank=0, recent_message_limit=4)
     # 保留尾 4 条消息（整组多留）→ summary 覆盖 [1..3]（完整 exchange：assistant+result 同组不拆）
     assert cut == 3
     assert [m.message_id for m in for_summary] == ["u1", "a1", "r1"]
@@ -114,7 +114,7 @@ def test_incremental_inputs_cut_on_exchange_boundary():
 def test_incremental_only_sends_after_existing_through():
     pairs = _exchange_pairs()
     cut, for_summary, _kept = conversation_summary_service.select_incremental_inputs(
-        pairs, existing_through_sequence=3, recent_message_limit=1)
+        pairs, existing_through_visible_rank=3, recent_message_limit=1)
     # existing=3 → 只处理 4..；cut 落在组边界（u3/a3 组保留 → cut=6 后组 7? 见尾组）
     ids = [m.message_id for m in for_summary]
     assert "u1" not in ids and "a1" not in ids and "r1" not in ids  # 不重复发旧原始消息
@@ -125,12 +125,12 @@ def test_incremental_only_sends_after_existing_through():
 
 def test_summary_validation_empty_and_oversized():
     ok = conversation_summary_service.SummaryResult(
-        summary_text="正常摘要", through_sequence_no=5,
+        summary_text="正常摘要", through_visible_rank=5,
         source_message_count=5, estimated_tokens=20)
     assert conversation_summary_service.validate_summary_result(ok, summary_token_budget=100) is True
     empty = conversation_summary_service.SummaryResult(
-        summary_text="   ", through_sequence_no=5, source_message_count=5, estimated_tokens=1)
+        summary_text="   ", through_visible_rank=5, source_message_count=5, estimated_tokens=1)
     assert conversation_summary_service.validate_summary_result(empty, summary_token_budget=100) is False
     big = conversation_summary_service.SummaryResult(
-        summary_text="很大", through_sequence_no=5, source_message_count=5, estimated_tokens=500)
+        summary_text="很大", through_visible_rank=5, source_message_count=5, estimated_tokens=500)
     assert conversation_summary_service.validate_summary_result(big, summary_token_budget=100) is False

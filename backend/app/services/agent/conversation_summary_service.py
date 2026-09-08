@@ -3,7 +3,7 @@
 事务边界由调用方保证：读阶段结束事务后再调 Summarizer；写阶段开启短事务
 调用 create / conditional_update 并 commit。
 
-through_sequence_no 语义（P10.1-B3 审计后定稿）：
+through_visible_rank 语义（P10.1-B3 审计后定稿）：
 - 它是"覆盖到第 N 个逻辑位置"的单调上界。逻辑位置按本会话 run-bounded
   可见序（owner user sequence, sequence_no）排序——正常无 follow-up 插队的
   会话中逻辑位置 == 物理 sequence_no（连续 1..N），因此 B3 之前按物理序号
@@ -34,21 +34,25 @@ def get_latest_summary(db: Session, conversation_id: int) -> ConversationSummary
     ).scalars().first()
 
 
-def create_summary(db: Session, *, conversation_id: int, through_sequence_no: int,
+def create_summary(db: Session, *, conversation_id: int, through_visible_rank: int,
                    summary_text: str, source_message_count: int,
+                   through_message_id: str | None = None,
                    provider: str | None = None, model: str | None = None,
                    schema_version: int = 1) -> ConversationSummary:
     """首次创建；并发唯一冲突用 SAVEPOINT 隔离并安全重读（不产生两行 current）。
 
+    through_message_id：边界处最后一条被摘要消息的稳定 message_id cursor（rank
+    的可审计锚点；新 Run/消息只会追加在已覆盖 prefix 之后，锚点位置不变）。
     P10.1-B3 事务边界：冲突绝对不回滚调用方外层事务——外层可能同事务写入了
     UserMessage/AgentRun/AgentEvent/Artifact。SAVEPOINT 回滚后必须 expunge
     未落库的 pending 行，否则调用方稍后 commit 会重放唯一冲突并整体失败。
     """
-    if through_sequence_no < 0:
-        raise ValueError("through_sequence_no 必须 >= 0")
+    if through_visible_rank < 0:
+        raise ValueError("through_visible_rank 必须 >= 0")
     row = ConversationSummary(
         conversation_id=conversation_id,
-        through_sequence_no=through_sequence_no,
+        through_visible_rank=through_visible_rank,
+        through_message_id=through_message_id,
         summary_text=summary_text,
         source_message_count=source_message_count,
         schema_version=schema_version,
@@ -84,26 +88,29 @@ def create_summary(db: Session, *, conversation_id: int, through_sequence_no: in
 
 def conditional_update_summary(
     db: Session, *, conversation_id: int,
-    expected_through_sequence: int, new_through_sequence: int,
+    expected_through_visible_rank: int, new_through_visible_rank: int,
     summary_text: str, source_message_count: int,
+    new_through_message_id: str | None = None,
     provider: str | None = None, model: str | None = None,
     schema_version: int = 1,
 ) -> bool:
     """单调向前：仅当 DB 行仍是 expected_old 且 :new > 当前 through 才更新。
 
-    返回 False 表示被更晚 Summary 抢先，调用方丢弃旧结果并重读。
+    返回 False 表示被更晚 Summary 抢先，调用方丢弃旧结果并重读。rank 与
+    through_message_id 一同更新（新边界锚点与新 rank 永远一致）。
     """
-    if new_through_sequence < 0 or new_through_sequence <= expected_through_sequence:
+    if new_through_visible_rank < 0 or new_through_visible_rank <= expected_through_visible_rank:
         return False
     result = db.execute(
         update(ConversationSummary)
         .where(
             ConversationSummary.conversation_id == conversation_id,
-            ConversationSummary.through_sequence_no == expected_through_sequence,
-            ConversationSummary.through_sequence_no < new_through_sequence,
+            ConversationSummary.through_visible_rank == expected_through_visible_rank,
+            ConversationSummary.through_visible_rank < new_through_visible_rank,
         )
         .values(
-            through_sequence_no=new_through_sequence,
+            through_visible_rank=new_through_visible_rank,
+            through_message_id=new_through_message_id,
             summary_text=summary_text,
             source_message_count=source_message_count,
             schema_version=schema_version,
@@ -118,10 +125,10 @@ def conditional_update_summary(
 def select_incremental_inputs(
     seq_messages: list[tuple[int, Any]],
     *,
-    existing_through_sequence: int,
+    existing_through_visible_rank: int,
     recent_message_limit: int,
 ) -> tuple[int, list[Any], list[Any]]:
-    """增量压缩：只处理 existing_through 之后的消息；cut 落在完整 exchange 组边界。
+    """增量压缩：只处理 existing_through_visible_rank 之后的消息；cut 落在完整 exchange 组边界。
 
     seq_messages 的 key 必须是单调递增的逻辑排序键（run-bounded 可见序的
     rank；见模块 docstring）——B3 起禁止用物理 sequence_no 充当该键（物理序
@@ -135,13 +142,13 @@ def select_incremental_inputs(
     if recent_message_limit < 1:
         recent_message_limit = 1
     after = [(seq, message) for seq, message in seq_messages
-             if seq > existing_through_sequence]
+             if seq > existing_through_visible_rank]
     if not after:
-        return existing_through_sequence, [], []
+        return existing_through_visible_rank, [], []
     messages = [message for _, message in after]
     units, _malformed = _split_into_exchange_units(messages)
     if not units:
-        return existing_through_sequence, [], []
+        return existing_through_visible_rank, [], []
 
     kept_units: list[list[Any]] = []
     kept_count = 0
@@ -153,29 +160,29 @@ def select_incremental_inputs(
     keep_ids = {id(msg) for unit in kept_units for msg in unit}
 
     index = 0
-    cut_sequence = existing_through_sequence
+    cut_rank = existing_through_visible_rank
     for unit in units:
         if any(id(msg) in keep_ids for msg in unit):
             break
         index += len(unit)
         if unit:
-            cut_sequence = after[index - 1][0]
+            cut_rank = after[index - 1][0]
     for_summary = [message for _, message in after[:index]]
     kept_msgs = [message for _, message in after[index:]]
-    return cut_sequence, for_summary, kept_msgs
+    return cut_rank, for_summary, kept_msgs
 
 
 @dataclass
 class SummaryResult:
     """Summarizer 的单次返回。
 
-    through_sequence_no：Summarizer 收到的 target_through_sequence（最后被摘要
+    through_visible_rank：Summarizer 收到的 target_through_visible_rank（最后被摘要
     消息的逻辑键），仅作回传核对；落库 marker 与 source_message_count 由
     Orchestrator 在写路径上统一计算（cut 键即累计覆盖数），不信任模型侧自报。
     """
 
     summary_text: str
-    through_sequence_no: int
+    through_visible_rank: int
     source_message_count: int
     provider: str | None = None
     model: str | None = None

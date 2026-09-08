@@ -152,7 +152,12 @@ class ConversationRunner:
                 cancel_event=cancel_event,
             )
             if prepared is None:
-                # 准备期间（含 Summarizer 模型等待）已被取消/终结/失去 ownership
+                # 准备期间（含 Summarizer 模型等待）已被取消/终结/失去 ownership：
+                # 取消走合成 canceled 终态；否则按终态/失去 ownership 无写入退出。
+                if cancel_event is not None and cancel_event.is_set():
+                    return self._finalize_canceled(db, run, cancel_event,
+                                                   worker_id=worker_id,
+                                                   execution_token=execution_token)
                 state = self._execution_state(db, run.id, worker_id, execution_token)
                 if state == "terminal":
                     return self._no_write_outcome_for_terminal(db, run.id)
@@ -338,8 +343,15 @@ class ConversationRunner:
         try:
             prepared = await preparer.prepare(
                 db, run, requester_user_id=actor_user_id,
-                system_sections=system_sections)
+                system_sections=system_sections,
+                cancel_event=cancel_event,
+                deadline=self.limits.deadline,
+            )
         except ConversationContextLimitError:
+            # 取消优先于失败：压缩因取消中断而走到 context_limit 时按取消处理
+            if cancel_event is not None and cancel_event.is_set():
+                db.rollback()
+                return None
             raise
         except Exception as exc:
             raise AgentError(
@@ -377,7 +389,9 @@ class ConversationRunner:
             "estimated_input_tokens": ctx.estimated_tokens,
             "max_input_tokens": (self.context_budget or ContextBudgetConfig()).max_input_tokens,
             "summary_used": bool(ctx.summary_text),
-            "summary_through_sequence": ctx.diagnostics.get("summary_through_sequence"),
+            "summary_through_visible_rank": ctx.diagnostics.get("summary_through_visible_rank"),
+            "summary_through_message_id": (ctx.diagnostics.get("summary_covered_message_id")
+                                           or ctx.diagnostics.get("existing_summary_through_message_id")),
             "recent_message_count": len(ctx.included_message_ids),
             "omitted_message_count": len(ctx.omitted_message_ids),
             "summary_refresh_failed": bool(prepared.summary_refresh_failed),
@@ -387,9 +401,11 @@ class ConversationRunner:
         if prepared.summary_refreshed:
             diag = prepared.diagnostics
             compacted_payload = {
-                "old_through_sequence": diag.get("existing_summary_through_sequence"),
-                "new_through_sequence": diag.get("summary_through_sequence"),
-                "source_message_count": diag.get("summary_through_sequence"),
+                "old_through_visible_rank": diag.get("existing_summary_through_visible_rank"),
+                "old_through_message_id": diag.get("existing_summary_through_message_id"),
+                "new_through_visible_rank": diag.get("summary_covered_visible_rank"),
+                "new_through_message_id": diag.get("summary_covered_message_id"),
+                "source_message_count": diag.get("summary_covered_visible_rank"),
                 "estimated_summary_tokens": diag.get("summary_estimated_tokens"),
                 "provider": diag.get("summary_provider"),
                 "model": diag.get("summary_model"),
@@ -397,7 +413,8 @@ class ConversationRunner:
             usage = {key[len("summary_"):]: value for key, value in diag.items()
                      if key.startswith("summary_") and key not in {
                          "summary_provider", "summary_model", "summary_estimated_tokens",
-                         "summary_source_message_count"}}
+                         "summary_source_message_count", "summary_covered_visible_rank",
+                         "summary_covered_message_id"}}
             if usage:
                 compacted_payload["usage"] = usage
             agent_run_service.append_event(db, run.session_id, run.id,

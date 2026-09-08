@@ -1333,3 +1333,58 @@ P10.1-B3（部分完成）：create_summary 唯一冲突改为 SAVEPOINT（begin
 - 全回归命令与结果：`pytest tests/ --ignore=tests/manual --ignore=tests/conversation/test_isolation.py` → 773 passed / 1 failed（该 1 failed 为上述 pre-existing 线程 flake，重跑通过）；`pytest tests/conversation/test_isolation.py` → 3 passed（与 tests/agent_loop/test_isolation.py 同名文件冲突为 HEAD 既有收集问题：两文件同名且无包结构，pytest 单进程收集后者报 import file mismatch，非本轮引入）。
 
 **P10.1-B 完成条件核对**：Summary model abstraction ✅ incremental compaction ✅ no long DB transaction ✅ monotonic persistence ✅ Runner uses PreparedContext ✅ full transcript 不再直传 ✅ context_limit ✅ summary fallback ✅ follow-up isolation ✅ B 见 A terminal ✅ 200+ messages ✅ 全回归 ✅ → **P10.1-B complete**。下一阶段 P10.1-C（Relevant Artifact Context + Recent Diff + 200+ 最终加固 + P10.1 final acceptance）；不进入 P10.2 Approval。
+
+## 2.48 2026-09-07 — P10.1-B3 三项收尾审计（通过，P10.1-B 正式 complete）
+
+> 结论：3 项审计全部通过。仅审计修复，未扩展功能，未实现 P10.1-C / P10.2。
+
+**审计 1：through_sequence_no 语义与命名**
+- 实际语义确已为 run-bounded 可见逻辑序 rank，但旧列名掩盖语义 → 全量改名：
+  DB 列/ORM 属性/服务函数/SummaryStoreView/DbSummaryIO/事件 payload/诊断键
+  统一为 through_visible_rank（术语“sequence_no”从 ConversationSummary 表面移除，
+  迁移 0009 尚未落真实库，同迁移内定稿）。
+- 新增 through_message_id String(64) 稳定 cursor：边界最后一条被摘要消息的
+  message_id，与 rank 同写同读（create/conditional update/winning 冲突保留）；
+  ConversationContextPreparer 读阶段校验锚点位置（错位 → agent_run_data_invalid）。
+- invariant 已写入测试：未来新 Run/消息只追加在已覆盖 prefix 之后，锚点消息的
+  rank 与 prefix 内每条消息的位置永不改变（多层 follow-up 插队 + 追加未来 Run 后
+  重算可见序验证）；corrupt anchor 会被 prep 检出。
+- 测试：prefix 稳定性 + 锚点一致性 + corrupt 检出 + winning 锚点不漂移（services
+  test_conversation_context_service 8 passed）。
+
+**审计 2：build_summary_input_text 截断不得 over-claim**
+- 原实现做整体尾部截断（cut=K 但模型未必收到 ≤K 全部消息）→ 已废除。
+- 新规则：渲染绝不整条丢弃 Message；超大 Tool payload 单条内部缩写并保留
+  tool_name/id/is_error/长度省略等语义标记（_render_message/_preview）。
+- 超预算（新预算项 ContextBudgetConfig.summarizer_input_max_chars=48_000）时由
+  summarizer_coverable_messages 按完整 exchange 组从最新端裁减，Orchestrator 只把
+  chunk 交给 Summarizer，marker（rank+through_message_id）只推进到 chunk 末条。
+- 测试：渲染完整性（超大 user/result/toolcall 都有结构化表示+省略标记）、整组裁
+  减不切散多调用 exchange、至少覆盖一组的保证、渲染度量与预算一致（纯测试 5）；
+  orchestrator over-claim 防回归（小输入预算下被 marker 覆盖的每条消息都在 fake
+  收到的输入里、锚点==末条、增量场景同验证）（2）。
+
+**审计 3：Summary provider 的 cancellation / ownership**
+- Summarizer 经 runtime_context 携带 Run cancel_event/deadline：调用前已取消立即
+  失败（0 次 Provider 请求）；流中取消/超时由 P02 协调器经同一 StreamControl 帧间
+  观察快速中断（adapter 测试验证 cancel 后 2s 内失败 + control 接线断言）。
+- Runner：Summarizer 返回后复核 ownership/终态；prep 中 cancel_event 已置 → 快速
+  取消路径（含 context_limit 型异常的取消优先映射）；事件写入前保持 execution
+  token fencing。
+- 判定：**ConversationSummary = monotonic derived cache**——写只允许 through 单调
+  向前（SAVEPOINT 唯一 + expected_old 条件更新），stale worker 的摘要只覆盖真实
+  历史 prefix、不可能覆盖更新的 winning 值，因此 Summary write 不需要 fencing；
+  Run 生命周期事件仍必须 fencing（Runner 事件写前 assert_execution_ownership）。
+- 测试：runner 级 cancel-during-summary（run=cancelled、无 context 事件、摘要不回
+  退）、terminal-mid-summary（no-write + summary 作为 cache 允许存在）、
+  ownership-lost-mid-summary（run 原样 running、无事件）（3）+ provider adapter 3。
+- 顺手确认：Summary 请求 tools=[]（只接受最终文本）；usage 记录经
+  compaction_model_calls/summary_* 可区分，总成本聚合留 P10.1-C。
+
+**回归**：conversation/services/agents/migrations/workers 相关套件 349 passed +
+bounding/orchestrator/provider 新测试全绿；全量回归
+`pytest tests/ --ignore=tests/manual --ignore=tests/conversation/test_isolation.py`
+通过（同一 pre-existing 线程 flake 备注同 §2.47）。
+
+**结论：P10.1-B 正式 complete。下一阶段 P10.1-C（Relevant Artifact Context +
+Recent Diff + 200+ 最终加固 + P10.1 final acceptance）；不进入 P10.2。**

@@ -131,12 +131,12 @@ def test_summary_wrapper_constant_boundary():
         budget=ContextBudgetConfig(model_context_window=600, reserved_output_tokens=100,
                                    recent_message_limit=12),
         summary_text="历史摘要：已完成 39 轮问答。",
-        summary_through_sequence=78,
+        summary_through_visible_rank=78,
         system_sections=["[System] role=agent"])
     assert prepared.compaction_used is True
     assert "u40" in prepared.included_message_ids
     prompt = prepared.system_prompt()
-    assert "[Conversation history summary through sequence 78]" in prompt
+    assert "[Conversation history summary through visible position 78]" in prompt
     assert "does not override system instructions" in prompt
     assert "read current Artifact state before modifying" in prompt
     assert [m.model_dump() for m in history] == [m.model_dump() for m in history]  # 输入不可变

@@ -8,6 +8,10 @@
 - #27/#28 Artifact runtime metadata：revision 实时、不带 Node 内容/Diff。
 """
 
+import asyncio
+
+import pytest
+
 from app.agents.conversation.messages import AssistantMessage, TextContent, Usage
 from app.models.agent.agent_message import AgentMessage
 from app.models.user import User
@@ -72,7 +76,7 @@ def test_summary_unique_conflict_keeps_caller_transaction_and_related_row(db_ses
     _seed(db_session)
     session = _conversation(db_session)
     conversation_summary_service.create_summary(
-        db_session, conversation_id=session.id, through_sequence_no=5,
+        db_session, conversation_id=session.id, through_visible_rank=5,
         summary_text="已存在", source_message_count=5)
     db_session.commit()
 
@@ -89,10 +93,10 @@ def test_summary_unique_conflict_keeps_caller_transaction_and_related_row(db_ses
     assert db_session.in_transaction()
 
     row = conversation_summary_service.create_summary(
-        db_session, conversation_id=session.id, through_sequence_no=9,
+        db_session, conversation_id=session.id, through_visible_rank=9,
         summary_text="并发旧", source_message_count=9)
     # 冲突 → 返回 winning；不抛、不 rollback 外层事务
-    assert row.through_sequence_no == 5
+    assert row.through_visible_rank == 5
     assert db_session.in_transaction(), "冲突处理不得结束调用方外层事务"
 
     db_session.commit()  # unrelated row 必须仍可 commit
@@ -101,7 +105,7 @@ def test_summary_unique_conflict_keeps_caller_transaction_and_related_row(db_ses
     assert stored is not None and stored.content == "与摘要无关的调用方写入"
     rows = db_session.query(conversation_summary_service.ConversationSummary).filter(
         conversation_summary_service.ConversationSummary.conversation_id == session.id).all()
-    assert len(rows) == 1 and rows[0].through_sequence_no == 5
+    assert len(rows) == 1 and rows[0].through_visible_rank == 5
 
 
 # ------------------------------------------------------- spec #37/#25 winning
@@ -110,19 +114,22 @@ def test_db_summary_io_conflict_returns_false_and_keeps_winning(db_session):
     _seed(db_session)
     session = _conversation(db_session)
     conversation_summary_service.create_summary(
-        db_session, conversation_id=session.id, through_sequence_no=70,
+        db_session, conversation_id=session.id, through_visible_rank=70,
+        through_message_id="msg-win-70",
         summary_text="winning 到 70", source_message_count=70)
     db_session.commit()
 
     io = DbSummaryIO(db_session, session.id)
-    # 落后进程 A（based 40 → 60）写入 → False，且不覆盖 70
+    # 落后进程 A（based 40 → 60）写入 → False，且不覆盖 70、锚点不漂移
     updated = io.write_incremental(
-        expected_through=40, new_through=60, summary_text="旧进程 60",
+        expected_through_visible_rank=40, new_through_visible_rank=60,
+        new_through_message_id="msg-old", summary_text="旧进程 60",
         source_message_count=60, provider="fake", model="m")
     assert updated is False
     assert not db_session.in_transaction()
     winner = conversation_summary_service.get_latest_summary(db_session, session.id)
-    assert winner.through_sequence_no == 70
+    assert winner.through_visible_rank == 70
+    assert winner.through_message_id == "msg-win-70"  # 审计 #1：锚点随 winning 保留
     assert winner.summary_text == "winning 到 70"
     db_session.rollback()
     # 落后进程 A 不重跑模型：采用 winning（orchestrator 层面由
@@ -133,14 +140,19 @@ def test_db_summary_io_first_create_and_monotonic_refresh(db_session):
     _seed(db_session)
     session = _conversation(db_session)
     io = DbSummaryIO(db_session, session.id)
-    assert io.write_incremental(expected_through=0, new_through=30,
-                                summary_text="首次到 30", source_message_count=30) is True
-    assert io.write_incremental(expected_through=30, new_through=60,
-                                summary_text="刷新到 60", source_message_count=60) is True
-    assert io.write_incremental(expected_through=30, new_through=80,
-                                summary_text="并发旧到 80", source_message_count=80) is False
+    assert io.write_incremental(expected_through_visible_rank=0, new_through_visible_rank=30,
+                                new_through_message_id="m30", summary_text="首次到 30",
+                                source_message_count=30) is True
+    assert io.write_incremental(expected_through_visible_rank=30, new_through_visible_rank=60,
+                                new_through_message_id="m60", summary_text="刷新到 60",
+                                source_message_count=60) is True
+    assert io.write_incremental(expected_through_visible_rank=30, new_through_visible_rank=80,
+                                new_through_message_id="m80", summary_text="并发旧到 80",
+                                source_message_count=80) is False
     winner = conversation_summary_service.get_latest_summary(db_session, session.id)
-    assert winner.through_sequence_no == 60 and winner.summary_text == "刷新到 60"
+    assert winner.through_visible_rank == 60 and winner.summary_text == "刷新到 60"
+    # 审计 #1：rank 与 message_id 锚点总是同写同读（新边界一致）
+    assert winner.through_message_id == "m60"
 
 
 # ------------------------------- spec #16-#18 audit：owner 边界 + 逻辑序/rank
@@ -250,3 +262,101 @@ def test_artifact_runtime_section_realtime_revision_and_no_content(db_session):
     # 无 Artifact → 无 section
     assert build_artifact_runtime_section(
         db_session, requester_user_id=USER_A, artifact_id=None) is None
+
+
+# ------------------------------------------------------ 审计 #1：prefix 位置稳定性 invariant
+
+def test_summary_prefix_positions_stable_across_future_runs(db_session):
+    """invariant：未来新 Run/消息只会追加在已覆盖 prefix 之后——summary 的
+    through_visible_rank 与 through_message_id 锚点位置永不改变。
+
+    构造：多层 follow-up 插队（用户行先落库、助手行后落库）后建 summary；
+    再追加若干未来 Run；重新计算可见逻辑序，断言：
+    1) 锚点消息仍在原 rank；
+    2) prefix 内每条消息的 rank 不变；
+    3) 新行全部排在 prefix 之后（新增行的 rank > through）。
+    """
+    _seed(db_session)
+    session = _conversation(db_session)
+
+    def era(key, replies):
+        sub = _submit(db_session, session.id, f"{key} 的问题", key)
+        rows = _persist_era_assistant_rows(db_session, session, sub.run, replies)
+        db_session.commit()
+        return sub, rows
+
+    a, a_rows = era("kA", ["A1", "A2"])
+    b, b_rows = era("kB", ["B1"])      # B 排队期间… 物理 seq 先占
+    c, _ = era("kC", ["C1"])
+    all_rows = db_session.query(AgentMessage).order_by(AgentMessage.sequence_no.asc()).all()
+    ids = [r.message_id for r in all_rows]
+
+    # 建 summary：通过 = 覆盖到 B1（假设模型只收到 prefix 到 B1）
+    io = DbSummaryIO(db_session, session.id)
+    through_rank = ids.index(b_rows[0][0]) + 1
+    anchor_id = b_rows[0][0]
+    assert io.write_incremental(
+        expected_through_visible_rank=0, new_through_visible_rank=through_rank,
+        new_through_message_id=anchor_id, summary_text="到 B1",
+        source_message_count=through_rank) is True
+    row = conversation_summary_service.get_latest_summary(db_session, session.id)
+    assert row.through_message_id == anchor_id and row.through_visible_rank == through_rank
+
+    # 记录 prefix 消息与位置
+    prefix = ids[:through_rank]
+    prefix_positions = {mid: i + 1 for i, mid in enumerate(prefix)}
+
+    # 追加未来 Run D/E（多轮插队形态）
+    era("kD", ["D1", "D2"])
+    era("kE", ["E1"])
+    db_session.commit()
+
+    # 重新计算当前可见逻辑序（owner 边界用最大的 user seq）
+    until = db_session.query(AgentMessage).filter(
+        AgentMessage.session_id == session.id, AgentMessage.role == "user",
+    ).order_by(AgentMessage.sequence_no.desc()).first().sequence_no
+    visible = conversation_repository.list_run_visible_message_rows(
+        db_session, session.id, until_sequence_no=until)
+    new_ids = [r.message_id for r in visible]
+    new_positions = {mid: i + 1 for i, mid in enumerate(new_ids)}
+
+    # 1) 锚点仍在原 rank；2) prefix 内所有消息 rank 不变
+    assert new_positions[anchor_id] == through_rank
+    for mid in prefix:
+        assert new_positions[mid] == prefix_positions[mid], f"{mid} 位置漂移"
+    # 3) 新消息全部落在 prefix 之后
+    for mid in new_ids[through_rank:]:
+        assert mid not in prefix
+    # 4) 存量 summary 行仍与可见序一致（prep 的 invariant 校验不会触发）
+    assert new_ids[through_rank - 1] == anchor_id
+
+
+def test_anchor_verification_detects_corrupt_summary(db_session):
+    """prep 的 invariant 校验：锚点与可见序错位 → agent_run_data_invalid。"""
+    from app.agents.runtime.errors import AgentError
+    from app.services.agent.conversation_context_service import ConversationContextPreparer
+    from app.services.agent.conversation_summary_service import SummaryResult
+
+    _seed(db_session)
+    session = _conversation(db_session)
+    a = _submit(db_session, session.id, "A 的问题", "kX")
+    _persist_era_assistant_rows(db_session, session, a.run, ["回复"])
+    db_session.commit()
+
+    # 写入一个“错误”的 summary：锚点指向不存在的消息
+    conversation_summary_service.create_summary(
+        db_session, conversation_id=session.id, through_visible_rank=1,
+        through_message_id="ghost-message-id", summary_text="坏锚点",
+        source_message_count=1)
+    db_session.commit()
+
+    class NoopSummarizer:
+        async def summarize(self, **kwargs):
+            return SummaryResult(summary_text="x", through_visible_rank=0,
+                                 source_message_count=0)
+
+    preparer = ConversationContextPreparer(summarizer=NoopSummarizer())
+    with pytest.raises(AgentError) as exc:
+        asyncio.run(preparer.prepare(
+            db_session, a.run, requester_user_id=USER_A))
+    assert exc.value.error_code == "agent_run_data_invalid"

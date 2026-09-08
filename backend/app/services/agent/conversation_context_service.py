@@ -77,27 +77,38 @@ class DbSummaryIO(SummaryIO):
             row = conversation_summary_service.get_latest_summary(
                 self._db, self._conversation_id)
             if row is not None:
-                view.through_sequence_no = row.through_sequence_no
+                view.through_visible_rank = row.through_visible_rank
+                view.through_message_id = row.through_message_id
                 view.summary_text = row.summary_text
         finally:
             self._db.rollback()  # 立即释放读事务
         return view
 
-    def write_incremental(self, *, expected_through, new_through, summary_text,
-                          source_message_count, provider=None, model=None) -> bool:
-        if expected_through <= 0:
+    def write_incremental(self, *, expected_through_visible_rank, new_through_visible_rank,
+                          new_through_message_id, summary_text, source_message_count,
+                          provider=None, model=None) -> bool:
+        """审计 #3 结论：ConversationSummary 是 monotonic derived cache——
+        只允许 through 单调向前（条件更新 + SAVEPOINT 唯一性），写者即使已失去
+        execution ownership 也只会写下真实历史 prefix 的摘要、绝不会覆盖更新的
+        winning 值，因此 Summary write 本身不需要 execution_token fencing；
+        Run 生命周期事件（context_prepared/compacted/limit 等）仍须 fencing。
+        """
+        if expected_through_visible_rank <= 0:
             row = conversation_summary_service.create_summary(
                 self._db, conversation_id=self._conversation_id,
-                through_sequence_no=new_through, summary_text=summary_text,
+                through_visible_rank=new_through_visible_rank,
+                through_message_id=new_through_message_id,
+                summary_text=summary_text,
                 source_message_count=source_message_count,
                 provider=provider, model=model)
-            created = row.through_sequence_no == new_through
+            created = row.through_visible_rank == new_through_visible_rank
             self._db.commit()  # 短写事务立即结束
             return created
         updated = conversation_summary_service.conditional_update_summary(
             self._db, conversation_id=self._conversation_id,
-            expected_through_sequence=expected_through,
-            new_through_sequence=new_through,
+            expected_through_visible_rank=expected_through_visible_rank,
+            new_through_visible_rank=new_through_visible_rank,
+            new_through_message_id=new_through_message_id,
             summary_text=summary_text, source_message_count=source_message_count,
             provider=provider, model=model)
         if updated:
@@ -176,9 +187,12 @@ class ConversationContextPreparer:
         *,
         requester_user_id: int,
         system_sections: list[str] | None = None,
+        cancel_event: Any | None = None,
+        deadline: float | None = None,
     ) -> PreparedRunContext:
         """为一个已 running 的 conversation Run 准备上下文（读→压缩→写→重建）。
 
+        cancel_event/deadline：转发给 Summarizer（审计 #3），取消时快速失败。
         抛 ConversationContextLimitError = 最终无法构造合法 context；
         其它异常（数据损坏等）由 Runner 统一失败路径处理。
         """
@@ -230,6 +244,18 @@ class ConversationContextPreparer:
         if metadata_section:
             sections.append(metadata_section)
 
+        # 2b) invariant 校验（审计 #1）：已有 summary 的 through_message_id 锚点必须
+        # 仍是当前可见序中 through_visible_rank 位置的那条消息——未来新 Run/消息
+        # 只会追加在已覆盖 prefix 之后，prefix 位置不变；若错位说明数据不一致。
+        existing = conversation_summary_service.get_latest_summary(db, conversation_id)
+        if existing is not None and existing.through_message_id and \
+                0 < existing.through_visible_rank <= len(pairs):
+            boundary = pairs[existing.through_visible_rank - 1][1]
+            if boundary.message_id != existing.through_message_id:
+                raise AgentError(
+                    "summary through_message_id 锚点与可见逻辑序不一致",
+                    error_code="agent_run_data_invalid")
+
         # 3) 结束读事务：Summarizer 模型调用期间无任何 DB 事务（spec #10/#32）
         db.rollback()
 
@@ -240,6 +266,8 @@ class ConversationContextPreparer:
             current_user_message_id=current_user_message_id,
             system_sections=sections,
             io=DbSummaryIO(db, conversation_id),
+            cancel_event=cancel_event,
+            deadline=deadline,
         )
         prepared = result.prepared
         if prepared.context_limit:

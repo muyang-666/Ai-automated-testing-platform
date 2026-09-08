@@ -106,7 +106,7 @@ class FakeSummarizer:
         self.received = []
 
     async def summarize(self, **kwargs):
-        target = kwargs.get("target_through_sequence")
+        target = kwargs.get("target_through_visible_rank")
         received_ids = [m.message_id for m in kwargs.get("messages", [])]
         self.calls.append(kwargs)
         self.received.append((kwargs.get("existing_summary"), received_ids, target))
@@ -120,7 +120,7 @@ class FakeSummarizer:
             text = self.text_template.format(target=target)
         return SummaryResult(
             summary_text=text,
-            through_sequence_no=target,
+            through_visible_rank=target,
             source_message_count=len(received_ids),
             provider="fake-summarizer", model="sum-model",
             usage={"input_tokens": 10, "output_tokens": 5, "cache_read_tokens": None,
@@ -276,11 +276,11 @@ def test_first_compaction_creates_summary_and_100plus_run_stays_compressed(db_se
     assert row is not None
     # through < 当前 user 的逻辑位置（当前轮 UserMessage 永不进摘要）
     current_rank = len(rows)
-    assert row.through_sequence_no < current_rank
-    assert row.source_message_count == row.through_sequence_no  # 累计覆盖数语义
+    assert row.through_visible_rank < current_rank
+    assert row.source_message_count == row.through_visible_rank  # 累计覆盖数语义
     # 主 Provider 不看到完整 raw 历史（摘要 + 尾部窗口）
     request = gateway.requests[0]
-    assert "through sequence" in request.system_prompt
+    assert "through visible position" in request.system_prompt
     assert len(request.messages) < len(rows) // 2
     assert len(fake.calls) <= 1  # 每 Run ≤ 1 次 Summarizer 调用
     # 上下文事件已落库且脱敏（不含 summary 文本）
@@ -292,7 +292,7 @@ def test_first_compaction_creates_summary_and_100plus_run_stays_compressed(db_se
     assert "summary_text" not in payload and "text" not in payload
     # context_compacted 只发生在真正刷新 Summary 时
     compacted = run_events(db_session, chat.id, "context_compacted")
-    assert compacted and compacted[-1].payload_json["new_through_sequence"] == row.through_sequence_no
+    assert compacted and compacted[-1].payload_json["new_through_visible_rank"] == row.through_visible_rank
 
 
 # ------------------------------------------------------ spec #35 第二次增量
@@ -309,7 +309,7 @@ def test_second_compaction_incremental_inputs_only_after_existing(db_session):
         _, _, fake = replay_turn(db_session, chat, f"g{turn}", content=f"q{turn}",
                                  fill=230, budget_cfg=cfg)
         if fake.calls and summary_row(db_session, chat.id) is not None:
-            old_through = summary_row(db_session, chat.id).through_sequence_no
+            old_through = summary_row(db_session, chat.id).through_visible_rank
             break
         assert turn < 60
     assert old_through > 0
@@ -321,7 +321,7 @@ def test_second_compaction_incremental_inputs_only_after_existing(db_session):
         fake = FakeSummarizer()
         _, gateway, used = replay_turn(db_session, chat, f"h{extra}", content=f"q{extra}",
                                        fill=230, budget_cfg=cfg, summarizer=fake)
-        cur = summary_row(db_session, chat.id).through_sequence_no
+        cur = summary_row(db_session, chat.id).through_visible_rank
         if cur > old_through:
             incremental = (gateway, used, cur)
             break
@@ -343,8 +343,8 @@ def test_second_compaction_incremental_inputs_only_after_existing(db_session):
     assert not (set(received_ids) & {rank_ids[r] for r in range(new_through + 1, len(rows) + 1)})
     # context_compacted 事件带 old/new through + usage 可观测
     last = run_events(db_session, chat.id, "context_compacted")[-1].payload_json
-    assert last["old_through_sequence"] == old_through
-    assert last["new_through_sequence"] == new_through
+    assert last["old_through_visible_rank"] == old_through
+    assert last["new_through_visible_rank"] == new_through
     assert last["provider"] == "fake-summarizer"
     assert last["usage"].get("input_tokens") == 10
 
@@ -407,7 +407,7 @@ def test_200_messages_multi_tool_exchange_and_big_results(db_session):
 
     # 压缩上下文已用：主 Provider 只看到摘要 + 尾部窗口，不看 200+ raw
     request = gateway.requests[0]
-    assert "through sequence" in request.system_prompt
+    assert "through visible position" in request.system_prompt
     assert len(request.messages) < len(rows_before)
     assert request.messages[-1].content == "最终确认 " + "字" * 300  # 当前 User 保留
     # exchange 完整性：请求内每个 toolResult 都能在前面的 assistant 找到对应 ToolCall
@@ -521,7 +521,7 @@ def test_summary_refresh_failure_with_existing_summary_falls_back_success(db_ses
         if f.calls:
             break
     old = summary_row(db_session, chat.id)
-    assert old is not None and old.through_sequence_no > 0
+    assert old is not None and old.through_visible_rank > 0
 
     sub = submit(db_session, chat.id, "刷新失败但可回退 " + "字" * 230, "fail-with-sum")
     failing = FakeSummarizer(behavior=behavior)
@@ -532,7 +532,7 @@ def test_summary_refresh_failure_with_existing_summary_falls_back_success(db_ses
     assert len(failing.calls) == 1
     # 未写回失败结果；DB 仍是旧 through
     after = summary_row(db_session, chat.id)
-    assert after.through_sequence_no == old.through_sequence_no
+    assert after.through_visible_rank == old.through_visible_rank
     assert gateway.requests[0].messages[-1].content == "刷新失败但可回退 " + "字" * 230
     prepared = run_events(db_session, chat.id, "context_prepared")[-1].payload_json
     assert prepared["summary_refresh_failed"] is True
@@ -634,3 +634,188 @@ def test_artifact_summary_stale_facts_but_runtime_revision_realtime(db_session):
     assert "may be stale" in prompt
     assert "read current Artifact state with tools before acting" in prompt or \
         "read current Artifact state before modifying" in prompt
+
+
+# -------------------------------------------------- 审计 #3：cancel / ownership
+
+class CancellableSummarizer(FakeSummarizer):
+    """在运行时收到 cancel_event 才返回：用于确定性模拟 summarizer 模型等待中取消。"""
+
+    def __init__(self, started):
+        super().__init__()
+        self.started = started
+
+    async def summarize(self, **kwargs):
+        self.calls.append(kwargs)
+        self.started.set()
+        cancel_event = (kwargs.get("runtime_context") or {}).get("cancel_event")
+        if cancel_event is not None:
+            try:
+                await asyncio.wait_for(cancel_event.wait(), timeout=15)
+            except asyncio.TimeoutError:  # pragma: no cover
+                pass
+            raise RuntimeError("canceled mid-summarize")
+        return await super().summarize(**kwargs)
+
+
+def _seed_fenced_running_run(db, chat, key="claim", content="跑起来"):
+    from datetime import datetime as dt
+    sub = submit(db, chat.id, content + " " + "字" * 200, key)
+    token = agent_run_service.claim_queued_run(db, sub.run.id, "worker-1", dt.utcnow())
+    db.commit()
+    return sub, token
+
+
+def test_cancel_during_summary_ends_run_cancelled_without_events_or_write(db_session):
+    seed_user(db_session)
+    chat = conversation(db_session)
+    cfg = budget(window=10_000, reserve=2_000, limit=10)
+    # 长历史确保压缩路径会真正调用 Summarizer（DB 已有历史摘要行）
+    for i in range(1, 30):
+        f = FakeSummarizer()
+        _, _, used = replay_turn(db_session, chat, f"t{i}", content=f"q{i}",
+                                 fill=230, budget_cfg=cfg, summarizer=f)
+        if used.calls:
+            break
+    assert summary_row(db_session, chat.id) is not None
+    sub = submit(db_session, chat.id, "取消这一轮 " + "字" * 230, "cancel-turn")
+
+    async def scenario():
+        cancel_event = asyncio.Event()
+        started = asyncio.Event()
+        fake = CancellableSummarizer(started)
+        runner, _ = make_runner([assistant(TextContent(text="x"))], budget=cfg,
+                                summarizer=fake)
+        task = asyncio.create_task(
+            runner.run(db_session, sub.run.id, cancel_event=cancel_event))
+        await started.wait()  # Summarizer 已在模型等待中
+        cancel_event.set()    # 用户取消 → Summarizer 快速失败
+        return await asyncio.wait_for(task, timeout=15)
+
+    outcome = asyncio.run(scenario())
+    assert outcome.status == "cancelled" and outcome.error_code == "canceled"
+    run = db_session.get(AgentRun, sub.run.id)
+    assert run.status == "cancelled"
+    # 本轮摘要未写、上下文事件未落
+    summary_before = summary_row(db_session, chat.id).through_visible_rank
+    assert summary_row(db_session, chat.id).through_visible_rank == summary_before
+    events = [e.event_type for e in run_events(db_session, chat.id)
+              if e.run_id == sub.run.id]
+    assert events == ["run_started", "run_cancelled"]
+    own_prepared = [e for e in run_events(db_session, chat.id, "context_prepared")
+                    if e.run_id == sub.run.id]
+    own_compacted = [e for e in run_events(db_session, chat.id, "context_compacted")
+                     if e.run_id == sub.run.id]
+    assert own_prepared == [] and own_compacted == []
+
+
+def test_terminal_mid_summary_skips_events_summary_write_is_benign_cache(db_session):
+    """审计 #3：Summarizer 等待期间 Run 被外部取消（DB terminal）→ runner 不写
+    context 事件、不改 Run 状态；期间写入的 summary 是 monotonic derived cache
+    （只覆盖真实历史 prefix），允许存在且不回退任何值。"""
+    from app.core.database import SessionLocal
+    seed_user(db_session)
+    chat = conversation(db_session)
+    cfg = budget(window=10_000, reserve=2_000, limit=10)
+    for i in range(1, 30):
+        f = FakeSummarizer()
+        _, _, used = replay_turn(db_session, chat, f"m{i}", content=f"q{i}",
+                                 fill=230, budget_cfg=cfg, summarizer=f)
+        if used.calls:
+            break
+    sub, token = _seed_fenced_running_run(db_session, chat, key="term-run")
+    assert token is not None
+
+    class TerminalMutator(FakeSummarizer):
+        def __init__(self):
+            super().__init__()
+            self.entered = asyncio.Event()
+            self.confirm = asyncio.Event()
+
+        async def summarize(self, **kwargs):
+            self.calls.append(kwargs)
+            self.entered.set()
+            await asyncio.wait_for(self.confirm.wait(), timeout=15)
+            with SessionLocal() as other:
+                run = other.get(AgentRun, sub.run.id)
+                agent_run_service.transition_status(other, run, "cancelled")
+                other.commit()
+            return await super().summarize(**kwargs)
+
+    async def scenario():
+        fake = TerminalMutator()
+        runner, _ = make_runner([assistant(TextContent(text="x"))], budget=cfg,
+                                summarizer=fake)
+        task = asyncio.create_task(runner.run(db_session, sub.run.id,
+                                              worker_id="worker-1",
+                                              execution_token=token))
+        await fake.entered.wait()
+        fake.confirm.set()
+        return await asyncio.wait_for(task, timeout=15)
+
+    outcome = asyncio.run(scenario())
+    assert outcome.status == "cancelled" and outcome.run_finalized is False
+    run = db_session.get(AgentRun, sub.run.id)
+    assert run.status == "cancelled"
+    # Runner 未写任何事件（terminal 复核后 no-write）
+    events = [e.event_type for e in run_events(db_session, chat.id)
+              if e.run_id == sub.run.id]
+    assert events == ["run_started"]
+    assert [e for e in run_events(db_session, chat.id, "context_prepared")
+            if e.run_id == sub.run.id] == []
+    # summary 写入发生在 terminal 复核前 —— monotonic cache 语义下允许
+    assert summary_row(db_session, chat.id) is not None
+
+
+def test_ownership_lost_mid_summary_skips_events_and_keeps_run_untouched(db_session):
+    from app.core.database import SessionLocal
+    seed_user(db_session)
+    chat = conversation(db_session)
+    cfg = budget(window=10_000, reserve=2_000, limit=10)
+    for i in range(1, 30):
+        f = FakeSummarizer()
+        _, _, used = replay_turn(db_session, chat, f"o{i}", content=f"q{i}",
+                                 fill=230, budget_cfg=cfg, summarizer=f)
+        if used.calls:
+            break
+    sub, token = _seed_fenced_running_run(db_session, chat, key="lost-run")
+    assert token is not None
+
+    class LostMutator(FakeSummarizer):
+        def __init__(self):
+            super().__init__()
+            self.entered = asyncio.Event()
+            self.confirm = asyncio.Event()
+
+        async def summarize(self, **kwargs):
+            self.calls.append(kwargs)
+            self.entered.set()
+            await asyncio.wait_for(self.confirm.wait(), timeout=15)
+            with SessionLocal() as other:
+                run = other.get(AgentRun, sub.run.id)
+                run.worker_id = "worker-2"  # 新 worker 抢占（claim 语义）
+                run.execution_token = token + 1
+                other.commit()
+            return await super().summarize(**kwargs)
+
+    async def scenario():
+        fake = LostMutator()
+        runner, _ = make_runner([assistant(TextContent(text="x"))], budget=cfg,
+                                summarizer=fake)
+        task = asyncio.create_task(runner.run(db_session, sub.run.id,
+                                              worker_id="worker-1",
+                                              execution_token=token))
+        await fake.entered.wait()
+        fake.confirm.set()
+        return await asyncio.wait_for(task, timeout=15)
+
+    outcome = asyncio.run(scenario())
+    assert outcome.status == "failed" and outcome.error_code == "ownership_lost"
+    assert outcome.run_finalized is False
+    run = db_session.get(AgentRun, sub.run.id)
+    assert run.status == "running" and run.worker_id == "worker-2"
+    events = [e.event_type for e in run_events(db_session, chat.id)
+              if e.run_id == sub.run.id]
+    assert events == ["run_started"]
+    assert [e for e in run_events(db_session, chat.id, "context_prepared")
+            if e.run_id == sub.run.id] == []
